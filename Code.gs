@@ -43,10 +43,13 @@
  *
  * ARCHITECTURE
  * ------------
- *   Home       = orientation only (counts + navigation). No data entry.
- *   Today      = the daily operating surface: intake popup, up to 3
- *                Pending Decisions, Plan-Today controls, Commit list,
- *                Options, end-of-day wrap-up.
+ *   Home       = the daily entry point: onboarding status, up to 3 Pending
+ *                Decisions (inline, actionable), the Add/update capture
+ *                dropdown, a Today's-plan summary, an Upcoming feed, and a
+ *                demoted utility refresh control. No raw task table here.
+ *   Today      = purely the execution surface: priority/focus, available
+ *                minutes, energy, capacity fit, and the Commit/Options
+ *                task table. No data capture and no Pending Decisions.
  *   Decisions  = the suggestion queue. States: Pending / Yes / No /
  *                Auto-dismissed. No "Later". Yes promotes to a Task.
  *   Tasks      = sole owner of task existence, status, linked object,
@@ -55,8 +58,12 @@
  *                triggered from (Today or Tasks).
  *   Sectors / Organisations / Jobs / People / Conversations / Interviews
  *              = source-of-truth database tabs. Editable directly, but
- *                routine daily capture should happen via Today's
+ *                routine daily capture should happen via Home's
  *                Add/update popups, not by navigating to these tabs.
+ *
+ * OPERATING RHYTHM
+ * ----------------
+ *   Welcome → Resolve → Capture → Plan → Execute → Monitor.
  *
  * FLOW
  * ----
@@ -243,7 +250,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.3.1';
+var SCRIPT_VERSION = 'v7.4';
 
 var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
@@ -2317,15 +2324,9 @@ function onEditTasks(sheet, row, col, newVal) {
 // =============================================================
 
 var TODAY_CELLS = {
-  UPDATE_TYPE: 'B3', PRIORITY: 'B4', AVAILABLE_MIN: 'B5', ENERGY: 'B6',
+  PRIORITY: 'B4', AVAILABLE_MIN: 'B5', ENERGY: 'B6',
   CAPACITY_FIT: 'D7', DONE_COUNTER: 'C7'
 };
-// Three Pending-Decision card slots on row 8 (id/text) and row 9 (action).
-var TODAY_DECISION_SLOTS = [
-  { id: 'A8', text: 'B8', action: 'B9' },
-  { id: 'C8', text: 'D8', action: 'D9' },
-  { id: 'F8', text: 'G8', action: 'G9' }
-];
 var TODAY_TABLE_HEADER_ROW = 10;
 var TODAY_TABLE_FIRST_ROW = 11;
 var TODAY_TABLE_LAST_ROW = 40;
@@ -2345,14 +2346,6 @@ function ensureTodaySheet() {
   return sheet;
 }
 
-function setTodayUpdateGuidance(sheet, updateType) {
-  var capture = todayUpdateTypeToCapture(String(updateType || ''));
-  var guidance = capture
-    ? 'A popup opens for "' + capture + '". It writes the matching source tab and refreshes Today.'
-    : 'No capture needed. Set focus, available minutes, and energy, then refresh Today.';
-  sheet.getRange('C3').setValue(guidance).setWrap(true).setFontColor('#5F625E');
-}
-
 function bootstrapToday() {
   var sheet = ensureTodaySheet();
   sheet.clear();
@@ -2360,10 +2353,9 @@ function bootstrapToday() {
 
   sheet.getRange('A1:I1').merge().setValue('Today').setFontSize(16).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
-  sheet.getRange('B3').setValue('Add / update').setFontWeight('bold');
-  sheet.getRange(TODAY_CELLS.UPDATE_TYPE).setValue('No updates');
-  setDropdown(sheet.getRange(TODAY_CELLS.UPDATE_TYPE), DROPDOWNS.TODAY_UPDATE_TYPES);
-  setTodayUpdateGuidance(sheet, 'No updates');
+  sheet.getRange('B3:I3').merge()
+    .setValue('Add updates and review Pending Decisions from Home. This tab is the daily task list.')
+    .setFontColor('#5F625E').setWrap(true).setFontStyle('italic');
 
   sheet.getRange('B4').setValue('Priority / focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
@@ -2379,7 +2371,6 @@ function bootstrapToday() {
   sheet.getRange('B7').setValue('Capacity fit').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.CAPACITY_FIT).setFormula('=IF(SUMIF(E11:E40,"Commit",D11:D40)<=B5,"OK within capacity","Over capacity - Commit work exceeds available time")').setFontWeight('bold');
   sheet.getRange('C7').setValue('Done today').setFontWeight('bold');
-  sheet.getRange('F7').setValue('Pending Decisions').setFontWeight('bold');
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
@@ -2389,7 +2380,6 @@ function bootstrapToday() {
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setWrap(true);
   sheet.setFrozenRows(TODAY_TABLE_HEADER_ROW);
 
-  renderTodayDecisionCards();
   applyTodayTableHeaderStyle();
 }
 
@@ -2708,66 +2698,92 @@ function updateDoneTodayCounter(sheet) {
 }
 
 // -------------------------------------------------------------
-// Pending Decisions — up to 3 cards live on Today (row 8/9).
+// Pending Decisions — up to 3 cards live on Home (row 8/9), with a
+// "N more in queue" link to Decisions when there are more than 3.
 // UI label is "Pending Decisions" everywhere, matching the Decisions
 // tab name exactly — no separate "Suggestions" language anywhere.
 // -------------------------------------------------------------
 
-function renderTodayDecisionCards() {
-  var sheet = getSheet('Today');
-  if (!sheet) return;
+// Generalized 3-slot { id, text, action } cell-reference array for a
+// Pending-Decision card row pair (id/text on idRow, action on actionRow).
+function decisionSlotsFor(idRow, actionRow) {
+  return [
+    { id: 'A' + idRow, text: 'B' + idRow, action: 'B' + actionRow },
+    { id: 'C' + idRow, text: 'D' + idRow, action: 'D' + actionRow },
+    { id: 'F' + idRow, text: 'G' + idRow, action: 'G' + actionRow }
+  ];
+}
+
+function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
   var pendingList = firstPendingDecisions(3);
   var count = pendingDecisionCount();
+  var slots = decisionSlotsFor(idRow, actionRow);
+  var lastCol = 'I';
 
-  try { sheet.getRange('A8:I9').breakApart(); } catch (err) { /* not merged, ignore */ }
-  sheet.getRange('A8:I9').clearContent().clearNote().setBackground(null).setFontColor('#28251D').setFontWeight('normal').setWrap(false);
+  try { sheet.getRange('A' + idRow + ':' + lastCol + actionRow).breakApart(); } catch (err) { /* not merged, ignore */ }
+  sheet.getRange('A' + idRow + ':' + lastCol + actionRow).clearContent().clearNote().setBackground(null).setFontColor('#28251D').setFontWeight('normal').setWrap(false);
+  if (moreRow) sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).clearContent().clearNote();
 
-  TODAY_DECISION_SLOTS.forEach(function (slot) {
+  slots.forEach(function (slot) {
     sheet.getRange(slot.id).setValue('');
     sheet.getRange(slot.text).setValue('').setBackground('#F1F3F4');
     sheet.getRange(slot.action).setValue('').setBackground('#F1F3F4');
   });
 
   if (!pendingList.length) {
-    sheet.getRange('B8').setValue('No Pending Decisions').setBackground('#F1F3F4').setFontColor('#5F625E').setFontWeight('bold');
-    sheet.getRange('B9').setValue('Decisions become Tasks only when you say Yes.').setFontColor('#5F625E').setWrap(true);
+    sheet.getRange(slots[0].text).setValue('✓ No pending decisions').setBackground('#F1F3F4').setFontColor('#437A22').setFontWeight('bold');
     return;
   }
 
   pendingList.forEach(function (pending, idx) {
-    var slot = TODAY_DECISION_SLOTS[idx];
+    var slot = slots[idx];
     var data = pending.data;
     var id = data[COLS.DECISIONS.ID - 1];
     var trigger = data[COLS.DECISIONS.TRIGGER - 1] || 'Decision';
     var task = data[COLS.DECISIONS.TASK - 1] || '';
     var notes = data[COLS.DECISIONS.NOTES - 1] || '';
     var label = 'Pending Decision ' + (idx + 1);
-    if (idx === 0 && count > 3) label += ' (' + count + ' total)';
     sheet.getRange(slot.id).setValue(id);
     sheet.getRange(slot.text)
       .setValue(label + ': ' + task)
       .setBackground('#EAF4F5').setFontColor('#1B474D').setFontWeight('bold').setWrap(true)
       .setNote('Why: ' + trigger + (notes ? '\nNotes: ' + notes : ''));
     sheet.getRange(slot.action).setValue('').setBackground(MANUAL_COLOR).setFontWeight('bold');
-    setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No', 'Open queue']);
+    setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No']);
   });
+
+  if (moreRow && count > 3) {
+    var decisionsSheet = ensureDecisionsTab();
+    sheet.getRange('B' + moreRow).setFormula(
+      '=HYPERLINK("#gid=' + decisionsSheet.getSheetId() + '","' + (count - 3) + ' more in queue — open queue ▸")')
+      .setFontColor('#01696F').setFontStyle('italic');
+  }
 }
 
-function decisionIdForTodayCell(sheet, row, col) {
-  if (row !== 9) return '';
-  if (col === 2) return sheet.getRange('A8').getValue();
-  if (col === 4) return sheet.getRange('C8').getValue();
-  if (col === 7) return sheet.getRange('F8').getValue();
+// Kept as a thin wrapper — several call sites (onEditDecisions,
+// completeTodoRow, populateTodayImpl, onOpen, etc.) call this by name and
+// don't need to change now that Pending Decisions render on Home.
+function renderTodayDecisionCards() {
+  var sheet = getSheet('Home');
+  if (!sheet) return;
+  renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
+}
+
+function decisionIdForCell(sheet, row, col) {
+  if (row !== HOME_DECISIONS_ACTION_ROW) return '';
+  if (col === 2) return sheet.getRange('A' + HOME_DECISIONS_ID_ROW).getValue();
+  if (col === 4) return sheet.getRange('C' + HOME_DECISIONS_ID_ROW).getValue();
+  if (col === 7) return sheet.getRange('F' + HOME_DECISIONS_ID_ROW).getValue();
   return '';
 }
 
-function handleTodayDecisionAction(sheet, action, decisionId) {
+function handleDecisionAction(sheet, action, decisionId) {
   action = String(action || '');
   if (!action) return;
-  sheet.getRange('B9').setValue(''); sheet.getRange('D9').setValue(''); sheet.getRange('G9').setValue('');
-  if (action === 'Open queue') { var q = ensureDecisionsTab(); if (q) SpreadsheetApp.setActiveSheet(q); return; }
+  sheet.getRange('B' + HOME_DECISIONS_ACTION_ROW).setValue('');
+  sheet.getRange('D' + HOME_DECISIONS_ACTION_ROW).setValue('');
+  sheet.getRange('G' + HOME_DECISIONS_ACTION_ROW).setValue('');
   if (['Yes', 'No'].indexOf(action) === -1) return;
-  decisionId = decisionId || sheet.getRange('A8').getValue();
   if (!decisionId) return;
   var decisions = ensureDecisionsTab();
   if (!decisions || decisions.getLastRow() < 2) return;
@@ -2778,8 +2794,7 @@ function handleTodayDecisionAction(sheet, action, decisionId) {
     decisions.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
     if (action === 'Yes') acceptPendingDecision(decisions, row);
     if (action === 'No') decisions.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-    renderTodayDecisionCards();
-    refreshHome();
+    renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
     if (action === 'Yes') populateToday();
     SpreadsheetApp.getActiveSpreadsheet().toast(action === 'Yes' ? 'Decision promoted to a Task.' : 'Decision dismissed.', 'The Planner', 3);
     return;
@@ -2823,18 +2838,7 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 // -------------------------------------------------------------
 
 function onEditToday(sheet, row, col, newVal) {
-  if (row === 3 && col === 2) {
-    var updateType = String(newVal || '');
-    setTodayUpdateGuidance(sheet, updateType);
-    var capture = todayUpdateTypeToCapture(updateType);
-    if (capture) { sheet.getRange(TODAY_CELLS.UPDATE_TYPE).setValue('No updates'); runCapturePopup(capture); }
-    return;
-  }
   if ((row === 4 || row === 5 || row === 6) && col === 2) { populateToday(); return; }
-  if (row === 9 && (col === 2 || col === 4 || col === 7)) {
-    handleTodayDecisionAction(sheet, String(newVal || ''), decisionIdForTodayCell(sheet, row, col));
-    return;
-  }
   if (col !== COLS.TODAY.STATUS || row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
   var todoId = sheet.getRange(row, COLS.TODAY.TODO_ID).getValue();
   if (!todoId) return;
@@ -3028,10 +3032,34 @@ function middayNudge() {
 // cell references can never drift out of sync with what's on screen.
 // =============================================================
 
+var HOME_TITLE_ROW = 2;
+
 var HOME_ONBOARD_ROW = 4;
-var HOME_ONBOARD_COL = 2;
-var HOME_REFRESH_ROW = 5;
+var HOME_ONBOARD_CHECK_COL = 2;        // B — primary checkbox (Start/Continue), hidden when complete
+var HOME_ONBOARD_RESET_CHECK_COL = 8;  // H — small secondary "Reset" checkbox, shown only when complete
+var HOME_WELCOME_ROW = 5;              // welcome / stage-detail line, one merged row B:F
+
+var HOME_DECISIONS_HEADER_ROW = 7;
+var HOME_DECISIONS_ID_ROW = 8;         // A/C/F hold Decision IDs; B/D/G hold the visible card text
+var HOME_DECISIONS_ACTION_ROW = 9;     // B/D/G hold the Yes/No dropdowns
+var HOME_DECISIONS_MORE_ROW = 10;      // "N more in queue" link, only rendered when count > 3
+
+var HOME_UPDATE_HEADER_ROW = 12;
+var HOME_UPDATE_ROW = 13;
+var HOME_UPDATE_COL = 2;               // B — the update-type dropdown
+
+var HOME_PLAN_HEADER_ROW = 15;         // "Today's plan"
+var HOME_PLAN_STATUS_ROW = 16;         // "Ready — N tasks, M minutes." / "Not built yet."
+var HOME_PLAN_START_ROW = 17;          // "Start working ▸" HYPERLINK
+var HOME_PLAN_SUBLINE_ROW = 18;        // small muted "<N> tasks remain in your master queue."
+
+var HOME_UPCOMING_HEADER_ROW = 20;
+var HOME_UPCOMING_FIRST_ROW = 21;      // 21..25, 5 rows max
+
+var HOME_REFRESH_ROW = 27;             // small utility row
 var HOME_REFRESH_COL = 2;
+
+var HOME_LAST_REFRESHED_ROW = 29;
 
 var SETUP_PROP_KEY = 'setupProfile';
 
@@ -3052,16 +3080,27 @@ function setupLabel(profile) {
   return (goalLabels[profile.goal] || profile.goal || 'Setup') + (profile.entryPoint ? ' — ' + (entryLabels[profile.entryPoint] || profile.entryPoint) : '');
 }
 
+// v7.4: matches by workflow identity (COLS.TODO.WORKFLOW), not display
+// text, so the checklist can actually resolve to done — see the class
+// comment on setupChecklistFor for why the old text/source match never
+// worked. `text` is kept only as a legacy fallback for profiles saved by
+// pre-v7.4 versions, which have no `workflow` field at all.
 function checkAutoCompletion(item) {
+  if (item.alwaysDone) return true;
   var todoSheet = getSheet('Tasks');
   if (!todoSheet || todoSheet.getLastRow() < 2) return false;
   var data = todoSheet.getRange(2, 1, todoSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var matched = [];
   for (var i = 0; i < data.length; i++) {
-    if (String(data[i][COLS.TODO.SOURCE - 1]) === 'Onboarding' && String(data[i][COLS.TODO.TASK - 1]) === item.text) {
-      return String(data[i][COLS.TODO.STATUS - 1]) === 'Done';
-    }
+    var wf = String(data[i][COLS.TODO.WORKFLOW - 1]);
+    var taskText = String(data[i][COLS.TODO.TASK - 1]);
+    var matchesWorkflow = item.workflow && (wf === item.workflow || (item.altWorkflows && item.altWorkflows.indexOf(wf) !== -1));
+    var matchesLegacyText = !matchesWorkflow && !item.workflow && item.text && taskText.indexOf(item.text) === 0;
+    if (matchesWorkflow || matchesLegacyText) matched.push(data[i]);
   }
-  return false;
+  if (!matched.length) return false; // nothing created yet -> not started
+  // A completed checklist item means ALL matching onboarding-related tasks are Done.
+  return matched.every(function (row) { return String(row[COLS.TODO.STATUS - 1]) === 'Done'; });
 }
 
 function shouldShowSetupCard(profile) {
@@ -3069,27 +3108,12 @@ function shouldShowSetupCard(profile) {
   return !profile.checklist.every(function (item) { return checkAutoCompletion(item); });
 }
 
-function renderSetupCard(sheet, startRow, profile) {
-  var r = startRow;
-  sheet.getRange(r, 2, 1, 5).merge().setValue('Onboarding: ' + setupLabel(profile))
-    .setFontSize(12).setFontWeight('bold').setFontColor('#1B474D').setBackground('#EAF4F5');
-  r++;
-  (profile.checklist || []).forEach(function (item) {
-    var done = checkAutoCompletion(item);
-    var label = (done ? '[done] ' : '[next] ') + item.text;
-    var target = item.tab ? getSheet(item.tab) : null;
-    if (target) {
-      sheet.getRange(r, 2).setFormula('=HYPERLINK("#gid=' + target.getSheetId() + '","' + label.replace(/"/g, '""') + '")');
-    } else {
-      sheet.getRange(r, 2).setValue(label);
-    }
-    sheet.getRange(r, 2).setFontWeight(done ? 'normal' : 'bold').setFontColor(done ? '#5F625E' : '#01696F');
-    sheet.getRange(r, 3, 1, 4).merge().setValue(item.notes || '').setWrap(true).setFontColor('#5F625E');
-    r++;
-  });
-  sheet.getRange(r, 2, 1, 5).merge().setValue('Menu: The Planner → Set up / redo onboarding')
-    .setFontSize(9).setFontColor('#6E716C').setFontStyle('italic');
-  return r + 2;
+function nextIncompleteChecklistItem(profile) {
+  if (!profile || !profile.checklist) return null;
+  for (var i = 0; i < profile.checklist.length; i++) {
+    if (!checkAutoCompletion(profile.checklist[i])) return profile.checklist[i];
+  }
+  return null;
 }
 
 function countOpenTasks() {
@@ -3145,60 +3169,177 @@ function writeHomeMetric(sheet, row, label, value, note) {
   if (note) sheet.getRange(row, 4, 1, 3).merge().setValue(note).setWrap(true).setFontColor('#5F625E');
 }
 
+// v7.4: replaces a plain sheet.clear() — clear() alone was found to leave
+// stale data-validation rules (checkboxes) from a prior layout in place,
+// producing an orphaned checkbox artifact once the row layout moved.
+// Explicitly tearing down merges/validations/formatting/content/notes
+// before every rebuild means a changed layout can never leave leftover
+// state behind.
+function hardResetHomeSheet(sheet) {
+  var maxRows = Math.max(sheet.getMaxRows(), 60);
+  var maxCols = Math.max(sheet.getMaxColumns(), 10);
+  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
+}
+
+// v7.4: Today's-plan hero counts — built only if Today's date (B2) is
+// today; a row counts as Commit unless its Slot cell starts with 'O'
+// (Option rows are written as 'O1', 'O2', ... by writeTodayRow).
+function todayPlanCounts() {
+  var result = { built: false, commit: 0, minutes: 0, options: 0 };
+  var sheet = getSheet('Today');
+  if (!sheet) return result;
+  var planDate = sheet.getRange('B2').getValue();
+  if (!planDate) return result;
+  var d = new Date(planDate); d.setHours(0, 0, 0, 0);
+  result.built = d.getTime() === today().getTime();
+  if (!result.built) return result;
+  for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+    var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
+    if (!slot) continue;
+    if (slot.indexOf('O') === 0) {
+      result.options++;
+    } else {
+      result.commit++;
+      result.minutes += parseInt(sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
+    }
+  }
+  return result;
+}
+
+function formatDateFriendly(d) {
+  return Utilities.formatDate(new Date(d), plannerTimeZone(), 'EEE d MMM');
+}
+
+// v7.4: read-only merge of the next 5 upcoming dated items across
+// Interviews / People (scheduled conversations) / Jobs (applied, awaiting
+// review) — no writes, no cascades, just a sorted feed for Home.
+function collectUpcomingItems(limit) {
+  limit = limit || 5;
+  var t = today();
+  var items = [];
+
+  var roundsSheet = getSheet('Interviews');
+  if (roundsSheet && roundsSheet.getLastRow() > 1) {
+    var rData = roundsSheet.getRange(2, 1, roundsSheet.getLastRow() - 1, COLS.ROUNDS.NOTES).getValues();
+    rData.forEach(function (r) {
+      var d = r[COLS.ROUNDS.INTERVIEW_DATE - 1];
+      var status = String(r[COLS.ROUNDS.STATUS - 1]);
+      if (d && new Date(d) >= t && ['Completed', 'Cancelled'].indexOf(status) === -1) {
+        var label = r[COLS.ROUNDS.ORG_DISPLAY - 1] || r[COLS.ROUNDS.JOB_DISPLAY - 1] || '';
+        items.push({ type: 'Interview', date: new Date(d), label: label });
+      }
+    });
+  }
+
+  var peopleSheet = getSheet('People');
+  if (peopleSheet && peopleSheet.getLastRow() > 1) {
+    var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).getValues();
+    pData.forEach(function (p) {
+      var stage = String(p[COLS.PEOPLE.STAGE - 1]);
+      var d = p[COLS.PEOPLE.CONVERSATION_DATE - 1];
+      if (stage === 'Conversation scheduled' && d && new Date(d) >= t) {
+        items.push({ type: 'Conversation', date: new Date(d), label: p[COLS.PEOPLE.NAME - 1] || '' });
+      }
+    });
+  }
+
+  var jobsSheet = getSheet('Jobs');
+  if (jobsSheet && jobsSheet.getLastRow() > 1) {
+    var jData = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, COLS.JOBS.NOTES).getValues();
+    jData.forEach(function (j) {
+      var status = String(j[COLS.JOBS.STATUS - 1]);
+      var d = j[COLS.JOBS.REVIEW_DATE - 1];
+      if (status === 'Applied' && d && new Date(d) >= t) {
+        items.push({ type: 'Follow-up', date: new Date(d), label: j[COLS.JOBS.ORG - 1] || '' });
+      }
+    });
+  }
+
+  items.sort(function (a, b) { return a.date - b.date; });
+  return items.slice(0, limit);
+}
+
 function refreshHome() {
   var sheet = getSheet('Home');
   if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Home', 0);
-  sheet.clear();
+  hardResetHomeSheet(sheet);
   sheet.setTabColor(ZONE_WORK_COLOR);
 
-  sheet.getRange('B2:F2').merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor('#1B474D');
-  sheet.getRange('B3:F3').merge()
-    .setValue('Home orients. Today captures updates and reviews Pending Decisions. Tasks owns execution. Source tabs hold the facts.')
-    .setFontSize(10).setFontColor('#5F625E').setWrap(true);
+  sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor('#1B474D');
 
-  // Fixed controls — always at rows 4/5, above everything variable.
-  sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
-  sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_COL + 1, 1, 4).merge()
-    .setValue('Start / redo onboarding').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
-  sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
-  sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
-    .setValue('Refresh dashboard and Pending Decisions').setFontColor('#5F625E');
-
-  var row = HOME_REFRESH_ROW + 2;
+  // --- Onboarding card (§1.1) ---
   var profile = getSetupProfile();
   if (!profile) {
-    sheet.getRange(row, 2, 1, 5).merge().setValue('Start with onboarding')
-      .setFontSize(12).setFontWeight('bold').setFontColor('#1B474D').setBackground('#EAF4F5');
-    row++;
-    sheet.getRange(row, 2, 1, 5).merge()
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
+      .setValue('Start onboarding').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
       .setValue('Use the checkbox above or The Planner → Set up / redo onboarding. The popup writes source rows and refreshes Today.')
       .setWrap(true).setFontColor('#5F625E');
-    row += 2;
   } else if (shouldShowSetupCard(profile)) {
-    row = renderSetupCard(sheet, row, profile);
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
+      .setValue('Continue onboarding').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
+    var nextItem = nextIncompleteChecklistItem(profile);
+    var detail = setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue(detail).setWrap(true).setFontColor('#5F625E');
   } else {
-    sheet.getRange(row, 2).setValue('Setup').setFontWeight('bold').setFontColor('#1B474D');
-    sheet.getRange(row, 3, 1, 4).merge().setValue(setupLabel(profile)).setFontColor('#5F625E');
-    row += 2;
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
+      .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1).setValue('Reset').setFontSize(9).setFontColor('#7A7974');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue('Welcome back. Let’s get you organised for today.').setFontColor('#5F625E');
   }
 
-  sheet.getRange(row, 2, 1, 5).merge().setValue('Today at a glance').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
-  row++;
-  writeHomeMetric(sheet, row++, 'Open tasks', countOpenTasks(), 'Master queue lives in Tasks.');
-  writeHomeMetric(sheet, row++, 'Due now', countDueNowTasks(), 'Overdue or due today.');
-  writeHomeMetric(sheet, row++, 'Pending Decisions', pendingDecisionCount(), 'Review up to 3 on Today. Yes creates a Task; No dismisses.');
-  writeHomeMetric(sheet, row++, 'Upcoming interviews', countUpcomingInterviews(), 'Next 14 days.');
-  writeHomeMetric(sheet, row++, 'Applications waiting', countApplicationsWaiting(), 'Applied jobs with review date due or missing.');
+  // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
+  sheet.getRange(HOME_DECISIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Pending Decisions').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
-  row++;
-  sheet.getRange(row, 2, 1, 5).merge().setValue('Where to go').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
-  row++;
-  writeHomeMetric(sheet, row++, 'Start work', 'Today', 'Updates, Pending Decisions, priority, capacity, and the Commit list.');
-  writeHomeMetric(sheet, row++, 'Review everything', 'Tasks', 'The full execution queue. Pull a row into Today from the menu.');
-  writeHomeMetric(sheet, row++, 'Inspect source data', 'Source tabs', 'Sectors, Organisations, Jobs, People, Conversations, Interviews.');
+  // --- Add update (§1.3) — the primary capture surface now ---
+  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
+  setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
 
-  row += 1;
-  sheet.getRange(row, 2, 1, 3).merge().setValue('Last refreshed: ' + Utilities.formatDate(new Date(), plannerTimeZone(), 'yyyy-MM-dd HH:mm'))
+  // --- Today's plan hero (§1.4) — replaces the raw open-task count ---
+  sheet.getRange(HOME_PLAN_HEADER_ROW, 2, 1, 5).merge().setValue('Today’s plan').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  var planCounts = todayPlanCounts();
+  var heroText = 'Not built yet.';
+  if (planCounts.built && planCounts.commit > 0) heroText = 'Ready — ' + planCounts.commit + ' tasks, ' + planCounts.minutes + ' minutes.';
+  else if (planCounts.built) heroText = 'Built — nothing committed today.';
+  sheet.getRange(HOME_PLAN_STATUS_ROW, 2, 1, 5).merge().setValue(heroText).setFontWeight('bold').setFontColor('#1B474D');
+  var todaySheetForLink = getSheet('Today');
+  if (todaySheetForLink) {
+    sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","Start working ▸")').setFontColor('#01696F').setFontWeight('bold');
+  }
+  sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(countOpenTasks() + ' tasks remain in your master queue.').setFontSize(9).setFontColor('#8A8D87');
+
+  // --- Upcoming (§1.5) — read-only, no cascades ---
+  sheet.getRange(HOME_UPCOMING_HEADER_ROW, 2, 1, 5).merge().setValue('Upcoming').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  var upcoming = collectUpcomingItems(5);
+  if (!upcoming.length) {
+    sheet.getRange(HOME_UPCOMING_FIRST_ROW, 2, 1, 5).merge().setValue('Nothing scheduled in the next window.').setFontColor('#5F625E');
+  } else {
+    upcoming.forEach(function (item, idx) {
+      var r = HOME_UPCOMING_FIRST_ROW + idx;
+      sheet.getRange(r, 2).setValue(item.type).setFontWeight('bold').setFontColor('#1B474D');
+      sheet.getRange(r, 3).setValue(formatDateFriendly(item.date));
+      sheet.getRange(r, 4, 1, 3).merge().setValue(item.label);
+    });
+  }
+
+  // --- Refresh (§1.6) — demoted utility control, folds in trigger status ---
+  var editReady = false;
+  try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
+  sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+  sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
+    .setValue('Refresh & verify triggers — Capture: ' + (editReady ? 'Ready' : 'Trigger setup needed'))
+    .setFontSize(9).setFontColor('#8A8D87');
+
+  sheet.getRange(HOME_LAST_REFRESHED_ROW, 2, 1, 3).merge().setValue('Last refreshed: ' + Utilities.formatDate(new Date(), plannerTimeZone(), 'yyyy-MM-dd HH:mm'))
     .setFontSize(9).setFontColor('#BAB9B4').setFontStyle('italic');
 
   sheet.setColumnWidths(1, 1, 24);
@@ -3208,9 +3349,24 @@ function refreshHome() {
 }
 
 function onEditHome(sheet, row, col, newVal) {
-  if (row === HOME_ONBOARD_ROW && col === HOME_ONBOARD_COL && newVal === true) {
-    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_COL).setValue(false);
+  if (row === HOME_ONBOARD_ROW && col === HOME_ONBOARD_CHECK_COL && newVal === true) {
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false);
     runSetupInterview();
+    return;
+  }
+  if (row === HOME_ONBOARD_ROW && col === HOME_ONBOARD_RESET_CHECK_COL && newVal === true) {
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false);
+    runSetupInterview();
+    return;
+  }
+  if (row === HOME_DECISIONS_ACTION_ROW && (col === 2 || col === 4 || col === 7)) {
+    handleDecisionAction(sheet, String(newVal || ''), decisionIdForCell(sheet, row, col));
+    return;
+  }
+  if (row === HOME_UPDATE_ROW && col === HOME_UPDATE_COL) {
+    var updateType = String(newVal || '');
+    var capture = todayUpdateTypeToCapture(updateType);
+    if (capture) { sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates'); runCapturePopup(capture); }
     return;
   }
   if (row === HOME_REFRESH_ROW && col === HOME_REFRESH_COL && newVal === true) {
@@ -3336,18 +3492,31 @@ function splitInputList(value) {
   return String(value || '').split(/[,\n]/).map(function (x) { return x.trim(); }).filter(String);
 }
 
+// v7.4: checklist items carry a `workflow` (matched against
+// COLS.TODO.WORKFLOW) so checkAutoCompletion can resolve them by identity
+// rather than exact display text — see checkAutoCompletion. `text` is
+// kept only as a legacy-text fallback for profiles saved before this
+// version, which never had a `workflow` field.
 function setupChecklistFor(entryPoint, fields) {
   if (entryPoint === 'sectors') {
-    if (!fields.sectorNames) return [{ text: 'List 2-4 sub-sectors worth exploring', tab: 'Today', notes: 'Work this from Today once the sector task appears.' }];
-    return [{ text: 'List 2-4 sub-sectors worth exploring', tab: 'Today', notes: 'Adding a Sub-sector on Sectors raises a Decision asking whether to build an org list there.' }];
+    return [{
+      workflow: 'Sector selection',
+      label: 'List 2-4 sub-sectors worth exploring',
+      text: 'List 2-4 sub-sectors worth exploring',
+      tab: 'Today',
+      notes: 'Adding a Sub-sector on Sectors raises a Decision asking whether to build an org list there.'
+    }];
   }
   var map = {
-    jobs: [{ text: 'Prep application for the captured job', tab: 'Today', notes: 'Want-to-apply jobs create application prep automatically.' }],
-    applications: [{ text: 'Check application response', tab: 'Today', notes: 'Due from the real applied date + 12 days.' }],
-    interviews: [{ text: 'Prepare for the scheduled interview', tab: 'Today', notes: 'The interview round owns prep timing and follow-up.' }],
-    people: [{ text: 'Work the next people action', tab: 'Today', notes: 'Draft outreach, follow up, or arrange a conversation depending on stage.' }],
-    orgs: [{ text: 'Review classified organisations', tab: 'Organisations', notes: 'The status you selected was applied as-is; Active only ever suggests people/job-search work.' }],
-    not_sure: [{ text: 'Clarify the most live part of the search', tab: 'Today', notes: 'Pick one anchor: interview, application, job, person, organisation, or sector.' }]
+    jobs: [{ workflow: 'Application preparation', label: 'Prep application for the captured job', text: 'Prep application for the captured job', tab: 'Tasks', notes: 'Want-to-apply jobs create application prep automatically.' }],
+    applications: [{ workflow: 'Check application response', label: 'Check application response', text: 'Check application response', tab: 'Tasks', notes: 'Due from the real applied date + 12 days.' }],
+    interviews: [{ workflow: 'Interview scheduling', altWorkflows: ['Interview prep (Domain scoping)', 'Interview prep (Fit case)', 'Day-before review'], label: 'Prepare for the scheduled interview', text: 'Prepare for the scheduled interview', tab: 'Tasks', notes: 'The interview round owns prep timing and follow-up.' }],
+    people: [{ workflow: 'Outreach', altWorkflows: ['Send outreach', 'Contact follow-up', 'Reply and arrange conversation'], label: 'Work the next people action', text: 'Work the next people action', tab: 'Tasks', notes: 'Draft outreach, follow up, or arrange a conversation depending on stage.' }],
+    // Org onboarding never creates a Task (it only classifies Organisations
+    // rows) — there is no task-based completion signal to check, so this
+    // item is always considered acknowledged once onboarding runs it.
+    orgs: [{ alwaysDone: true, label: 'Review classified organisations', text: 'Review classified organisations', tab: 'Organisations', notes: 'The status you selected was applied as-is; Active only ever suggests people/job-search work.' }],
+    not_sure: [{ workflow: 'Admin', label: 'Clarify the most live part of the search', text: 'Clarify the most live part of the search', tab: 'Tasks', notes: 'Pick one anchor: interview, application, job, person, organisation, or sector.' }]
   };
   return map[entryPoint] || map.not_sure;
 }
@@ -3635,6 +3804,7 @@ function completeCaptureFromPopup(payload) {
   applyStatusColorCoding();
   applyColumnLayout();
   applyColumnWidths();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated — Tasks and Today refreshed.', 'The Planner', 4);
   return message || 'Saved and refreshed Today.';
 }
 
@@ -3826,7 +3996,7 @@ function colorCodeManualFields() {
   });
   var todaySheet = getSheet('Today');
   if (todaySheet) {
-    [TODAY_CELLS.UPDATE_TYPE, TODAY_CELLS.PRIORITY, TODAY_CELLS.AVAILABLE_MIN, TODAY_CELLS.ENERGY].forEach(function (a1) { todaySheet.getRange(a1).setBackground(MANUAL_COLOR); });
+    [TODAY_CELLS.PRIORITY, TODAY_CELLS.AVAILABLE_MIN, TODAY_CELLS.ENERGY].forEach(function (a1) { todaySheet.getRange(a1).setBackground(MANUAL_COLOR); });
   }
 }
 
@@ -4340,11 +4510,15 @@ function rewriteGuide() {
   var r = 2;
   sheet.getRange(r, 2).setValue('The Planner — Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
 
+  r = writeH2(sheet, r, 'Operating rhythm');
+  r = writeKV(sheet, r, 'Welcome → Resolve → Capture → Plan → Execute → Monitor', 'Home is where the day starts and Pending Decisions get resolved; Today is purely the execution surface.');
+  r++;
+
   r = writeH2(sheet, r, 'The flow');
-  r = writeKV(sheet, r, 'Add/update popup', 'Writes the real source tab (Sectors/Organisations/Jobs/People/Conversations/Interviews).');
+  r = writeKV(sheet, r, 'Add/update popup', 'Writes the real source tab (Sectors/Organisations/Jobs/People/Conversations/Interviews). Lives on Home now.');
   r = writeKV(sheet, r, 'Cascades', 'Create Pending Decisions where judgment is genuinely needed. Creating or classifying an Organisation never floods job/people-search work on its own.');
   r = writeKV(sheet, r, 'Yes on a Decision', 'Creates a Task.');
-  r = writeKV(sheet, r, 'Today', 'Pulls Tasks through a staged priority order and shows up to 3 Pending Decisions.');
+  r = writeKV(sheet, r, 'Today', 'Pulls Tasks through a staged priority order. Pending Decisions and Add/update now live on Home.');
   r = writeKV(sheet, r, 'Completing a Task', 'On Today or Tasks — always routes through the same completion engine, which updates source tabs and can create the next Task or Decision.');
   r++;
 
@@ -4574,7 +4748,7 @@ function onOpen() {
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); }
   catch (err) { Logger.log('onOpen trigger check: ' + err); }
   if (editReady) {
-    ss.toast('The Planner ready. Open Today to start.', 'The Planner', 4);
+    ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
     ss.toast('The Planner loaded, but edit popups are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Add/update popups open reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
