@@ -2323,8 +2323,14 @@ function onEditTasks(sheet, row, col, newVal) {
 // TODAY — the daily operating surface
 // =============================================================
 
+// v7.4: value cells moved off column B — they used to share a cell with
+// their own label (same bug pattern as the old B3 update-type cell: the
+// label write was always clobbered by the value write two lines later,
+// so "Priority / focus"/"Available minutes"/"Energy" never actually
+// rendered). Column D matches the label/value split row 7 already uses
+// (B7 label, D7 value).
 var TODAY_CELLS = {
-  PRIORITY: 'B4', AVAILABLE_MIN: 'B5', ENERGY: 'B6',
+  PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6',
   CAPACITY_FIT: 'D7', DONE_COUNTER: 'C7'
 };
 var TODAY_TABLE_HEADER_ROW = 10;
@@ -2369,7 +2375,7 @@ function bootstrapToday() {
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
 
   sheet.getRange('B7').setValue('Capacity fit').setFontWeight('bold');
-  sheet.getRange(TODAY_CELLS.CAPACITY_FIT).setFormula('=IF(SUMIF(E11:E40,"Commit",D11:D40)<=B5,"OK within capacity","Over capacity - Commit work exceeds available time")').setFontWeight('bold');
+  sheet.getRange(TODAY_CELLS.CAPACITY_FIT).setFormula('=IF(SUMIF(E11:E40,"Commit",D11:D40)<=' + TODAY_CELLS.AVAILABLE_MIN + ',"OK within capacity","Over capacity - Commit work exceeds available time")').setFontWeight('bold');
   sheet.getRange('C7').setValue('Done today').setFontWeight('bold');
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
@@ -2838,7 +2844,7 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 // -------------------------------------------------------------
 
 function onEditToday(sheet, row, col, newVal) {
-  if ((row === 4 || row === 5 || row === 6) && col === 2) { populateToday(); return; }
+  if ((row === 4 || row === 5 || row === 6) && col === 4) { populateToday(); return; }
   if (col !== COLS.TODAY.STATUS || row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
   var todoId = sheet.getRange(row, COLS.TODAY.TODO_ID).getValue();
   if (!todoId) return;
@@ -3123,50 +3129,6 @@ function countOpenTasks() {
   var count = 0;
   statuses.forEach(function (r) { if (['Not started', 'In progress'].indexOf(String(r[0])) !== -1) count++; });
   return count;
-}
-
-function countDueNowTasks() {
-  var sheet = getSheet('Tasks');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.DUE_DATE).getValues();
-  var t = today(), count = 0;
-  data.forEach(function (r) {
-    if (['Not started', 'In progress'].indexOf(String(r[COLS.TODO.STATUS - 1])) === -1) return;
-    var due = r[COLS.TODO.DUE_DATE - 1];
-    if (due && new Date(due) <= t) count++;
-  });
-  return count;
-}
-
-function countUpcomingInterviews() {
-  var sheet = getSheet('Interviews');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ROUNDS.INTERVIEW_DATE).getValues();
-  var t = today(), horizon = addDays(t, 14), count = 0;
-  data.forEach(function (r) {
-    var d = r[COLS.ROUNDS.INTERVIEW_DATE - 1];
-    if (d && new Date(d) >= t && new Date(d) <= horizon) count++;
-  });
-  return count;
-}
-
-function countApplicationsWaiting() {
-  var sheet = getSheet('Jobs');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.REVIEW_DATE).getValues();
-  var t = today(), count = 0;
-  data.forEach(function (r) {
-    if (String(r[COLS.JOBS.STATUS - 1]) !== 'Applied') return;
-    var review = r[COLS.JOBS.REVIEW_DATE - 1];
-    if (!review || new Date(review) <= t) count++;
-  });
-  return count;
-}
-
-function writeHomeMetric(sheet, row, label, value, note) {
-  sheet.getRange(row, 2).setValue(label).setFontWeight('bold').setFontColor('#1B474D');
-  sheet.getRange(row, 3).setValue(value).setFontWeight('bold');
-  if (note) sheet.getRange(row, 4, 1, 3).merge().setValue(note).setWrap(true).setFontColor('#5F625E');
 }
 
 // v7.4: replaces a plain sheet.clear() — clear() alone was found to leave
