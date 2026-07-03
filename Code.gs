@@ -798,11 +798,35 @@ function findDecisionByKey(key) {
   return null;
 }
 
-// Creates a Pending decision. Deduplicated by key — if the same trigger
-// already produced a pending suggestion, it's not created twice.
-function appendPendingDecision(key, trigger, task, targetType, targetId, workflow, notes) {
-  if (!key || findDecisionByKey(key)) return '';
+function findPendingDecisionByKey(key) {
   var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2 || !key) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.DECISIONS.KEY - 1]) === String(key) &&
+        String(data[i][COLS.DECISIONS.DECISION - 1]) === 'Pending') {
+      return { row: i + 2, data: data[i] };
+    }
+  }
+  return null;
+}
+
+// Creates a Pending decision. Deduplicated only against an already-pending
+// row for the same key; historical Yes/No/Auto-dismissed rows are audit
+// history and must not permanently block a legitimate future suggestion.
+function appendPendingDecision(key, trigger, task, targetType, targetId, workflow, notes) {
+  var sheet = ensureDecisionsTab();
+  if (!key || !sheet) return '';
+  var existing = findPendingDecisionByKey(key);
+  if (existing) {
+    sheet.getRange(existing.row, COLS.DECISIONS.TRIGGER).setValue(trigger || '');
+    sheet.getRange(existing.row, COLS.DECISIONS.TASK).setValue(task || '');
+    sheet.getRange(existing.row, COLS.DECISIONS.TARGET_TYPE).setValue(targetType || 'None');
+    sheet.getRange(existing.row, COLS.DECISIONS.TARGET_ID).setValue(targetId || '');
+    sheet.getRange(existing.row, COLS.DECISIONS.WORKFLOW).setValue(workflow || 'Admin');
+    sheet.getRange(existing.row, COLS.DECISIONS.NOTES).setValue(notes || '');
+    return String(existing.data[COLS.DECISIONS.ID - 1] || '');
+  }
   var id = nextId(sheet, COLS.DECISIONS.ID, 'DEC');
   var row = new Array(HEADERS['Pending decisions'].length).fill('');
   row[COLS.DECISIONS.ID - 1] = id;
@@ -853,9 +877,19 @@ function acceptPendingDecision(sheet, row) {
   var targetId = sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue();
   var workflow = sheet.getRange(row, COLS.DECISIONS.WORKFLOW).getValue();
   var notes = sheet.getRange(row, COLS.DECISIONS.NOTES).getValue();
+  var existingTodoId = String(sheet.getRange(row, COLS.DECISIONS.TODO_ID).getValue() || '');
+  if (existingTodoId) {
+    sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    return existingTodoId;
+  }
   var org = resolveOrgForTarget(targetType, targetId);
   var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', '', defaultTimeForWorkflow(workflow), notes, 'Decision');
-  sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId || '');
+  if (!todoId) todoId = findOpenTodoByTaskTarget(task, targetId);
+  if (todoId) {
+    sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId);
+  } else {
+    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[accepted-no-task] Task was not created or found');
+  }
   sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
   return todoId;
 }
@@ -893,7 +927,7 @@ function autoDismissPendingForTarget(targetType, targetId, reason) {
 }
 
 function dismissDecisionByKey(key, reason) {
-  var found = findDecisionByKey(key);
+  var found = findPendingDecisionByKey(key);
   if (!found) return false;
   var sheet = ensureDecisionsTab();
   sheet.getRange(found.row, COLS.DECISIONS.DECISION).setValue('No');
@@ -1101,6 +1135,19 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
     if (st === 'Not started' || st === 'In progress') return true;
   }
   return false;
+}
+
+function findOpenTodoByTaskTarget(task, objId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !task) return '';
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.TASK - 1]) !== String(task)) continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
+    var st = String(data[i][COLS.TODO.STATUS - 1]);
+    if (st === 'Not started' || st === 'In progress') return String(data[i][COLS.TODO.ID - 1] || '');
+  }
+  return '';
 }
 
 function appendTodo(task, objType, objId, org, workflow, status, dueDate, timeEst, notes) {
