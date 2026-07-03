@@ -811,6 +811,16 @@ function findPendingDecisionByKey(key) {
   return null;
 }
 
+function getDecisionRowById(decisionId) {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2 || !decisionId) return null;
+  var ids = sheet.getRange(2, COLS.DECISIONS.ID, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]) === String(decisionId)) return { sheet: sheet, row: i + 2 };
+  }
+  return null;
+}
+
 // Creates a Pending decision. Deduplicated only against an already-pending
 // row for the same key; historical Yes/No/Auto-dismissed rows are audit
 // history and must not permanently block a legitimate future suggestion.
@@ -880,7 +890,7 @@ function acceptPendingDecision(sheet, row) {
   var existingTodoId = String(sheet.getRange(row, COLS.DECISIONS.TODO_ID).getValue() || '');
   if (existingTodoId) {
     sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-    return existingTodoId;
+    return { ok: true, todoId: existingTodoId, reused: true };
   }
   var org = resolveOrgForTarget(targetType, targetId);
   var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', '', defaultTimeForWorkflow(workflow), notes, 'Decision');
@@ -888,21 +898,27 @@ function acceptPendingDecision(sheet, row) {
   if (todoId) {
     sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId);
   } else {
-    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[accepted-no-task] Task was not created or found');
+    sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Pending');
+    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[yes-failed] Task was not created or found');
+    return { ok: false, todoId: '', reason: 'Task was not created or found' };
   }
   sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-  return todoId;
+  return { ok: true, todoId: todoId, reused: false };
 }
 
 function onEditDecisions(sheet, row, col, newVal) {
   if (row <= 1 || col !== COLS.DECISIONS.DECISION) return;
   var decision = String(newVal || '');
   if (DROPDOWNS.DECISION.indexOf(decision) === -1) return;
-  if (decision === 'Yes') acceptPendingDecision(sheet, row);
+  var accepted = null;
+  if (decision === 'Yes') accepted = acceptPendingDecision(sheet, row);
   if (decision === 'No' || decision === 'Auto-dismissed') sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
   renderTodayDecisionCards();
   refreshHome();
-  if (decision === 'Yes') populateToday();
+  if (decision === 'Yes' && accepted && accepted.ok) populateToday();
+  if (decision === 'Yes' && (!accepted || !accepted.ok)) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
+  }
 }
 
 // System-only: when the underlying source state changes in a way that
@@ -2838,20 +2854,26 @@ function handleDecisionAction(sheet, action, decisionId) {
   sheet.getRange('G' + HOME_DECISIONS_ACTION_ROW).setValue('');
   if (['Yes', 'No'].indexOf(action) === -1) return;
   if (!decisionId) return;
-  var decisions = ensureDecisionsTab();
-  if (!decisions || decisions.getLastRow() < 2) return;
-  var ids = decisions.getRange(2, COLS.DECISIONS.ID, decisions.getLastRow() - 1, 1).getValues();
-  for (var i = 0; i < ids.length; i++) {
-    if (String(ids[i][0]) !== String(decisionId)) continue;
-    var row = i + 2;
-    decisions.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
-    if (action === 'Yes') acceptPendingDecision(decisions, row);
-    if (action === 'No') decisions.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  var found = getDecisionRowById(decisionId);
+  if (!found) return;
+  var decisions = found.sheet;
+  var row = found.row;
+  if (String(decisions.getRange(row, COLS.DECISIONS.DECISION).getValue()) !== 'Pending') {
     renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
-    if (action === 'Yes') populateToday();
-    SpreadsheetApp.getActiveSpreadsheet().toast(action === 'Yes' ? 'Decision promoted to a Task.' : 'Decision dismissed.', 'The Planner', 3);
+    SpreadsheetApp.getActiveSpreadsheet().toast('That decision was already resolved. Home has been refreshed.', 'The Planner', 4);
     return;
   }
+  decisions.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
+  var accepted = null;
+  if (action === 'Yes') accepted = acceptPendingDecision(decisions, row);
+  if (action === 'No') decisions.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
+  if (action === 'Yes' && accepted && accepted.ok) populateToday();
+  if (action === 'Yes' && (!accepted || !accepted.ok)) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
+    return;
+  }
+  SpreadsheetApp.getActiveSpreadsheet().toast(action === 'Yes' ? 'Decision promoted to a Task.' : 'Decision dismissed.', 'The Planner', 3);
 }
 
 // -------------------------------------------------------------
