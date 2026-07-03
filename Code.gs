@@ -250,7 +250,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.4';
+var SCRIPT_VERSION = 'v7.5';
 
 var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
@@ -290,6 +290,9 @@ var DROPDOWNS = {
   OFFICIAL_OUTCOME: ['Waiting', 'Next round', 'Rejected', 'Offer', 'Parked'],
 
   TODAY_STATUS: ['Planned', 'In progress', 'Done', 'Deferred', 'Skipped'],
+  // v7.4: Option rows get a smaller status list — 'Pull in' promotes the
+  // row into Commit on the spot instead of waiting for the next refresh.
+  TODAY_STATUS_OPTION: ['Deferred', 'Pull in'],
   TODAY_ENERGY: ['Low', 'Normal', 'High'],
   TODAY_PRIORITY: ['Default', 'Applications', 'Networking', 'Interviews', 'Pipeline building', 'Admin / light day'],
   TODAY_UPDATE_TYPES: [
@@ -1066,6 +1069,15 @@ function runQueueHygiene() {
         appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[review] \u26a0 Stale');
       }
     }
+    // v7.4 \u00a74.1: Multi-day tasks are excluded from collectTaskPool
+    // entirely (estMin === null), so they'd otherwise sit invisible
+    // forever while Today reports itself fully planned. Flag them for
+    // the "Needs breakdown" mini-section instead \u2014 unless they've
+    // already been broken down into real sub-tasks (\u00a74.2 guard).
+    if (String(row[COLS.TODO.TIME_EST - 1]) === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS) {
+      var todoId = String(row[COLS.TODO.ID - 1]);
+      if (!hasSubtasks(todoId)) appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+    }
   }
 }
 
@@ -1235,6 +1247,7 @@ function completeTodoRow(sheet, row, status, options) {
     if (!sheet.getRange(row, COLS.TODO.COMPLETED).getValue()) sheet.getRange(row, COLS.TODO.COMPLETED).setValue(today());
     if (target === 'Done' && !alreadyTerminal) routeTodoCompletion(getTodoByRow(sheet, row), options);
     if (target === 'Skipped' && !alreadyTerminal) handleSkipCascade(sheet, row);
+    if (target === 'Cancelled' && !alreadyTerminal) handleCancelCascade(sheet, row);
     syncTodayRowForTodo(row, target);
     renderTodayDecisionCards();
     refreshHome();
@@ -1371,6 +1384,35 @@ function handleSkipCascade(todoSheet, row) {
       var rounds = getSheet('Interviews');
       if (rounds) flagLinkedRow(rounds, COLS.ROUNDS.ID, objId, COLS.ROUNDS.NOTES, '\u26a0 Scheduling skipped — cancel round?');
       break;
+  }
+}
+
+// v7.4 §3.2: a manual single-row Cancel is the identical trigger
+// condition as manual Skip (system-driven bulk cancellation, e.g.
+// setOpenTodosForTarget when a Job closes, never goes through
+// completeTodoRow at all) — so it deserves the same cascade, unless the
+// linked source object is already terminal and would make the flag
+// redundant noise.
+function isSourceObjectTerminal(objType, objId) {
+  if (objType === 'Job') { var j = getJobRowById(objId); return j && ['Closed', 'Parked'].indexOf(String(j.status)) !== -1; }
+  if (objType === 'Organisation') { var o = getOrgById(objId); return o && ['Archived', 'Dormant'].indexOf(String(o.status)) !== -1; }
+  if (objType === 'Person') { var p = getPersonRowById(objId); return p && String(p.stage) === 'Closed'; }
+  return false;
+}
+
+function handleCancelCascade(todoSheet, row) {
+  var objType = String(todoSheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue());
+  var objId = String(todoSheet.getRange(row, COLS.TODO.OBJ_ID).getValue());
+  if (!objId || isSourceObjectTerminal(objType, objId)) return; // parent already answers this — don't add noise
+  switch (String(todoSheet.getRange(row, COLS.TODO.WORKFLOW).getValue())) {
+    case 'Org research':
+      var org = getSheet('Organisations'); if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '⚠ Task cancelled — decide activation'); break;
+    case 'Application preparation': case 'Submit application':
+      var jobs = getSheet('Jobs'); if (jobs) flagLinkedRow(jobs, COLS.JOBS.ID, objId, COLS.JOBS.NOTES, '⚠ Task cancelled — Park or Close?'); break;
+    case 'Outreach': case 'Send outreach':
+      var people = getSheet('People'); if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '⚠ Task cancelled — Identified or Closed?'); break;
+    case 'Interview scheduling':
+      var rounds = getSheet('Interviews'); if (rounds) flagLinkedRow(rounds, COLS.ROUNDS.ID, objId, COLS.ROUNDS.NOTES, '⚠ Task cancelled — cancel round?'); break;
   }
 }
 
@@ -2107,7 +2149,9 @@ function editMayNeedUi(e) {
   var row = e.range.getRow();
   var col = e.range.getColumn();
   if (name === 'Home') return true;
-  if (name === 'Today' && row === 3 && col === 2) return true;
+  // v7.4 §1.6: endOfDayReconcile() calls ui.alert(...) in a loop — needs
+  // the installable trigger, not the simple one, same as Home's popups.
+  if (name === 'Today' && row === TODAY_ENDOFDAY_ROW && col === TODAY_ENDOFDAY_COL) return true;
   if (name === 'Organisations' && col === COLS.ORGS.NAME) return true;
   if (name === 'Jobs' && (col === COLS.JOBS.OPPORTUNITY || col === COLS.JOBS.ORG)) return true;
   if (name === 'People' && (col === COLS.PEOPLE.NAME || col === COLS.PEOPLE.ORG)) return true;
@@ -2330,12 +2374,33 @@ function onEditTasks(sheet, row, col, newVal) {
 // rendered). Column D matches the label/value split row 7 already uses
 // (B7 label, D7 value).
 var TODAY_CELLS = {
-  PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6',
-  CAPACITY_FIT: 'D7', DONE_COUNTER: 'C7'
+  PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6'
 };
 var TODAY_TABLE_HEADER_ROW = 10;
 var TODAY_TABLE_FIRST_ROW = 11;
 var TODAY_TABLE_LAST_ROW = 40;
+
+// v7.4: sections below the Commit/Options table — "Needs breakdown"
+// (Multi-day Phase 1), "Progress" (replaces the capacity-fit formula +
+// done counter), and "End of day" (relocated from a menu-only action).
+var TODAY_NEEDS_BREAKDOWN_HEADER_ROW = 42;
+var TODAY_NEEDS_BREAKDOWN_FIRST_ROW = 43;
+var TODAY_NEEDS_BREAKDOWN_LAST_ROW = 47;   // 5 rows max
+
+var TODAY_PROGRESS_HEADER_ROW = 49;
+var TODAY_PROGRESS_LINE1_ROW = 50;
+var TODAY_PROGRESS_LINE2_ROW = 51;
+
+var TODAY_ENDOFDAY_HEADER_ROW = 53;
+var TODAY_ENDOFDAY_ROW = 54;
+var TODAY_ENDOFDAY_COL = 2;
+
+// Multi-day tasks flagged [needs breakdown] after this many days
+// untouched (see runQueueHygiene) — same idiom as the other staleness
+// thresholds there, picked to sit between the "HOT" (>3d) and "stale
+// active pursuit" (>=10d) thresholds since an un-broken-down Multi-day
+// task is invisible to Today the whole time, not just occasionally.
+var MULTIDAY_NEEDS_BREAKDOWN_DAYS = 5;
 
 function parseTimeEst(timeStr) {
   if (!timeStr) return 30;
@@ -2359,11 +2424,16 @@ function bootstrapToday() {
 
   sheet.getRange('A1:I1').merge().setValue('Today').setFontSize(16).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
-  sheet.getRange('B3:I3').merge()
-    .setValue('Add updates and review Pending Decisions from Home. This tab is the daily task list.')
-    .setFontColor('#5F625E').setWrap(true).setFontStyle('italic');
+  // Row 2: friendly plan-built date. Stays a real Date value (formatted,
+  // not stringified) so collectPreviousTodayState's same-day check still
+  // works unchanged — only the display format changes.
+  sheet.getRange('B2:I2').merge().setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
 
-  sheet.getRange('B4').setValue('Priority / focus').setFontWeight('bold');
+  // Row 3: plan-summary headline — populateTodayImpl fills in the real
+  // counts once stagedTodaySelection has run; this just lays out the cell.
+  sheet.getRange('B3:I3').merge().setFontWeight('bold').setFontColor('#1B474D').setWrap(true);
+
+  sheet.getRange('B4').setValue('Focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
   setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
 
@@ -2374,10 +2444,6 @@ function bootstrapToday() {
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
 
-  sheet.getRange('B7').setValue('Capacity fit').setFontWeight('bold');
-  sheet.getRange(TODAY_CELLS.CAPACITY_FIT).setFormula('=IF(SUMIF(E11:E40,"Commit",D11:D40)<=' + TODAY_CELLS.AVAILABLE_MIN + ',"OK within capacity","Over capacity - Commit work exceeds available time")').setFontWeight('bold');
-  sheet.getRange('C7').setValue('Done today').setFontWeight('bold');
-
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.EST_MIN, 30, 1).setNumberFormat('0');
@@ -2385,6 +2451,15 @@ function bootstrapToday() {
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.TASK, 30, 1).setWrap(true);
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setWrap(true);
   sheet.setFrozenRows(TODAY_TABLE_HEADER_ROW);
+
+  sheet.getRange(TODAY_NEEDS_BREAKDOWN_HEADER_ROW, 2, 1, 7).merge().setValue('Needs breakdown').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+
+  sheet.getRange(TODAY_PROGRESS_HEADER_ROW, 2, 1, 7).merge().setValue('Progress').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+
+  sheet.getRange(TODAY_ENDOFDAY_HEADER_ROW, 2, 1, 7).merge().setValue('End of day').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+  sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL + 1, 1, 6).merge()
+    .setValue('Wrap up unfinished tasks').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
 
   applyTodayTableHeaderStyle();
 }
@@ -2433,11 +2508,15 @@ function splitTodayNotes(notes) {
   return { tags: tags, userNote: userNote };
 }
 
-function composeTodayNotes(tags, reason, userNote) {
+// v7.4: no longer embeds the system "Why: <reason>" explanation — that
+// now lives in the cell's note (see writeTodayRow) so the visible value
+// is just tags + the user's own text. splitTodayNotes still strips a
+// leading "Why: ..." if one is found (old rows self-heal to the new
+// format on their first refresh after deploy — no migration needed).
+function composeTodayNotes(tags, userNote) {
   var out = tags ? tags + ' ' : '';
-  out += 'Why: ' + (reason || 'selected for today');
-  if (userNote) out += ' | ' + userNote;
-  return out;
+  out += userNote || '';
+  return out.trim();
 }
 
 function collectPreviousTodayState(sheet) {
@@ -2475,7 +2554,51 @@ function collectPreviousTodayState(sheet) {
 
 // Full candidate pool: every open Task (Not started / In progress) with
 // a real time estimate, plus the metadata the waterfall stages need.
-function collectTaskPool(focus) {
+// v7.4 §2.1: single bulk read of Organisations/Jobs/People, built once per
+// populateToday() call, so each pooled task resolves its org's Tier via
+// lookup instead of a per-task sheet call. Tier only ever breaks ties
+// between tasks that already landed in the same stage/class — it never
+// changes what commitment class a task gets.
+function buildOrgTierLookup() {
+  var tierByOrgId = {};
+  var orgsSheet = getSheet('Organisations');
+  if (orgsSheet && orgsSheet.getLastRow() > 1) {
+    orgsSheet.getRange(2, 1, orgsSheet.getLastRow() - 1, COLS.ORGS.TIER).getValues().forEach(function (r) {
+      tierByOrgId[String(r[COLS.ORGS.ID - 1])] = String(r[COLS.ORGS.TIER - 1] || '');
+    });
+  }
+  var orgIdByJobId = {};
+  var jobsSheet = getSheet('Jobs');
+  if (jobsSheet && jobsSheet.getLastRow() > 1) {
+    jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, COLS.JOBS.ORG_ID).getValues().forEach(function (r) {
+      orgIdByJobId[String(r[COLS.JOBS.ID - 1])] = String(r[COLS.JOBS.ORG_ID - 1] || '');
+    });
+  }
+  var orgIdByPersonId = {};
+  var peopleSheet = getSheet('People');
+  if (peopleSheet && peopleSheet.getLastRow() > 1) {
+    peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.ORG_ID).getValues().forEach(function (r) {
+      orgIdByPersonId[String(r[COLS.PEOPLE.ID - 1])] = String(r[COLS.PEOPLE.ORG_ID - 1] || '');
+    });
+  }
+  return {
+    tierFor: function (objType, objId) {
+      var orgId = '';
+      if (objType === 'Organisation') orgId = String(objId || '');
+      else if (objType === 'Job') orgId = orgIdByJobId[String(objId || '')] || '';
+      else if (objType === 'Person') orgId = orgIdByPersonId[String(objId || '')] || '';
+      var tier = tierByOrgId[orgId] || '';
+      // No resolvable org/tier sorts after every real tier (A/B/C).
+      return DROPDOWNS.ORG_TIER.indexOf(tier) !== -1 ? tier : 'D';
+    }
+  };
+}
+
+function compareTier(a, b) {
+  return a.tier < b.tier ? -1 : (a.tier > b.tier ? 1 : 0);
+}
+
+function collectTaskPool(focus, tierLookup) {
   var todoSheet = getSheet('Tasks');
   if (!todoSheet || todoSheet.getLastRow() < 2) return [];
   var data = todoSheet.getRange(2, 1, todoSheet.getLastRow() - 1, COLS.TODO.EFFORT_TYPE).getValues();
@@ -2492,18 +2615,20 @@ function collectTaskPool(focus) {
     var dueDate = data[i][COLS.TODO.DUE_DATE - 1];
     var workflow = String(data[i][COLS.TODO.WORKFLOW - 1] || '');
     var objType = String(data[i][COLS.TODO.OBJ_TYPE - 1] || '');
+    var objId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
     var isDue = !dueDate || new Date(dueDate) <= todayDate;
     if (cls === 'Keep-alive' && !isDue) continue; // not due yet — stays hidden in Tasks
 
     pool.push({
       todoId: String(data[i][COLS.TODO.ID - 1]),
-      task: task, org: String(data[i][COLS.TODO.ORG - 1] || ''),
+      task: task, org: String(data[i][COLS.TODO.ORG - 1] || ''), objId: objId,
       workflow: workflow, objType: objType,
       cls: cls, dueDate: dueDate, estMin: estMin,
       effort: String(data[i][COLS.TODO.EFFORT_TYPE - 1] || ''),
       source: String(data[i][COLS.TODO.SOURCE - 1] || ''),
       created: data[i][COLS.TODO.CREATED - 1],
-      focusMatch: taskMatchesFocus(workflow, objType, focus)
+      focusMatch: taskMatchesFocus(workflow, objType, focus),
+      tier: tierLookup ? tierLookup.tierFor(objType, objId) : 'D'
     });
   }
   return pool;
@@ -2519,22 +2644,51 @@ function taskMatchesFocus(workflow, objType, focus) {
   return true;
 }
 
+// v7.4 §2.5: honest "Fixed" labeling — a genuinely immovable task
+// (Day-before review) keeps the plain label; a task that's only Fixed
+// because a date threshold tripped (assignCommitmentClass) says so.
 function reasonForStage(stageLabel, item) {
-  var bits = [stageLabel];
+  var dueBit = '';
   if (item && item.dueDate) {
     var d = daysBetween(today(), new Date(item.dueDate));
-    if (d < 0) bits.push('overdue');
-    else if (d === 0) bits.push('due today');
-    else bits.push('due in ' + d + 'd');
+    dueBit = d < 0 ? 'overdue' : (d === 0 ? 'due today' : 'due in ' + d + 'd');
   }
+  if (stageLabel === 'Fixed' && item && item.workflow && item.workflow !== 'Day-before review') {
+    var subject = item.workflow === 'Interview scheduling' ? 'interview' : 'application';
+    return 'Fixed (auto: ' + subject + (dueBit ? ' ' + dueBit.replace(/^due /, '') : '') + ')';
+  }
+  var bits = [stageLabel];
+  if (dueBit) bits.push(dueBit);
   return bits.join(' — ');
 }
 
 // The staged selector itself. Returns { commit: [...], options: [...] }.
-function stagedTodaySelection(previousState, availableMinutes, focus) {
-  var pool = collectTaskPool(focus);
+// Shared tie-break comparator: (dueDate asc, tier asc, createdDate asc).
+// When energyLow is true, Deep-effort candidates sink to the bottom
+// first (§5) — a soft bias, applied only in the stages that opt in.
+function compareForStage(energyLow) {
+  return function (a, b) {
+    if (energyLow) {
+      var aDeep = a.effort === 'Deep', bDeep = b.effort === 'Deep';
+      if (aDeep !== bDeep) return aDeep ? 1 : -1;
+    }
+    var ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+    var bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+    if (ad !== bd) return ad - bd;
+    if (a.tier !== b.tier) return compareTier(a, b);
+    var ac = a.created ? new Date(a.created).getTime() : 0;
+    var bc = b.created ? new Date(b.created).getTime() : 0;
+    return ac - bc;
+  };
+}
+
+// The staged selector itself. Returns { commit: [...], options: [...] }.
+function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
+  var tierLookup = buildOrgTierLookup();
+  var pool = collectTaskPool(focus, tierLookup);
   var byId = {};
   pool.forEach(function (p) { byId[p.todoId] = p; });
+  var energyLow = energy === 'Low';
 
   var commit = [];
   var options = [];
@@ -2586,21 +2740,30 @@ function stagedTodaySelection(previousState, availableMinutes, focus) {
     .forEach(function (p) { addCommit(p, reasonForStage('Fixed', p)); });
 
   // Stage 4 — Blocking work. Same treatment as Fixed: always included.
+  // §2.1: now sorted (dueDate asc, tier asc, createdDate asc) — no
+  // energy bias here, Blocking work isn't optional regardless of energy.
   pool.filter(function (p) { return p.cls === 'Blocking' && !usedIds[p.todoId]; })
+    .sort(compareForStage(false))
     .forEach(function (p) { addCommit(p, reasonForStage('Blocking', p)); });
 
   // Stage 5 — due/overdue Keep-alive work. Capacity-gated from here on.
+  // §2.1: due date stays primary; Tier only breaks same-day ties.
   pool.filter(function (p) { return p.cls === 'Keep-alive' && !usedIds[p.todoId]; })
-    .sort(function (a, b) { return (a.dueDate ? new Date(a.dueDate) : new Date(0)) - (b.dueDate ? new Date(b.dueDate) : new Date(0)); })
+    .sort(function (a, b) {
+      var ad = a.dueDate ? new Date(a.dueDate).getTime() : 0;
+      var bd = b.dueDate ? new Date(b.dueDate).getTime() : 0;
+      return ad !== bd ? ad - bd : compareTier(a, b);
+    })
     .forEach(function (p) {
       if (minutesUsed + p.estMin <= capacity) addCommit(p, reasonForStage('Keep-alive due', p));
       else { var pv = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'keep-alive, ran out of capacity today', tags: pv.tags, userNote: pv.userNote }); }
       usedIds[p.todoId] = true;
     });
 
-  // Stage 6 — Active pursuit matching focus.
+  // Stage 6 — Active pursuit matching focus. §2.1/§5: (dueDate, tier,
+  // created) tie-break, with Low-energy sinking Deep-effort candidates.
   pool.filter(function (p) { return p.cls === 'Active pursuit' && !usedIds[p.todoId] && p.focusMatch; })
-    .sort(function (a, b) { return (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1); })
+    .sort(compareForStage(energyLow))
     .forEach(function (p) {
       usedIds[p.todoId] = true;
       if (minutesUsed + p.estMin <= capacity) addCommit(p, reasonForStage('active pursuit' + (focus && focus !== 'Default' ? ', matches ' + focus + ' focus' : ''), p));
@@ -2608,8 +2771,11 @@ function stagedTodaySelection(previousState, availableMinutes, focus) {
     });
 
   // Stage 7 — at most ONE pipeline-building task, only if capacity remains.
+  // §2.2: Tier now comes before age (was pure FIFO) — same comparator as
+  // Active pursuit, so a newly-important Tier-A item no longer waits
+  // behind an older Tier-C one. §5: Low energy still sinks Deep-effort.
   var pipelineCandidates = pool.filter(function (p) { return p.cls === 'Pipeline-building' && !usedIds[p.todoId]; })
-    .sort(function (a, b) { return (a.created ? new Date(a.created) : new Date(0)) - (b.created ? new Date(b.created) : new Date(0)); });
+    .sort(compareForStage(energyLow));
   if (pipelineCandidates.length) {
     var chosen = pipelineCandidates[0];
     usedIds[chosen.todoId] = true;
@@ -2617,6 +2783,18 @@ function stagedTodaySelection(previousState, availableMinutes, focus) {
     else { var pv3 = preserved(chosen.todoId); options.push({ todoId: chosen.todoId, task: chosen.task, estMin: chosen.estMin, effort: chosen.effort, reason: 'pipeline-building, no capacity left today', tags: pv3.tags, userNote: pv3.userNote }); }
     pipelineCandidates.slice(1).forEach(function (p) { usedIds[p.todoId] = true; }); // stays hidden in Tasks — Stage 10
   }
+
+  // Stage 8 — Focus fallback (§2.4): if capacity remains, pull Active
+  // pursuit work that Focus excluded rather than leaving capacity idle.
+  // Soft preference, not a hard filter — labeled distinctly so it reads
+  // as a fill, not a focus match.
+  pool.filter(function (p) { return p.cls === 'Active pursuit' && !usedIds[p.todoId]; })
+    .sort(compareForStage(energyLow))
+    .forEach(function (p) {
+      usedIds[p.todoId] = true;
+      if (minutesUsed + p.estMin <= capacity) addCommit(p, 'active pursuit — outside today\'s focus, capacity available');
+      else { var pv5 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, outside focus, near miss on capacity', tags: pv5.tags, userNote: pv5.userNote }); }
+    });
 
   // Stage 9 — remaining near-misses (Backlog-tier or anything left over
   // that's close to fitting) go to Options, capped at 6.
@@ -2647,10 +2825,11 @@ function populateTodayImpl() {
   var availableMinutes = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10);
   if (isNaN(availableMinutes) || availableMinutes <= 0) availableMinutes = 90;
   var focus = String(sheet.getRange(TODAY_CELLS.PRIORITY).getValue() || 'Default');
+  var energy = String(sheet.getRange(TODAY_CELLS.ENERGY).getValue() || 'Normal');
 
-  var selection = stagedTodaySelection(previousState, availableMinutes, focus);
+  var selection = stagedTodaySelection(previousState, availableMinutes, focus, energy);
 
-  sheet.getRange('B2').setValue(today()).setNumberFormat('yyyy-mm-dd');
+  sheet.getRange('B2').setValue(today());
   sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent();
 
   var row = TODAY_TABLE_FIRST_ROW;
@@ -2668,13 +2847,81 @@ function populateTodayImpl() {
       writeTodayRow(sheet, row++, idx + 1, item, 'Option');
     });
   }
+  applyTodayRowStatusDropdowns(sheet);
+
+  var headline = selection.commit.length
+    ? 'Today’s plan is ready — ' + selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's') +
+      ' · ' + selection.minutesUsed + ' min planned · ' + selection.bufferMin + ' min spare'
+    : 'Today’s plan is ready — nothing committed yet.';
+  sheet.getRange('B3').setValue(headline);
 
   renderTodayDecisionCards();
+  renderNeedsBreakdown(sheet);
+  updateTodayProgress(sheet);
   refreshHome();
-  updateDoneTodayCounter(sheet);
   var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + selection.bufferMin + ' min buffer kept.';
   if (overflowCount > 0) toastMsg = overflowCount + ' committed task(s) did not fit on Today - see Tasks. ' + toastMsg;
   SpreadsheetApp.getActiveSpreadsheet().toast(toastMsg, 'The Planner', 6);
+}
+
+// v7.4 §1.4: Option rows get a smaller dropdown ('Deferred'/'Pull in')
+// than Commit rows — re-applied after every populate since row roles
+// (Commit vs Option) shift on each refresh. Also the authoritative
+// dropdown setter for applySheetDropdowns('Today')/refreshAllDropdowns,
+// so a full refresh can't blanket-overwrite Option rows back to the
+// Commit-only list.
+function applyTodayRowStatusDropdowns(sheet) {
+  for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+    var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
+    var values = slot.indexOf('O') === 0 ? DROPDOWNS.TODAY_STATUS_OPTION : DROPDOWNS.TODAY_STATUS;
+    setDropdown(sheet.getRange(r, COLS.TODAY.STATUS), values);
+  }
+}
+
+// v7.4 §4.2 guard: a Multi-day task that's already been broken down
+// isn't abandoned, it's handled — runQueueHygiene must not flag it.
+function hasSubtasks(todoId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !todoId) return false;
+  var parentIds = sheet.getRange(2, COLS.TODO.PARENT_ID, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < parentIds.length; i++) {
+    if (String(parentIds[i][0]) === String(todoId)) return true;
+  }
+  return false;
+}
+
+// v7.4 §4.1: Multi-day tasks flagged [needs breakdown] by runQueueHygiene.
+function collectNeedsBreakdownTasks(limit) {
+  limit = limit || 5;
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.NOTES).getValues();
+  var out = [];
+  for (var i = 0; i < data.length && out.length < limit; i++) {
+    var status = String(data[i][COLS.TODO.STATUS - 1]);
+    if (status !== 'Not started' && status !== 'In progress') continue;
+    var notes = String(data[i][COLS.TODO.NOTES - 1] || '');
+    if (notes.indexOf('[needs breakdown]') === -1) continue;
+    out.push({ todoId: String(data[i][COLS.TODO.ID - 1]), task: String(data[i][COLS.TODO.TASK - 1] || '') });
+  }
+  return out;
+}
+
+function renderNeedsBreakdown(sheet) {
+  sheet = sheet || getSheet('Today');
+  if (!sheet) return;
+  var limit = TODAY_NEEDS_BREAKDOWN_LAST_ROW - TODAY_NEEDS_BREAKDOWN_FIRST_ROW + 1;
+  var items = collectNeedsBreakdownTasks(limit);
+  try { sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).breakApart(); } catch (err) { /* not merged, ignore */ }
+  sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).clearContent();
+  if (!items.length) {
+    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs breaking down.').setFontColor('#5F625E');
+    return;
+  }
+  items.forEach(function (item, idx) {
+    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
+      .setValue(item.task + ' — use Row actions → Break down (on Tasks)').setFontColor('#964219');
+  });
 }
 
 function writeTodayRow(sheet, row, slot, item, treatment) {
@@ -2687,20 +2934,33 @@ function writeTodayRow(sheet, row, slot, item, treatment) {
   var status = item.preserveStatus || (treatment === 'Commit' ? 'Planned' : 'Deferred');
   sheet.getRange(row, COLS.TODAY.STATUS).setValue(status);
   if (item.preserveActual) sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).setValue(item.preserveActual);
-  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(item.tags, item.reason, item.userNote));
+  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(item.tags, item.userNote))
+    .setNote('Why: ' + (item.reason || 'selected for today'));
 }
 
-function updateDoneTodayCounter(sheet) {
+// v7.4 §1.5: replaces the capacity-fit formula + done counter with a
+// two-line completion framing. Only Commit rows count (Slot not
+// starting with 'O') — Options were never part of today's commitment.
+function updateTodayProgress(sheet) {
   sheet = sheet || getSheet('Today');
   if (!sheet) return;
-  var doneCount = 0, doneMin = 0;
+  var totalCommit = 0, doneCommit = 0, plannedMin = 0, doneMin = 0;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+    var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
+    if (!slot || slot.indexOf('O') === 0) continue;
+    var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
+    if (!task) continue;
+    totalCommit++;
+    var estMin = parseInt(sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
+    plannedMin += estMin;
     if (String(sheet.getRange(r, COLS.TODAY.STATUS).getValue()) === 'Done') {
-      doneCount++;
-      doneMin += parseInt(sheet.getRange(r, COLS.TODAY.ACTUAL_MIN).getValue() || sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
+      doneCommit++;
+      var actualMin = parseInt(sheet.getRange(r, COLS.TODAY.ACTUAL_MIN).getValue(), 10);
+      doneMin += (actualMin || estMin);
     }
   }
-  sheet.getRange(TODAY_CELLS.DONE_COUNTER).setValue(doneCount ? doneCount + ' done / ' + doneMin + ' min' : '').setFontColor('#437A22').setFontWeight('bold');
+  sheet.getRange(TODAY_PROGRESS_LINE1_ROW, 2, 1, 7).merge().setValue(doneCommit + ' of ' + totalCommit + ' tasks done').setFontWeight('bold').setFontColor('#1B474D');
+  sheet.getRange(TODAY_PROGRESS_LINE2_ROW, 2, 1, 7).merge().setValue(doneMin + ' of ' + plannedMin + ' planned minutes completed').setFontColor('#5F625E');
 }
 
 // -------------------------------------------------------------
@@ -2845,10 +3105,28 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 
 function onEditToday(sheet, row, col, newVal) {
   if ((row === 4 || row === 5 || row === 6) && col === 4) { populateToday(); return; }
+  if (row === TODAY_ENDOFDAY_ROW && col === TODAY_ENDOFDAY_COL && newVal === true) {
+    sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL).setValue(false);
+    endOfDayReconcile();
+    return;
+  }
   if (col !== COLS.TODAY.STATUS || row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
+  var status = String(newVal || '');
+
+  // v7.4 §1.4: Option rows carry a smaller dropdown ('Deferred'/'Pull
+  // in'). Pulling one in promotes it to Commit on the spot instead of
+  // waiting for the next manual refresh.
+  var slotVal = String(sheet.getRange(row, COLS.TODAY.SLOT).getValue() || '');
+  if (slotVal.indexOf('O') === 0 && status === 'Pull in') {
+    var existingNotes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
+    if (existingNotes.indexOf('[pulled]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[pulled] ' + existingNotes);
+    sheet.getRange(row, COLS.TODAY.STATUS).setValue('Deferred');
+    populateToday();
+    return;
+  }
+
   var todoId = sheet.getRange(row, COLS.TODAY.TODO_ID).getValue();
   if (!todoId) return;
-  var status = String(newVal || '');
   if (status === 'Deferred') {
     var todoSheet = getSheet('Tasks');
     if (todoSheet) {
@@ -2857,6 +3135,15 @@ function onEditToday(sheet, row, col, newVal) {
         todoSheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Not started');
         todoSheet.getRange(todo.row, COLS.TODO.DUE_DATE).setValue(addDays(today(), 3));
         todoSheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+        // v7.4 §3.1: onEditTasks already recalculates Commitment class
+        // whenever the due date changes — Today's own Deferred push
+        // never did, so a deferred task could stay misclassified (e.g.
+        // still Fixed on a due date no longer within threshold) until
+        // the nightly recalculateCommitmentClasses caught up.
+        todoSheet.getRange(todo.row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
+          String(todoSheet.getRange(todo.row, COLS.TODO.WORKFLOW).getValue()), todoSheet.getRange(todo.row, COLS.TODO.DUE_DATE).getValue(),
+          String(todoSheet.getRange(todo.row, COLS.TODO.OBJ_ID).getValue()), String(todoSheet.getRange(todo.row, COLS.TODO.OBJ_TYPE).getValue())));
+        todoSheet.getRange(todo.row, COLS.TODO.CLASS_CALC_AT).setValue(today());
       }
     }
     return;
@@ -2865,7 +3152,7 @@ function onEditToday(sheet, row, col, newVal) {
     sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).setValue(sheet.getRange(row, COLS.TODAY.EST_MIN).getValue() || '');
   }
   completeTodo(String(todoId), status, { source: 'today' });
-  updateDoneTodayCounter(sheet);
+  updateTodayProgress(sheet);
 }
 
 // -------------------------------------------------------------
@@ -4152,7 +4439,9 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.ROUNDS.OFFICIAL_OUTCOME, maxRow, 1), DROPDOWNS.OFFICIAL_OUTCOME);
       break;
     case 'Today':
-      setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
+      // v7.4: per-row, not blanket — Option rows need the smaller
+      // 'Deferred'/'Pull in' list, not the full Commit-row status list.
+      applyTodayRowStatusDropdowns(sheet);
       break;
     case 'Decisions':
       setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, maxRow, 1), DROPDOWNS.DECISION);
@@ -4397,6 +4686,85 @@ function rowActionAddInterviewRound() {
   createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
 }
 
+// v7.4 §4.2 — Multi-day Phase 2: break a Multi-day Task into real
+// sub-tasks via the dormant Parent To-do ID hook, rather than
+// special-casing Multi-day around the waterfall permanently.
+function rowActionBreakDownSelectedTask() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  var todoId = String(sheet.getRange(row, COLS.TODO.ID).getValue() || '');
+  var timeEst = String(sheet.getRange(row, COLS.TODO.TIME_EST).getValue() || '');
+  if (!todoId) { SpreadsheetApp.getUi().alert('That row does not have a Task ID.'); return; }
+  if (timeEst !== 'Multi-day') { SpreadsheetApp.getUi().alert('Break down is only for Multi-day tasks.'); return; }
+  runBreakdownPopup(todoId, String(sheet.getRange(row, COLS.TODO.TASK).getValue() || ''));
+}
+
+function runBreakdownPopup(todoId, taskTitle) {
+  var html = HtmlService.createHtmlOutput(buildBreakdownHtml(todoId, taskTitle)).setWidth(600).setHeight(620).setTitle('Break down: ' + taskTitle);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Break down: ' + taskTitle);
+}
+
+function buildBreakdownHtml(todoId, taskTitle) {
+  var json = JSON.stringify({ todoId: todoId, taskTitle: taskTitle, timeOptions: DROPDOWNS.TODO_TIME.filter(function (t) { return t !== 'Multi-day'; }) });
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    '.row{display:flex;gap:8px;margin-top:10px;}' +
+    '.row input{flex:1;}.row select{width:130px;flex:none;}' +
+    'input,select{box-sizing:border-box;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Break down: <span id="title"></span></h2>' +
+    '<p>Add up to 6 sub-tasks with a time estimate each. Empty rows are ignored. The Multi-day parent is retired (Skipped) once sub-tasks are created — they inherit its organisation/workflow and flow through Today normally.</p>' +
+    '<form id="form"></form>' +
+    '<button class="primary" type="button" onclick="submitBreakdown()">Create sub-tasks</button>' +
+    '<div id="status"></div>' +
+    '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.taskTitle;var f=document.getElementById("form");' +
+    'for(var i=0;i<6;i++){var r=document.createElement("div");r.className="row";' +
+    'var t=document.createElement("input");t.type="text";t.placeholder="Sub-task "+(i+1);t.name="text"+i;' +
+    'var s=document.createElement("select");s.name="time"+i;' +
+    'cfg.timeOptions.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);});' +
+    'r.appendChild(t);r.appendChild(s);f.appendChild(r);}' +
+    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value});}' +
+    'if(!subtasks.length){document.getElementById("status").textContent="Add at least one sub-task.";return;}' +
+    'document.getElementById("status").textContent="Creating sub-tasks...";' +
+    'google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    '.completeBreakdownFromPopup(cfg.todoId,subtasks);}</script>';
+}
+
+function completeBreakdownFromPopup(parentTodoId, subtasks) {
+  var parent = getTodoById(parentTodoId);
+  if (!parent) return 'Parent task not found.';
+  var createdIds = [];
+  subtasks.forEach(function (st) {
+    if (!st.text) return;
+    var id = appendTodoWithSource(
+      st.text, parent.objType, parent.objId, parent.org, parent.workflow,
+      'Not started', '', st.timeEst || defaultTimeForWorkflow(parent.workflow),
+      '', 'Manually added'
+    );
+    if (id) {
+      var s = getSheet('Tasks');
+      var r = getTodoById(id).row;
+      s.getRange(r, COLS.TODO.PARENT_ID).setValue(parentTodoId);
+      createdIds.push(id);
+    }
+  });
+  if (!createdIds.length) return 'No sub-tasks captured.';
+  // Parent becomes a rollup container, not open work — auto-skip it, same
+  // idiom runQueueHygiene already uses for system-retired pipeline tasks,
+  // so it disappears from the open-task pool without a special exclusion
+  // case anywhere else in the file.
+  completeTodo(parentTodoId, 'Skipped', { source: 'breakdown' });
+  appendNoteFlag(parent.sheet, parent.row, COLS.TODO.NOTES, '[has-subtasks] broken down into ' + createdIds.length + ' sub-task(s)');
+  populateToday();
+  refreshHome();
+  return 'Created ' + createdIds.length + ' sub-task(s) and retired the Multi-day parent.';
+}
+
 function linkContactToJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in Jobs first.'); return; }
@@ -4491,8 +4859,10 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, "Today's priority order");
-  r = writeKV(sheet, r, 'Staged, not scored', '1 manually pulled-in tasks · 2 tasks already in progress/touched today · 3 fixed work · 4 blocking work · 5 due/overdue keep-alive work · 6 active pursuit matching your focus · 7 at most one pipeline-building task · 8 a kept time buffer · 9 near-misses go to Options · 10 everything else stays in Tasks, out of sight but not gone.');
-  r = writeKV(sheet, r, 'Notes on Today', 'Anything you type into a Today row\u2019s Notes cell beyond the system "Why:" line is kept across refreshes, not overwritten.');
+  r = writeKV(sheet, r, 'Staged, not scored', '1 manually pulled-in tasks · 2 tasks already in progress/touched today · 3 fixed work · 4 blocking work · 5 due/overdue keep-alive work · 6 active pursuit matching your focus · 7 at most one pipeline-building task · 8 active pursuit outside your focus, if capacity remains · 9 near-misses go to Options · 10 everything else stays in Tasks, out of sight but not gone. A kept time buffer applies throughout.');
+  r = writeKV(sheet, r, 'Tier and Energy', 'Organisation Tier breaks ties within a stage — it never changes which stage a task lands in. Low energy sinks Deep-effort work to the bottom of Active pursuit and Pipeline, but never excludes it.');
+  r = writeKV(sheet, r, 'Notes on Today', 'Anything you type into a Today row\u2019s Notes cell is kept across refreshes. The system\u2019s "Why" explanation now lives in the cell\u2019s note (hover to see it) rather than the value.');
+  r = writeKV(sheet, r, 'Multi-day tasks', 'Excluded from Today until broken down. A stale one is flagged in the "Needs breakdown" section — use Row actions → Break down (on Tasks) to split it into real sub-tasks.');
   r++;
 
   r = writeH2(sheet, r, 'Pending Decisions');
@@ -4655,7 +5025,6 @@ function buildMenu() {
       .addItem('Populate Today', 'populateToday')
       .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
       .addItem('Top up Today', 'topUpToday')
-      .addItem('End-of-day reconcile', 'endOfDayReconcile')
       .addItem('Lock selected Today row', 'lockTodayRow')
       .addItem('Unlock selected Today row', 'unlockTodayRow')
       .addItem('Move selected row up', 'moveTodayRowUp')
@@ -4674,6 +5043,7 @@ function buildMenu() {
       .addItem('Search orgs for selected sub-sector', 'rowActionSearchOrgsForSubsector')
       .addItem('Break down selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
+      .addItem('Break down selected Multi-day task', 'rowActionBreakDownSelectedTask')
       .addSeparator()
       .addItem('Link contact to selected Job row', 'linkContactToJob')
       .addItem('Log conversation for selected row', 'logInteractionForRow')
