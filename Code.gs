@@ -5015,10 +5015,10 @@ function buildSetupHtml() {
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', domainReadiness=' + JSON.stringify(domain) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ';' +
     'var forms={' +
     ' sectors:{title:"Add your first sector(s)",fields:[{k:"sectorNames",l:"Sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
-    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true}]},' +
+    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
-    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"outreachDate",l:"When did you reach out?",t:"date"},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date"},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
+    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector, if known",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -5035,15 +5035,18 @@ function buildSetupHtml() {
     ' var c=document.getElementById("q2_options");c.innerHTML="";' +
     ' opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});' +
     ' showStep(2);}' +
+    'function fieldVisible(field,form){if(field.showIf)return form.elements[field.showIf.k]&&form.elements[field.showIf.k].value===field.showIf.v;if(field.showIfAny)return field.showIfAny.some(function(rule){return form.elements[rule.k]&&form.elements[rule.k].value===rule.v;});if(field.showIfSet)return !!(form.elements[field.showIfSet]&&form.elements[field.showIfSet].value);return true;}' +
+    'function updateConditional(form,cfg){(cfg.fields||[]).forEach(function(field,idx){var label=form.children[idx];if(label)label.style.display=fieldVisible(field,form)?"block":"none";});}' +
+    'function visibleFields(form,cfg){var fields={};Array.prototype.forEach.call(form.elements,function(el){if(!el.name)return;var idx=(cfg.fields||[]).map(function(f){return f.k;}).indexOf(el.name),field=cfg.fields[idx];if(!field||fieldVisible(field,form))fields[el.name]=el.value;});return fields;}' +
     'function renderForm(ep){var cfg=forms[ep];document.getElementById("q3title").innerHTML="<strong>3 of 3</strong> "+cfg.title;var f=document.getElementById("captureForm");f.innerHTML="";' +
     ' cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l+(field.req?" *":"");var input;' +
     '  if(field.t==="textarea"){input=document.createElement("textarea");}' +
     '  else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     '  else{input=document.createElement("input");input.type=field.t||"text";}' +
-    '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
+    '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});Array.prototype.forEach.call(f.elements,function(el){el.onchange=function(){updateConditional(f,cfg);};});updateConditional(f,cfg);' +
     ' showStep(3);}' +
-    'function submitSetup(){var fields={},form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]};Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
+    ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     ' if(existingRows>0&&goal!=="skipped"&&entryPoint!=="skip"&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
@@ -5169,10 +5172,17 @@ function processInterviewOnboarding(fields) {
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var jobId = writeJobRow(fields.jobTitle, org, 'Interviewing');
   promoteOrgForLiveJob(org && org.id, 'Interviewing');
+  var roundNum = fields.roundNumber || '1';
   fireJobStatusChanged(jobId, '', 'Interviewing', {
     forceRound: true,
-    roundDetails: { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
+    roundDetails: { roundNum: roundNum, roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
   });
+  var round = findRoundByJobRound(jobId, roundNum);
+  if (round && (fields.status || fields.officialOutcome)) {
+    var sheet = getSheet('Interviews');
+    if (fields.status && DROPDOWNS.ROUND_STATUS.indexOf(fields.status) !== -1) sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue(fields.status);
+    if (fields.officialOutcome && DROPDOWNS.OFFICIAL_OUTCOME.indexOf(fields.officialOutcome) !== -1) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(fields.officialOutcome);
+  }
   return okResult('Captured the interview and created the prep path.');
 }
 
@@ -5351,7 +5361,7 @@ function captureConfig(captureType) {
       title: 'Add/update job',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' }, { k: 'deadline', l: 'Deadline, if any', t: 'date' },
-      { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date' }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
+      { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
       { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes, blank: true, showIf: { k: 'status', v: 'Interviewing' } },
       { k: 'interviewDate', l: 'Interview date, if known', t: 'date', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain, blank: true, showIf: { k: 'status', v: 'Interviewing' } }]
     },
@@ -5359,8 +5369,8 @@ function captureConfig(captureType) {
       title: 'Application update',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'], blank: true, req: true },
-      { k: 'appliedDate', l: 'Applied date, if missing', t: 'date' }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'] },
-      { k: 'outcome', l: 'Outcome / latest update', t: 'text' }]
+      { k: 'appliedDate', l: 'Applied date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfSet: 'status' },
+      { k: 'outcome', l: 'Outcome / latest update', t: 'text', showIf: { k: 'response', v: 'Yes' } }]
     },
     'Add/update person': {
       title: 'Add/update person',
@@ -5380,8 +5390,9 @@ function captureConfig(captureType) {
       title: 'Add/update interview',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes, blank: true },
-      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain, blank: true },
-      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME, blank: true }]
+      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'status', l: 'Round status', t: 'select', o: DROPDOWNS.ROUND_STATUS, defaultValue: 'Scheduled', showIfSet: 'interviewDate' },
+      { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain, blank: true, showIfSet: 'interviewDate' },
+      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME, blank: true, showIf: { k: 'status', v: 'Completed' } }]
     },
     'Task completed / blocked': { title: 'Task completed / blocked', fields: [{ k: 'taskNotes', l: 'What changed?', t: 'textarea', p: 'If a task is done, tick it Done on Today instead. Use this for a blocker or a new follow-up.', req: true }] }
   };
@@ -5407,10 +5418,11 @@ function buildCaptureHtml(captureType) {
     'else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     'else{input=document.createElement("input");input.type=field.t||"text";}' +
     'input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
-    'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx],show=true;if(field.showIf){show=f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;}if(field.showIfAny){show=field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});}label.style.display=show?"block":"none";});}' +
+    'function fieldVisible(field){if(field.showIf)return f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;if(field.showIfAny)return field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});if(field.showIfSet)return !!(f.elements[field.showIfSet]&&f.elements[field.showIfSet].value);return true;}' +
+    'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx];label.style.display=fieldVisible(field)?"block":"none";});}' +
     'Array.prototype.forEach.call(f.elements,function(el){el.onchange=updateConditional;});updateConditional();' +
-    'function submitCapture(){var fields={},form=document.getElementById("form"),status=document.getElementById("status");Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i],label=f.children[i],visible=!label||label.style.display!=="none";if(visible&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    'function submitCapture(){var fields={},form=document.getElementById("form"),status=document.getElementById("status");Array.prototype.forEach.call(form.elements,function(el){if(!el.name)return;var idx=cfg.fields.map(function(field){return field.k;}).indexOf(el.name),field=cfg.fields[idx];if(!field||fieldVisible(field))fields[el.name]=el.value;});' +
+    'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
     '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
