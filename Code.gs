@@ -254,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.2';
+var SCRIPT_VERSION = 'v7.7.3';
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -811,7 +811,7 @@ function checkJobDuplicate(sheet, editedRow) {
 function getRoundById(roundId) {
   var sheet = getSheet('Interviews');
   if (!sheet || sheet.getLastRow() < 2 || !roundId) return null;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ROUNDS.STATUS).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Interview rounds'].length).getValues();
   var target = String(roundId);
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.ROUNDS.ID - 1]) === target) {
@@ -822,8 +822,27 @@ function getRoundById(roundId) {
         job: row[COLS.ROUNDS.JOB_DISPLAY - 1],
         org: row[COLS.ROUNDS.ORG_DISPLAY - 1],
         round: row[COLS.ROUNDS.ROUND - 1],
-        status: row[COLS.ROUNDS.STATUS - 1]
+        roundType: row[COLS.ROUNDS.ROUND_TYPE - 1],
+        interviewDate: row[COLS.ROUNDS.INTERVIEW_DATE - 1],
+        status: row[COLS.ROUNDS.STATUS - 1],
+        domainReadiness: row[COLS.ROUNDS.DOMAIN_READINESS - 1],
+        officialOutcome: row[COLS.ROUNDS.OFFICIAL_OUTCOME - 1],
+        expectedResponse: row[COLS.ROUNDS.EXPECTED_RESPONSE - 1],
+        notes: row[COLS.ROUNDS.NOTES - 1]
       };
+    }
+  }
+  return null;
+}
+
+function findRoundByJobRound(jobId, roundNum) {
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 2 || !jobId || !roundNum) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Interview rounds'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.ROUNDS.JOB_ID - 1]) === String(jobId) &&
+        String(data[i][COLS.ROUNDS.ROUND - 1]) === String(roundNum)) {
+      return { id: String(data[i][COLS.ROUNDS.ID - 1] || ''), row: i + 2, created: false, roundNum: roundNum };
     }
   }
   return null;
@@ -1659,16 +1678,26 @@ function handleInterviewTodoCompletion(todo, options) {
   var round = getRoundById(todo.objId);
   if (!round) return;
   var sheet = getSheet('Interviews');
-  if (/Interview prep|Day-before review/.test(todo.workflow)) {
+  if (todo.workflow === 'Interview scheduling') {
+    appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[schedule-action] Scheduling task completed on ' + formatDateHuman(today()) + '. Add Interview date if it is now known.');
+  } else if (/Interview prep|Day-before review/.test(todo.workflow)) {
     appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-completed] ' + todo.workflow + ' on ' + formatDateHuman(today()));
   } else if (todo.workflow === 'Interview follow-up') {
-    appendInteraction('', '', round.org, today(), 'Interview', 'Interview follow-up sent: ' + round.job, 'Useful');
+    appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview follow-up sent: ' + round.job, 'System log');
     sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(today(), 7));
+  } else if (todo.workflow === 'Thank-you and debrief') {
+    ensureInterviewDebriefTemplate(sheet, round.row);
+    appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview thank-you/debrief completed: round ' + round.round + ' - ' + round.job, 'System log');
+    appendPendingDecision('INTERVIEW_OUTCOME:' + round.id, 'Interview debrief completed: ' + round.job,
+      'Record official outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
+      'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
   } else {
     sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Completed');
-    appendInteraction('', '', round.org, today(), 'Interview', 'Interview completed: round ' + round.round + ' - ' + round.job, 'Useful');
-    appendPendingDecision('INTERVIEW_OUTCOME:' + todo.id, 'Interview completed: ' + round.job,
-      'Record interview outcome for round ' + round.round + ' - ' + round.job, 'Interview round', todo.objId,
+    if (!sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+    createInterviewDebriefTask(round.id);
+    appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview completed: round ' + round.round + ' - ' + round.job, 'System log');
+    appendPendingDecision('INTERVIEW_OUTCOME:' + round.id, 'Interview completed: ' + round.job,
+      'Record interview outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
       'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
   }
 }
@@ -1863,11 +1892,13 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
 function createInterviewRoundForJob(jobId, opts) {
   opts = opts || {};
   var job = getJobRowById(jobId);
-  if (!job) return '';
+  if (!job) return { id: '', row: 0, created: false, roundNum: '' };
   var details = opts.roundDetails || {};
   var sheet = getSheet('Interviews');
-  var id = nextId(sheet, COLS.ROUNDS.ID, 'RND');
   var roundNum = parseInt(details.roundNum || nextRoundNumberForJob(jobId), 10) || nextRoundNumberForJob(jobId);
+  var existing = findRoundByJobRound(jobId, roundNum);
+  if (existing) return existing;
+  var id = nextId(sheet, COLS.ROUNDS.ID, 'RND');
   var roundType = details.roundType || 'Other';
   if (DROPDOWNS.ROUND_TYPE.indexOf(roundType) === -1) roundType = 'Other';
   var date = details.interviewDate || '';
@@ -1883,16 +1914,18 @@ function createInterviewRoundForJob(jobId, opts) {
   row[COLS.ROUNDS.STATUS - 1] = date ? 'Scheduled' : 'To schedule';
   row[COLS.ROUNDS.DOMAIN_READINESS - 1] = domain;
   if (date) row[COLS.ROUNDS.EXPECTED_RESPONSE - 1] = addDays(new Date(date), REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7);
+  row[COLS.ROUNDS.NOTES - 1] = details.notes || '';
   sheet.appendRow(row);
   var newRow = sheet.getLastRow();
   if (!date) {
-    appendTodoOnceForWorkflow('Schedule interview: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Interview scheduling', 'Not started', '', '15 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Schedule interview: ' + job.title + ' at ' + job.org, 'Interview round', id, job.org, 'Interview scheduling', 'Not started', '', '15 min', 'Set Interview date on the Interviews row when known.', 'Auto-triggered');
   } else {
-    if (domain) firePrepCascade(sheet, newRow, domain, jobId, job.title, job.org);
-    else appendTodoOnceForWorkflow('Set domain readiness for: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Interview prep (Domain scoping)', 'Not started', date, '15 min', 'Set Domain readiness on Interviews to unlock prep tasks.', 'Auto-triggered');
+    scheduleInterviewRound(id, date);
+    if (domain) createInterviewPrepTasks(id);
+    else appendTodoOnceForWorkflow('Set domain readiness for: ' + job.title + ' at ' + job.org, 'Interview round', id, job.org, 'Interview prep (Domain scoping)', 'Not started', date, '15 min', 'Set Domain readiness on Interviews to unlock prep tasks.', 'Auto-triggered');
   }
-  appendInteraction('', '', job.org, today(), 'Interview', 'Interview round created: ' + job.title + ' (Round ' + roundNum + ')', 'Useful');
-  return id;
+  appendInteraction('', '', job.org, today(), 'Auto-log', 'Interview round created: ' + job.title + ' (Round ' + roundNum + ')', 'System log');
+  return { id: id, row: newRow, created: true, roundNum: roundNum };
 }
 
 // =============================================================
@@ -1961,14 +1994,14 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
   if (newStage === 'Conversation scheduled') {
     var convDate = opts.realDate ? parseDateOr(opts.realDate) : sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).getValue();
     if (convDate) sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(convDate);
-    appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Conversation prep', 'Not started', convDate ? addDays(new Date(convDate), -1) : '', '30 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Conversation prep', 'Not started', convDate ? addDays(new Date(convDate), -1) : '', '30 min', conversationPrepNotes(), 'Auto-triggered');
     return;
   }
   if (newStage === 'Conversation completed') {
     var doneDate = opts.realDate ? parseDateOr(opts.realDate) : today();
     sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(doneDate);
-    appendInteraction(personId, person.name, person.org, doneDate, 'Coffee', 'Conversation completed', 'Useful');
-    appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min', '', 'Auto-triggered');
+    appendInteraction(personId, person.name, person.org, doneDate, 'Auto-log', 'Conversation completed', 'System log');
+    appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min', conversationDebriefNotes(), 'Auto-triggered');
     return;
   }
   if (newStage === 'Nurture') {
@@ -2516,6 +2549,21 @@ function onEditPeople(sheet, row, col, newVal, e) {
     firePersonStageChanged(pid, oldStage, 'Engaged', { source: 'manual' });
     return;
   }
+  if (col === COLS.PEOPLE.CONVERSATION_DATE && newVal) {
+    var convPersonId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
+    sheet.getRange(row, COLS.PEOPLE.ID).setValue(convPersonId);
+    if (!sheet.getRange(row, COLS.PEOPLE.ORG).getValue()) {
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation before routing this conversation.');
+      return;
+    }
+    inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    var currentStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
+    if (currentStage !== 'Conversation completed') {
+      sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Conversation scheduled');
+      firePersonStageChanged(convPersonId, currentStage, 'Conversation scheduled', { source: 'manual-date', realDate: newVal });
+    }
+    return;
+  }
   if (col === COLS.PEOPLE.STAGE) {
     var personId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
     sheet.getRange(row, COLS.PEOPLE.ID).setValue(personId);
@@ -2548,7 +2596,70 @@ function appendInteraction(personId, personName, org, dateValue, typeValue, note
   row[COLS.INTERACTIONS.NOTES - 1] = notes || '';
   row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || (typeValue === 'Auto-log' ? 'System log' : 'Useful');
   sheet.appendRow(row);
+  linkInteractionPersonCell(sheet.getLastRow());
   return id;
+}
+
+function personSheetAnchor(row) {
+  var pSheet = getSheet('People');
+  if (!pSheet || !row) return '';
+  return '#gid=' + pSheet.getSheetId() + '&range=A' + row;
+}
+
+function linkInteractionPersonCell(interactionRow) {
+  var sheet = getSheet('Conversations');
+  var person = null;
+  if (!sheet || interactionRow < 2) return false;
+  var personId = String(sheet.getRange(interactionRow, COLS.INTERACTIONS.PERSON_ID).getValue() || '');
+  if (!personId) return false;
+  person = getPersonRowById(personId);
+  if (!person) return false;
+  sheet.getRange(interactionRow, COLS.INTERACTIONS.ORG).setValue(person.org || '');
+  var cell = sheet.getRange(interactionRow, COLS.INTERACTIONS.PERSON);
+  var display = String(person.name || '');
+  try {
+    cell.setRichTextValue(SpreadsheetApp.newRichTextValue()
+      .setText(display)
+      .setLinkUrl(personSheetAnchor(person.row))
+      .build());
+  } catch (err) {
+    cell.setValue(display);
+  }
+  return true;
+}
+
+function repairInteractionPersonLinks() {
+  var sheet = getSheet('Conversations');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var fixed = 0;
+  for (var r = 2; r <= sheet.getLastRow(); r++) {
+    if (sheet.getRange(r, COLS.INTERACTIONS.PERSON_ID).getValue() && linkInteractionPersonCell(r)) fixed++;
+  }
+  return fixed;
+}
+
+function resolveInteractionPersonSelection(selection) {
+  var sheet = getSheet('People');
+  if (!sheet || sheet.getLastRow() < 2 || !selection) return { person: null, ambiguous: false };
+  var raw = String(selection || '').trim();
+  var labelMatch = raw.match(/^(.*)\s+\(([^()]+)\)$/);
+  var wantedName = labelMatch ? labelMatch[1] : raw;
+  var wantedOrg = labelMatch ? labelMatch[2] : '';
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
+  var exact = [];
+  var fuzzy = [];
+  for (var i = 0; i < data.length; i++) {
+    var nm = String(data[i][COLS.PEOPLE.NAME - 1] || '');
+    var org = String(data[i][COLS.PEOPLE.ORG - 1] || '');
+    if (wantedOrg && normalizeKeyPart(org) !== normalizeKeyPart(wantedOrg)) continue;
+    if (normalizeKeyPart(nm) === normalizeKeyPart(wantedName)) exact.push({ row: i + 2, data: data[i] });
+    else if (!wantedOrg && similarity(wantedName, nm) >= 0.85) fuzzy.push({ row: i + 2, data: data[i] });
+  }
+  if (exact.length === 1) return { person: exact[0], ambiguous: false };
+  if (exact.length > 1) return { person: null, ambiguous: true };
+  if (fuzzy.length === 1) return { person: fuzzy[0], ambiguous: false };
+  if (fuzzy.length > 1) return { person: null, ambiguous: true };
+  return { person: null, ambiguous: false };
 }
 
 function refreshInteractionPersonDropdown() {
@@ -2571,18 +2682,28 @@ function refreshInteractionPersonDropdown() {
 
 function onEditInteractions(sheet, row, col, newVal) {
   if (col === COLS.INTERACTIONS.PERSON && newVal) {
-    var person = findPersonByNameOrg(String(newVal), '');
-    if (person) {
+    var resolved = resolveInteractionPersonSelection(String(newVal));
+    if (resolved.person) {
+      var person = resolved.person;
       sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).setValue(person.data[COLS.PEOPLE.ID - 1]);
       sheet.getRange(row, COLS.INTERACTIONS.ORG).setValue(person.data[COLS.PEOPLE.ORG - 1] || '');
       if (!sheet.getRange(row, COLS.INTERACTIONS.DATE).getValue()) sheet.getRange(row, COLS.INTERACTIONS.DATE).setValue(today());
       if (!sheet.getRange(row, COLS.INTERACTIONS.ID).getValue()) sheet.getRange(row, COLS.INTERACTIONS.ID).setValue(nextId(sheet, COLS.INTERACTIONS.ID, 'INT'));
+      linkInteractionPersonCell(row);
+    } else if (resolved.ambiguous) {
+      appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] Ambiguous person name - pick the dropdown entry with organisation or fill Person ID.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('More than one matching person. Pick the entry with organisation or fill Person ID.', 'The Planner', 5);
     } else {
       SpreadsheetApp.getActiveSpreadsheet().toast('Person "' + newVal + '" not found in People. Add them there first, then re-pick.', 'The Planner', 5);
     }
     return;
   }
+  if (col === COLS.INTERACTIONS.PERSON_ID && newVal) {
+    linkInteractionPersonCell(row);
+    return;
+  }
   if (col !== COLS.INTERACTIONS.OUTCOME || !newVal) return;
+  if (String(newVal) === 'System log') return;
   var personId = sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).getValue();
   var personName = sheet.getRange(row, COLS.INTERACTIONS.PERSON).getValue();
   var org = sheet.getRange(row, COLS.INTERACTIONS.ORG).getValue();
@@ -2611,48 +2732,274 @@ function onEditInteractions(sheet, row, col, newVal) {
 // INTERVIEWS (Interview rounds tab)
 // =============================================================
 
-function firePrepCascade(sheet, row, domainReadiness, jobId, jobDisplay, orgDisplay) {
-  var interviewDate = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
-  var dayBefore = interviewDate ? addDays(new Date(interviewDate), -1) : '';
-  var jobAt = jobDisplay + (orgDisplay ? ' at ' + orgDisplay : '');
-  if (domainReadiness === 'Weak or new') {
-    appendTodoOnceForWorkflow('Domain scoping / study plan: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '60 min', '', 'Auto-triggered');
-  } else if (domainReadiness === 'Refresh needed') {
-    appendTodoOnceForWorkflow('Domain scoping / study plan: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '30 min', '', 'Auto-triggered');
+function roundTypePrepFocus(roundType) {
+  var focus = {
+    'Recruiter': 'Role narrative, motivation, logistics, questions, and compensation/availability where relevant.',
+    'Hiring manager': 'Role fit, judgement, operating examples, and what success looks like.',
+    'Panel': 'Stakeholder map, concise examples, repeated-answer consistency, and audience-specific questions.',
+    'Case': 'Structure, issue tree, assumptions, maths, synthesis, and recommendation.',
+    'Technical': 'Domain concepts, technical examples, terminology, and evidence of fluency.',
+    'Culture fit': 'Values, working style, conflict, leadership, and motivation.',
+    'Final': 'Decision-maker narrative, closing story, objections, and final questions.',
+    'Other': 'Role narrative, fit examples, questions, logistics, and follow-up.'
+  };
+  return focus[roundType] || focus.Other;
+}
+
+function interviewPrepNotes(roundType, domainReadiness, section) {
+  return '[interview-prep]\n' +
+    'Round type: ' + (roundType || 'Other') + '\n' +
+    'Domain/prep readiness: ' + (domainReadiness || 'Not set') + '\n' +
+    'Focus: ' + roundTypePrepFocus(roundType) + '\n' +
+    'This task: ' + section;
+}
+
+function interviewDebriefTemplate() {
+  return '[interview-debrief]\n' +
+    'What they asked:\n' +
+    'What landed:\n' +
+    'What was weak:\n' +
+    'Follow-up promised:\n' +
+    'Learning for next round:';
+}
+
+function interviewerTemplate() {
+  return '[interviewers]\nName:\nRole:\nOrganisation:\nPerson ID, if known:\nNotes:';
+}
+
+function nextRoundKnownDetailsTemplate() {
+  return '[next-round-known-details]\n' +
+    'Round type:\n' +
+    'Expected timing:\n' +
+    'Interviewer/panel:\n' +
+    'What they said to prepare:';
+}
+
+function conversationPrepNotes() {
+  return '[conversation-prep]\n' +
+    'Why am I speaking to them?\n' +
+    'What do I want to learn?\n' +
+    'What can I offer?\n' +
+    'What is the soft ask?\n' +
+    'What would make this conversation successful?';
+}
+
+function conversationDebriefNotes() {
+  return '[conversation-debrief]\n' +
+    'What happened?\n' +
+    'What did I learn?\n' +
+    'Roles/orgs/people mentioned:\n' +
+    'Referral or opportunity offered:\n' +
+    'What did I promise?\n' +
+    'Next state:';
+}
+
+function ensureInterviewDebriefTemplate(sheet, row) {
+  var notes = String(sheet.getRange(row, COLS.ROUNDS.NOTES).getValue() || '');
+  if (notes.indexOf('[interview-debrief]') === -1) {
+    sheet.getRange(row, COLS.ROUNDS.NOTES).setValue(notes ? notes + '\n\n' + interviewDebriefTemplate() : interviewDebriefTemplate());
   }
-  appendTodoOnceForWorkflow('Build fit case: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Fit case)', 'Not started', '', '60 min', '', 'Auto-triggered');
-  appendTodoOnceForWorkflow('Day-before review: ' + jobAt, 'Job', jobId, orgDisplay, 'Day-before review', 'Not started', dayBefore, '90 min', '', 'Auto-triggered');
+}
+
+function ensureInterviewerTemplate(sheet, row) {
+  var notes = String(sheet.getRange(row, COLS.ROUNDS.NOTES).getValue() || '');
+  if (notes.indexOf('[interviewers]') === -1) {
+    sheet.getRange(row, COLS.ROUNDS.NOTES).setValue(notes ? notes + '\n\n' + interviewerTemplate() : interviewerTemplate());
+  }
+}
+
+function upsertInterviewPrepTask(roundId, workflow, desired) {
+  var taskSheet = getSheet('Tasks');
+  if (!taskSheet || !roundId || !workflow || !desired) return '';
+  if (taskSheet.getLastRow() > 1) {
+    var data = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Interview round') continue;
+      if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(roundId)) continue;
+      if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
+      var st = String(data[i][COLS.TODO.STATUS - 1]);
+      if (st === 'Done' || st === 'Skipped' || st === 'Cancelled') return String(data[i][COLS.TODO.ID - 1] || '');
+      var r = i + 2;
+      taskSheet.getRange(r, COLS.TODO.TASK).setValue(desired.task);
+      taskSheet.getRange(r, COLS.TODO.DUE_DATE).setValue(desired.dueDate || '');
+      taskSheet.getRange(r, COLS.TODO.TIME_EST).setValue(desired.timeEst || defaultTimeForWorkflow(workflow));
+      taskSheet.getRange(r, COLS.TODO.NOTES).setValue(desired.notes || '');
+      taskSheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
+      taskSheet.getRange(r, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(workflow, desired.dueDate || '', roundId, 'Interview round'));
+      taskSheet.getRange(r, COLS.TODO.CLASS_CALC_AT).setValue(today());
+      taskSheet.getRange(r, COLS.TODO.EFFORT_TYPE).setValue(deriveEffortType(workflow));
+      applyTaskHelperColumns(taskSheet, r);
+      return String(data[i][COLS.TODO.ID - 1] || '');
+    }
+  }
+  return appendTodoWithSource(desired.task, 'Interview round', roundId, desired.org || '', workflow,
+    desired.status || 'Not started', desired.dueDate || '', desired.timeEst || defaultTimeForWorkflow(workflow),
+    desired.notes || '', 'Auto-triggered');
+}
+
+function retireObsoleteInterviewPrepTasks(roundId, desiredWorkflowMap) {
+  var taskSheet = getSheet('Tasks');
+  if (!taskSheet || !roundId || taskSheet.getLastRow() < 2) return 0;
+  var prepWorkflows = {
+    'Interview prep (Domain scoping)': true,
+    'Interview prep (Study)': true,
+    'Interview prep (Fit case)': true,
+    'Day-before review': true
+  };
+  var data = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var retired = 0;
+  for (var i = 0; i < data.length; i++) {
+    var workflow = String(data[i][COLS.TODO.WORKFLOW - 1] || '');
+    if (!prepWorkflows[workflow] || desiredWorkflowMap[workflow]) continue;
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Interview round') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(roundId)) continue;
+    var st = String(data[i][COLS.TODO.STATUS - 1]);
+    if (st !== 'Not started' && st !== 'In progress') continue;
+    var r = i + 2;
+    taskSheet.getRange(r, COLS.TODO.STATUS).setValue('Skipped');
+    taskSheet.getRange(r, COLS.TODO.COMPLETED).setValue(today());
+    taskSheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
+    appendNoteFlag(taskSheet, r, COLS.TODO.NOTES, '[skipped] Prep plan changed; task no longer needed.');
+    retired++;
+  }
+  return retired;
+}
+
+function scheduleInterviewRound(roundId, dateValue) {
+  var round = getRoundById(roundId);
+  var sheet = getSheet('Interviews');
+  if (!round || !sheet || !dateValue) return false;
+  var interviewDate = parseDateOr(dateValue, '');
+  sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).setValue(interviewDate);
+  sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Scheduled');
+  var roundType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
+  if (!sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
+    sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(interviewDate, REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
+  }
+  if (sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).getValue()) createInterviewPrepTasks(roundId);
+  return true;
+}
+
+function createInterviewPrepTasks(roundId) {
+  var round = getRoundById(roundId);
+  if (!round) return 0;
+  var sheet = getSheet('Interviews');
+  var domainReadiness = String(sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).getValue() || '');
+  var roundType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
+  var interviewDate = sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
+  var jobAt = round.job + (round.org ? ' at ' + round.org : '');
+  var desiredWorkflows = {};
+  var created = 0;
+  if (!domainReadiness) return 0;
+  ensureInterviewerTemplate(sheet, round.row);
+  if (!sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue() && interviewDate) {
+    sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDate), REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
+  }
+  if (domainReadiness === 'Refresh needed' || domainReadiness === 'Weak or new') {
+    desiredWorkflows['Interview prep (Domain scoping)'] = true;
+    var domainMinutes = domainReadiness === 'Weak or new' ? '60 min' : '30 min';
+    if (upsertInterviewPrepTask(roundId, 'Interview prep (Domain scoping)', {
+      task: 'Interview prep - domain map: ' + jobAt,
+      org: round.org,
+      dueDate: interviewDate ? addDays(new Date(interviewDate), -3) : '',
+      timeEst: domainMinutes,
+      notes: interviewPrepNotes(roundType, domainReadiness, 'Refresh the organisation, role, sector context, likely themes, and weak spots.')
+    })) created++;
+  }
+  if (domainReadiness === 'Weak or new') {
+    desiredWorkflows['Interview prep (Study)'] = true;
+    if (upsertInterviewPrepTask(roundId, 'Interview prep (Study)', {
+      task: 'Interview prep - study plan: ' + jobAt,
+      org: round.org,
+      dueDate: interviewDate ? addDays(new Date(interviewDate), -3) : '',
+      timeEst: '60 min',
+      notes: interviewPrepNotes(roundType, domainReadiness, 'Build the minimum viable study plan for unfamiliar concepts, language, and examples.')
+    })) created++;
+  }
+  desiredWorkflows['Interview prep (Fit case)'] = true;
+  if (upsertInterviewPrepTask(roundId, 'Interview prep (Fit case)', {
+    task: 'Interview prep - ' + String(roundType || 'fit').toLowerCase() + ' story: ' + jobAt,
+    org: round.org,
+    dueDate: interviewDate ? addDays(new Date(interviewDate), -2) : '',
+    timeEst: domainReadiness === 'Strong' ? '45 min' : '60 min',
+    notes: interviewPrepNotes(roundType, domainReadiness, 'Prepare the story, examples, questions, and round-specific answer shape.')
+  })) created++;
+  if (interviewDate) desiredWorkflows['Day-before review'] = true;
+  if (interviewDate && upsertInterviewPrepTask(roundId, 'Day-before review', {
+    task: 'Day-before review: ' + jobAt,
+    org: round.org,
+    dueDate: addDays(new Date(interviewDate), -1),
+    timeEst: '90 min',
+    notes: interviewPrepNotes(roundType, domainReadiness, 'Final pass: logistics, notes, questions, story anchors, and follow-up plan.')
+  })) created++;
+  retireObsoleteInterviewPrepTasks(roundId, desiredWorkflows);
+  return created;
+}
+
+function createInterviewDebriefTask(roundId) {
+  var round = getRoundById(roundId);
+  if (!round) return '';
+  ensureInterviewDebriefTemplate(getSheet('Interviews'), round.row);
+  return appendTodoOnceForWorkflow('Thank-you and debrief: ' + round.job + (round.org ? ' at ' + round.org : ''),
+    'Interview round', roundId, round.org, 'Thank-you and debrief', 'Not started', today(), '20 min',
+    interviewDebriefTemplate(), 'Auto-triggered');
+}
+
+function firePrepCascade(sheet, row, domainReadiness, jobId, jobDisplay, orgDisplay) {
+  var roundId = sheet.getRange(row, COLS.ROUNDS.ID).getValue();
+  if (domainReadiness) sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).setValue(domainReadiness);
+  if (roundId) return createInterviewPrepTasks(roundId);
+  return 0;
 }
 
 function onEditRounds(sheet, row, col, newVal) {
+  var roundId = sheet.getRange(row, COLS.ROUNDS.ID).getValue();
   var jobId = sheet.getRange(row, COLS.ROUNDS.JOB_ID).getValue();
   var jobDisplay = sheet.getRange(row, COLS.ROUNDS.JOB_DISPLAY).getValue();
   var orgDisplay = sheet.getRange(row, COLS.ROUNDS.ORG_DISPLAY).getValue();
   var roundNum = sheet.getRange(row, COLS.ROUNDS.ROUND).getValue();
 
   if (col === COLS.ROUNDS.INTERVIEW_DATE && newVal) {
-    sheet.getRange(row, COLS.ROUNDS.STATUS).setValue('Scheduled');
-    var roundType = String(sheet.getRange(row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
-    if (!sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
-      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(newVal), REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
+    scheduleInterviewRound(roundId, newVal);
+    return;
+  }
+  if (col === COLS.ROUNDS.ROUND_TYPE && newVal) {
+    var interviewDateForType = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
+    if (interviewDateForType && !sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
+      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDateForType), REPLY_DAYS_BY_ROUND_TYPE[String(newVal)] || 7));
     }
-    var domain = sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).getValue();
-    if (domain) firePrepCascade(sheet, row, domain, jobId, jobDisplay, orgDisplay);
+    if (sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).getValue()) createInterviewPrepTasks(roundId);
     return;
   }
   if (col === COLS.ROUNDS.DOMAIN_READINESS && String(sheet.getRange(row, COLS.ROUNDS.STATUS).getValue()) === 'Scheduled') {
-    firePrepCascade(sheet, row, newVal, jobId, jobDisplay, orgDisplay);
+    createInterviewPrepTasks(roundId);
     return;
   }
   if (col === COLS.ROUNDS.OFFICIAL_OUTCOME) {
+    if (String(newVal) === 'Waiting' && !sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
+      var waitingDate = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue() || today();
+      var waitingType = String(sheet.getRange(row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
+      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
+    }
     if (String(newVal) === 'Rejected') setJobStatus(jobId, 'Closed', { source: 'round-outcome' });
     if (String(newVal) === 'Offer') setJobStatus(jobId, 'Offer', { source: 'round-outcome' });
     if (String(newVal) === 'Parked') setJobStatus(jobId, 'Parked', { source: 'round-outcome' });
-    if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1 } });
+    if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
     return;
   }
-  if (col === COLS.ROUNDS.STATUS && String(newVal) === 'Completed') {
-    appendInteraction('', '', orgDisplay, today(), 'Interview', 'Interview completed: round ' + (roundNum || '?') + ' — ' + jobDisplay, 'Useful');
+  if (col === COLS.ROUNDS.STATUS) {
+    if (String(newVal) === 'Completed') {
+      if (!sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+      createInterviewDebriefTask(roundId);
+      appendInteraction('', '', orgDisplay, today(), 'Auto-log', 'Interview completed: round ' + (roundNum || '?') + ' - ' + jobDisplay, 'System log');
+    }
+    if (String(newVal) === 'Reschedule') {
+      appendTodoOnceForWorkflow('Reschedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Find a new time, then update Interview date.', 'Auto-triggered');
+    }
+    if (String(newVal) === 'Cancelled') {
+      setOpenTodosForTarget('Interview round', roundId, 'Cancelled', 'Interview round cancelled',
+        ['Interview scheduling', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review', 'Thank-you and debrief', 'Interview follow-up']);
+    }
   }
 }
 
@@ -2681,6 +3028,67 @@ function checkDomainReadinessFlags() {
   var sheet = getSheet('Interviews');
   if (!sheet) return;
   results.forEach(function (r) { appendNoteFlag(sheet, r.row, COLS.ROUNDS.NOTES, '[flags] \u26a0 Domain readiness not set — prep may be missing'); });
+}
+
+function checkInterviewRoundHealthFlags() {
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Interview rounds'].length).getValues();
+  var todayDate = today();
+  var flagged = 0;
+  for (var i = 0; i < data.length; i++) {
+    var row = i + 2;
+    var roundId = String(data[i][COLS.ROUNDS.ID - 1] || '');
+    var jobId = String(data[i][COLS.ROUNDS.JOB_ID - 1] || '');
+    var status = String(data[i][COLS.ROUNDS.STATUS - 1] || '');
+    var outcome = String(data[i][COLS.ROUNDS.OFFICIAL_OUTCOME - 1] || '');
+    var domain = String(data[i][COLS.ROUNDS.DOMAIN_READINESS - 1] || '');
+    var interviewDate = data[i][COLS.ROUNDS.INTERVIEW_DATE - 1];
+    var expected = data[i][COLS.ROUNDS.EXPECTED_RESPONSE - 1];
+    var notes = String(data[i][COLS.ROUNDS.NOTES - 1] || '');
+    if (!roundId) continue;
+
+    if (jobId && !getJobRowById(jobId)) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[orphaned-job] Linked Job no longer exists');
+      flagged++;
+    } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[orphaned-job]');
+    }
+
+    if (status === 'Scheduled' && interviewDate) {
+      var daysUntil = daysBetween(todayDate, new Date(interviewDate));
+      if (!domain && daysUntil >= 0 && daysUntil <= 5) {
+        appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep] Domain readiness not set - prep may be missing');
+        flagged++;
+      } else {
+        clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
+      }
+      if (daysUntil < 0) {
+        appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round] Interview date has passed but Status is still Scheduled');
+        flagged++;
+      } else {
+        clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round]');
+      }
+    } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round]');
+      if (domain) clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
+    }
+
+    if (status === 'Completed' && (!outcome || outcome === 'Waiting') && expected && new Date(expected) < todayDate) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome] Expected response date has passed');
+      flagged++;
+    } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome]');
+    }
+
+    if (status === 'Completed' && notes.indexOf('[interview-debrief]') === -1) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief] Add substantive debrief notes');
+      flagged++;
+    } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief]');
+    }
+  }
+  return flagged;
 }
 
 function showInterviewsTab() {
@@ -5266,7 +5674,7 @@ function materializeDueTasks() {
       var rOutcome = String(rData[rr][COLS.ROUNDS.OFFICIAL_OUTCOME - 1]);
       var rExpResp = rData[rr][COLS.ROUNDS.EXPECTED_RESPONSE - 1];
       if (!rId) continue;
-      if (rStatus === 'Completed' && rOutcome === 'Waiting' && rExpResp && new Date(rExpResp) < todayDate) {
+      if (rStatus === 'Completed' && (!rOutcome || rOutcome === 'Waiting') && rExpResp && new Date(rExpResp) < todayDate) {
         if (appendTodoOnceForWorkflow('Check response from ' + rOrgDisp + ' Round ' + rRound, 'Interview round', rId, rOrgDisp, 'Interview follow-up', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
       }
     }
@@ -5906,6 +6314,7 @@ function repairAllTabs() {
   syncJobsPeopleHealthFlags();
   repairOrganisationsFormulas();
   refreshLinkedContactsDisplay();
+  repairInteractionPersonLinks();
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
   setupTasksTabExtras();
@@ -5946,7 +6355,9 @@ function dailyMaintenance() {
     detectSectorOrphans();
     syncJobsPeopleHealthFlags();
     checkDomainReadinessFlags();
+    checkInterviewRoundHealthFlags();
     refreshInteractionPersonDropdown();
+    repairInteractionPersonLinks();
     populateToday();
     refreshHome();
     Logger.log('dailyMaintenance: DONE ' + new Date());
