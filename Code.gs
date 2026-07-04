@@ -1154,8 +1154,8 @@ function onEditDecisions(sheet, row, col, newVal, e) {
   var wasAlreadyResolved = e && e.oldValue && ['Yes', 'No', 'Auto-dismissed'].indexOf(String(e.oldValue)) !== -1;
   var accepted = resolveDecision(sheet, row, decision);
   renderTodayDecisionCards();
-  requestHomeRefresh();
   if (decision === 'Yes' && accepted && accepted.ok) populateToday();
+  else requestHomeRefresh();
   if (!wasAlreadyResolved) toastForDecisionOutcome(decision, accepted);
 }
 
@@ -1723,6 +1723,7 @@ function completeTodoRow(sheet, row, status, options) {
   if (target === 'Not started' || target === 'In progress') {
     sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
     syncTodayRowForTodo(row, target);
+    requestHomeRefresh();
     return true;
   }
 
@@ -1738,10 +1739,10 @@ function completeTodoRow(sheet, row, status, options) {
     syncTodayRowForTodo(row, target);
     if (EDIT_BATCH_CONTEXT && EDIT_BATCH_CONTEXT.deferTaskRefresh) {
       EDIT_BATCH_CONTEXT.needsDecisionRender = true;
-      EDIT_BATCH_CONTEXT.needsHomeRefresh = true;
+      requestHomeRefresh();
     } else {
       renderTodayDecisionCards();
-      refreshHome();
+      requestHomeRefresh();
     }
     return true;
   }
@@ -3593,7 +3594,6 @@ function onEditTasks(sheet, row, col, newVal) {
   if (col === COLS.TODO.TIME_EST) syncTodayEstMinForTodo(sheet, row);
   if (col === COLS.TODO.STATUS) {
     completeTodoRow(sheet, row, newVal, { source: 'tasks' });
-    requestHomeRefresh();
     return;
   }
   if ([COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.COMMITMENT_CLASS].indexOf(col) !== -1) requestHomeRefresh();
@@ -4453,7 +4453,6 @@ function onEditToday(sheet, row, col, newVal) {
   }
   completeTodo(String(todoId), status, { source: 'today' });
   updateTodayProgress(sheet);
-  requestHomeRefresh();
 }
 
 // -------------------------------------------------------------
