@@ -2733,11 +2733,13 @@ function onEditOrgs(sheet, row, col, newVal, e) {
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation marked Dormant');
       setOpenTodosForTarget('Organisation', orgId, 'Skipped', 'Organisation parked/dormant');
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     }
     if (String(newVal) === 'Archived') {
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation archived');
       setOpenTodosForTarget('Organisation', orgId, 'Cancelled', 'Organisation archived');
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     }
   }
 }
@@ -6252,7 +6254,7 @@ var HEADER_GUIDANCE = {
     'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
     'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
-    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped (default) / Active / Dormant / Archived',
+    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant parks; Archived retires',
     'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
   'People': {
@@ -7179,7 +7181,31 @@ function rowActionFindPeopleAtSelectedOrg() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
     appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'People sourcing', 'Not started', '', '30 min', '', 'Manually added');
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'rowActionFindPeopleAtSelectedOrg' });
+}
+
+function rowActionStartPursuingSelectedOrg() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Organisations') { SpreadsheetApp.getUi().alert('Select an Organisation row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  withDocumentLock(function () {
+    var orgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
+    var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
+    if (!orgId || !orgName) {
+      SpreadsheetApp.getUi().alert('Select an Organisation row with an Org ID and name.');
+      return;
+    }
+    sheet.getRange(row, COLS.ORGS.STATUS).setValue('Active');
+    sheet.getRange(row, COLS.ORGS.LAST_CHECKED).setValue(today());
+    ensureOrgClassificationState(row);
+    fireOrgActiveCascade(orgId, orgName);
+    renderTodayDecisionCards();
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Organisation is Active. People/job-scan decisions are queued on Home.', 'The Planner', 5);
+  }, { label: 'rowActionStartPursuingSelectedOrg' });
 }
 
 function rowActionScanJobsAtSelectedOrg() {
@@ -7188,6 +7214,8 @@ function rowActionScanJobsAtSelectedOrg() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
     appendTodoWithSource('Scan jobs at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Org job scan', 'Not started', '', '30 min', '', 'Manually added');
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'rowActionScanJobsAtSelectedOrg' });
 }
 
@@ -7845,6 +7873,7 @@ function buildMenu() {
       .addItem('Conversation', 'addNewInteraction')
       .addItem('Interview', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Row actions')
+      .addItem('Start pursuing selected org', 'rowActionStartPursuingSelectedOrg')
       .addItem('Find people at selected org', 'rowActionFindPeopleAtSelectedOrg')
       .addItem('Scan jobs at selected org', 'rowActionScanJobsAtSelectedOrg')
       .addItem('Prep application for selected job', 'rowActionPrepSelectedJob')
