@@ -254,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.3';
+var SCRIPT_VERSION = 'v7.7.4';
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -2945,13 +2945,6 @@ function createInterviewDebriefTask(roundId) {
     interviewDebriefTemplate(), 'Auto-triggered');
 }
 
-function firePrepCascade(sheet, row, domainReadiness, jobId, jobDisplay, orgDisplay) {
-  var roundId = sheet.getRange(row, COLS.ROUNDS.ID).getValue();
-  if (domainReadiness) sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).setValue(domainReadiness);
-  if (roundId) return createInterviewPrepTasks(roundId);
-  return 0;
-}
-
 function onEditRounds(sheet, row, col, newVal) {
   var roundId = sheet.getRange(row, COLS.ROUNDS.ID).getValue();
   var jobId = sheet.getRange(row, COLS.ROUNDS.JOB_ID).getValue();
@@ -2999,6 +2992,12 @@ function onEditRounds(sheet, row, col, newVal) {
     if (String(newVal) === 'Cancelled') {
       setOpenTodosForTarget('Interview round', roundId, 'Cancelled', 'Interview round cancelled',
         ['Interview scheduling', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review', 'Thank-you and debrief', 'Interview follow-up']);
+      // v7.7.4: a round can be cancelled after its 'Completed' cascade
+      // already raised an INTERVIEW_OUTCOME decision — without this, that
+      // decision stays open forever asking for an outcome on a round the
+      // user just said never happened. Same idiom as every other
+      // terminal-state cascade (Organisation/Job/Person/Sector).
+      autoDismissPendingForTarget('Interview round', roundId, 'Interview round cancelled');
     }
   }
 }
@@ -3036,6 +3035,7 @@ function checkInterviewRoundHealthFlags() {
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Interview rounds'].length).getValues();
   var todayDate = today();
   var flagged = 0;
+  var jobIds = jobIdExistsMap();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
     var roundId = String(data[i][COLS.ROUNDS.ID - 1] || '');
@@ -3048,30 +3048,32 @@ function checkInterviewRoundHealthFlags() {
     var notes = String(data[i][COLS.ROUNDS.NOTES - 1] || '');
     if (!roundId) continue;
 
-    if (jobId && !getJobRowById(jobId)) {
+    if (jobId && !jobIds[jobId]) {
       appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[orphaned-job] Linked Job no longer exists');
       flagged++;
     } else {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[orphaned-job]');
     }
 
-    if (status === 'Scheduled' && interviewDate) {
-      var daysUntil = daysBetween(todayDate, new Date(interviewDate));
-      if (!domain && daysUntil >= 0 && daysUntil <= 5) {
-        appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep] Domain readiness not set - prep may be missing');
-        flagged++;
-      } else {
-        clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
-      }
-      if (daysUntil < 0) {
-        appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round] Interview date has passed but Status is still Scheduled');
-        flagged++;
-      } else {
-        clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round]');
-      }
+    // v7.7.4: [missing-prep]/[stale-round] must clear whenever their
+    // setting condition (status==='Scheduled' && interviewDate && ...) is
+    // no longer true, for ANY reason — including the round moving off
+    // Scheduled entirely (e.g. Reschedule) while domain readiness still
+    // isn't set. The previous `if (domain)` guard on the missing-prep
+    // clear left it stuck in exactly that case.
+    var isScheduledWithDate = status === 'Scheduled' && !!interviewDate;
+    var daysUntil = isScheduledWithDate ? daysBetween(todayDate, new Date(interviewDate)) : null;
+    if (isScheduledWithDate && !domain && daysUntil >= 0 && daysUntil <= 5) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep] Domain readiness not set - prep may be missing');
+      flagged++;
+    } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
+    }
+    if (isScheduledWithDate && daysUntil < 0) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round] Interview date has passed but Status is still Scheduled');
+      flagged++;
     } else {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[stale-round]');
-      if (domain) clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
     }
 
     if (status === 'Completed' && (!outcome || outcome === 'Waiting') && expected && new Date(expected) < todayDate) {
