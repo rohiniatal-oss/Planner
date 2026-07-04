@@ -433,6 +433,27 @@ function recordMaintenanceError(label, message) {
   }
 }
 
+// Tracks when Today's plan was last (re)built, independent of the B2
+// display cell — B2 is a live =TODAY() formula so the visible date is
+// always current even when nothing has (re)generated the plan; the
+// staleness checks (collectPreviousTodayState, todayPlanCounts,
+// checkMorningCarryForward) need the actual last-build date instead.
+function getTodayPlanBuiltDate() {
+  var raw = maintenanceProps().getProperty('todayPlanBuiltDate');
+  if (!raw) return null;
+  // Split manually rather than `new Date(raw)` — a bare 'yyyy-MM-dd'
+  // string parses as UTC midnight, which drifts a calendar day off
+  // today()'s local-midnight construction in non-UTC timezones.
+  var parts = raw.split('-');
+  if (parts.length !== 3) return null;
+  var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function setTodayPlanBuiltDate(d) {
+  maintenanceProps().setProperty('todayPlanBuiltDate', Utilities.formatDate(d, plannerTimeZone(), 'yyyy-MM-dd'));
+}
+
 function readMaintenanceHealth() {
   var props = maintenanceProps();
   var now = new Date();
@@ -3574,11 +3595,17 @@ function onEditTasks(sheet, row, col, newVal) {
 // their own label (same bug pattern as the old B3 update-type cell: the
 // label write was always clobbered by the value write two lines later,
 // so "Priority / focus"/"Available minutes"/"Energy" never actually
-// rendered). Column D matches the label/value split row 7 already uses
-// (B7 label, D7 value).
+// rendered). Column D holds the value next to each row's label.
 var TODAY_CELLS = {
   PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6'
 };
+
+// Checkbox-as-button, same convention as HOME_REFRESH_ROW/TODAY_ENDOFDAY_ROW:
+// a self-resetting checkbox that calls populateToday() on tick, so refreshing
+// Today's plan is a visible on-sheet action rather than menu-only.
+var TODAY_REFRESH_ROW = 7;
+var TODAY_REFRESH_COL = 2;
+
 var TODAY_TABLE_HEADER_ROW = 10;
 var TODAY_TABLE_FIRST_ROW = 11;
 var TODAY_TABLE_LAST_ROW = 40;
@@ -3631,10 +3658,12 @@ function bootstrapToday() {
   var guideSheetForToday = getSheet('Guide');
   if (guideSheetForToday) sheet.getRange('A3').setFormula('=HYPERLINK("#gid=' + guideSheetForToday.getSheetId() + '","Guide")').setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
 
-  // Row 2: friendly plan-built date. Stays a real Date value (formatted,
-  // not stringified) so collectPreviousTodayState's same-day check still
-  // works unchanged — only the display format changes.
-  sheet.getRange('B2:I2').merge().setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
+  // Row 2: live current-date display, decoupled from the plan itself —
+  // it's a =TODAY() formula so it's always correct regardless of when
+  // the plan was last (re)generated. The plan's own staleness tracking
+  // lives in the todayPlanBuiltDate document property instead (see
+  // getTodayPlanBuiltDate/setTodayPlanBuiltDate).
+  sheet.getRange('B2:I2').merge().setFormula('=TODAY()').setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
 
   // Row 3: plan-summary headline — populateTodayImpl fills in the real
   // counts once stagedTodaySelection has run; this just lays out the cell.
@@ -3650,6 +3679,10 @@ function bootstrapToday() {
   sheet.getRange('B6').setValue('Energy').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
+
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
+    .setValue('✔ Tick to refresh Today’s plan').setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
@@ -3728,11 +3761,8 @@ function composeTodayNotes(tags, userNote) {
 
 function collectPreviousTodayState(sheet) {
   var state = { sameDay: false, ordered: [], byTodoId: {} };
-  var existingDate = sheet.getRange('B2').getValue();
-  if (existingDate) {
-    var d = new Date(existingDate); d.setHours(0, 0, 0, 0);
-    state.sameDay = d.getTime() === today().getTime();
-  }
+  var builtDate = getTodayPlanBuiltDate();
+  if (builtDate) state.sameDay = builtDate.getTime() === today().getTime();
   if (!state.sameDay) return state;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = String(sheet.getRange(r, COLS.TODAY.TASK).getValue() || '');
@@ -4003,11 +4033,21 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       else { var pv5 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, outside focus, near miss on capacity', tags: pv5.tags, userNote: pv5.userNote }); }
     });
 
-  // Stage 9 — remaining near-misses (Backlog-tier or anything left over
-  // that's close to fitting) go to Options, capped at 6.
+  // Stage 8.5 — Backlog fill: deadline-bearing and focus-relevant work
+  // above always wins the capacity first, but idle capacity shouldn't
+  // sit empty just because what's left is ad-hoc/Admin-class Backlog.
+  // Items that don't fit fall through to Stage 9's options fallback below
+  // like anything else, rather than being permanently hidden.
+  pool.filter(function (p) { return p.cls === 'Backlog' && !usedIds[p.todoId]; })
+    .sort(compareForStage(energyLow))
+    .forEach(function (p) {
+      if (minutesUsed + p.estMin <= capacity) { usedIds[p.todoId] = true; addCommit(p, 'backlog — filling spare capacity'); }
+    });
+
+  // Stage 9 — remaining near-misses (including Backlog that missed on
+  // capacity above) go to Options, capped at 6.
   pool.forEach(function (p) {
     if (usedIds[p.todoId] || options.length >= 6) return;
-    if (p.cls === 'Backlog') return; // Stage 10 — stays hidden in Tasks entirely
     var pv4 = preserved(p.todoId);
     options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'not selected today — capacity or priority', tags: pv4.tags, userNote: pv4.userNote });
   });
@@ -4036,7 +4076,7 @@ function populateTodayImpl() {
 
   var selection = stagedTodaySelection(previousState, availableMinutes, focus, energy);
 
-  sheet.getRange('B2').setValue(today());
+  setTodayPlanBuiltDate(today());
   sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent();
 
   var row = TODAY_TABLE_FIRST_ROW;
@@ -4327,6 +4367,11 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 
 function onEditToday(sheet, row, col, newVal) {
   if ((row === 4 || row === 5 || row === 6) && col === 4) { populateToday(); return; }
+  if (row === TODAY_REFRESH_ROW && col === TODAY_REFRESH_COL && newVal === true) {
+    sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false);
+    populateToday();
+    return;
+  }
   if (row === TODAY_ENDOFDAY_ROW && col === TODAY_ENDOFDAY_COL && newVal === true) {
     sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL).setValue(false);
     endOfDayReconcile();
@@ -4527,10 +4572,9 @@ function endOfDayReconcile() {
 function checkMorningCarryForward() {
   var sheet = getSheet('Today');
   if (!sheet) return;
-  var b2 = sheet.getRange('B2').getValue();
-  if (!b2) return;
-  var lastDate = new Date(b2); lastDate.setHours(0, 0, 0, 0);
-  if (lastDate.getTime() === today().getTime()) return;
+  var builtDate = getTodayPlanBuiltDate();
+  if (!builtDate) return;
+  if (builtDate.getTime() === today().getTime()) return;
   var unfinished = 0;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
@@ -4696,17 +4740,18 @@ function hardResetHomeSheet(sheet) {
   try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
 }
 
-// v7.4: Today's-plan hero counts — built only if Today's date (B2) is
-// today; a row counts as Commit unless its Slot cell starts with 'O'
-// (Option rows are written as 'O1', 'O2', ... by writeTodayRow).
+// v7.4: Today's-plan hero counts — built only if the plan was actually
+// (re)generated today (todayPlanBuiltDate), not just because the B2
+// display happens to show today's date; a row counts as Commit unless
+// its Slot cell starts with 'O' (Option rows are written as 'O1', 'O2',
+// ... by writeTodayRow).
 function todayPlanCounts() {
   var result = { built: false, commit: 0, minutes: 0, options: 0 };
   var sheet = getSheet('Today');
   if (!sheet) return result;
-  var planDate = sheet.getRange('B2').getValue();
-  if (!planDate) return result;
-  var d = new Date(planDate); d.setHours(0, 0, 0, 0);
-  result.built = d.getTime() === today().getTime();
+  var builtDate = getTodayPlanBuiltDate();
+  if (!builtDate) return result;
+  result.built = builtDate.getTime() === today().getTime();
   if (!result.built) return result;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
