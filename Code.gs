@@ -2518,9 +2518,9 @@ function fireOrgActiveCascade(orgId, orgName) {
 function fireSectorOnlyTask(sector) {
   var branch = (typeof sector === 'object') ? sector : upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
   if (!branch) return '';
-  var linkedTaskText = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
+  var linkedTaskText = 'Add 2-4 sub-sector rows for ' + branch.sector;
   return appendTodoOnceForWorkflow(linkedTaskText, 'Sector', branch.id, '', 'Sector selection', 'Not started', '', '20 min',
-    'Sub-sectors should be narrow enough that a market map of 10-15 organisations is feasible.', 'Auto-triggered');
+    'Open Sectors from this task. Add one row per sub-sector: keep Sector = ' + branch.sector + ', fill Sub-sector with the narrower area. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
 }
 
 // Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row.
@@ -2725,7 +2725,7 @@ function syncSingleSectorLinkedLabel(branch) {
       writeLinkedTo(taskSheet, t + 2, 'Sector', branch.id);
       var workflow = String(taskData[t][COLS.TODO.WORKFLOW - 1] || '');
       var desiredTask = '';
-      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
+      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'Add 2-4 sub-sector rows for ' + branch.sector;
       if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) desiredTask = 'Market map: ' + branch.sector + ' - ' + branch.subsector;
       if (desiredTask && String(taskData[t][COLS.TODO.TASK - 1]) !== desiredTask) {
         taskSheet.getRange(t + 2, COLS.TODO.TASK).setValue(desiredTask);
@@ -5497,10 +5497,10 @@ function setupChecklistFor(entryPoint, fields) {
   if (entryPoint === 'sectors') {
     return [{
       alwaysDone: true,
-      label: 'List 2-4 sub-sectors worth exploring',
-      text: 'List 2-4 sub-sectors worth exploring',
+      label: 'Add 2-4 sub-sector rows for your first broad sector',
+      text: 'Add 2-4 sub-sector rows',
       tab: 'Today',
-      notes: 'Adding a Sub-sector on Sectors raises a Decision asking whether to build an org list there.'
+      notes: 'Open the linked Sector task, then add child rows on Sectors with the same Sector and a filled Sub-sector.'
     }];
   }
   var map = {
@@ -5567,8 +5567,8 @@ function processSectorOnboarding(fields, source) {
     var branch = upsertSectorBranch({ sector: sector, source: source, createExpansionDecision: false });
     if (idx < 2) fireSectorOnlyTask(branch);
   });
-  var warnings = sectors.length > 2 ? ['Created all sectors; list-sub-sectors tasks were created for the first 2.'] : [];
-  return okResult('Added ' + sectors.length + ' sector(s) and the sub-sector task.', { warnings: warnings });
+  var warnings = sectors.length > 2 ? ['Created all broad sectors; sub-sector entry tasks were created for the first 2.'] : [];
+  return okResult('Added ' + sectors.length + ' broad sector(s). Today now has the task to add narrower sub-sector rows.', { warnings: warnings });
 }
 
 function processApplicationOnboarding(fields) {
@@ -5773,7 +5773,7 @@ function todayUpdateTypeToCapture(updateType) {
 function captureConfig(captureType) {
   var roundTypes = DROPDOWNS.ROUND_TYPE, domain = DROPDOWNS.DOMAIN_READINESS, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME;
   var config = {
-    'Explore sectors': { title: 'Explore sectors', fields: [{ k: 'sectorNames', l: 'Sector(s) to explore', t: 'textarea' }] },
+    'Explore sectors': { title: 'Explore broad sectors', fields: [{ k: 'sectorNames', l: 'Broad sector(s) to explore', t: 'textarea', p: 'Climate\nAI governance' }] },
     'Find organisations': {
       title: 'Add organisations found from exploration',
       fields: [{ k: 'sector', l: 'Sector', t: 'text' }, { k: 'subsector', l: 'Sub-sector', t: 'text' },
@@ -5975,9 +5975,9 @@ function processJobCapture(fields) {
 var HEADER_GUIDANCE = {
   'Sectors': {
     'Sector ID': 'Broad sector ID. Same ID groups the parent sector and its sub-sectors.',
-    'Sector': 'Parent row: rename the sector. Sub-sector row: move this sub-sector to that sector.',
+    'Sector': 'Fill this for every row. Parent row: rename. Sub-sector row: move this child.',
     'Sub-sector ID': 'Child ID. Stays with the sub-sector if it is moved or renamed.',
-    'Sub-sector': 'Child label. Fill to create a sub-sector; rename here.',
+    'Sub-sector': 'Leave blank for broad sector rows. Fill on child rows with the narrower area.',
     'Status': 'Open / Retired. Retiring a parent also retires its sub-sectors.',
     'Notes': 'Review flags and context.'
   },
@@ -6810,6 +6810,14 @@ function checkOrgOrphans() {
 // "ADD NEW" ESCAPE HATCHES — quick capture without opening Today
 // =============================================================
 
+function addNewSector() {
+  runCapturePopup('Explore sectors');
+}
+
+function addExplorationOrganisations() {
+  runCapturePopup('Find organisations');
+}
+
 function addNewOrganisation() {
   var ui = SpreadsheetApp.getUi();
   var nameResp = ui.prompt('Add new organisation', 'Organisation name:', ui.ButtonSet.OK_CANCEL);
@@ -7227,6 +7235,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'How adding things works');
   r = writeKV(sheet, r, 'Use Home first', 'The Add/update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
   r = writeKV(sheet, r, 'You can still type in tabs', 'If you type directly into Jobs or People, fill Organisation too. Without an Organisation, the row is saved but the follow-up work waits until the Organisation is filled.');
+  r = writeKV(sheet, r, 'Typing into Sectors', 'For a broad area, fill Sector and leave Sub-sector blank. For a narrower area, add a new row with the same Sector and fill Sub-sector.');
   r = writeKV(sheet, r, 'Cream and grey cells', 'Cream cells are yours to edit. Grey cells are filled in and kept up to date by the planner.');
   r = writeKV(sheet, r, 'Organisation links', 'Type an organisation name on a Job or Person. The planner finds or creates the Organisation and fills the ID behind the scenes.');
   r++;
@@ -7554,6 +7563,8 @@ function buildMenu() {
       .addItem('Move selected row down', 'moveTodayRowDown')
       .addItem('Show all Today columns', 'showAllColumns'))
     .addSubMenu(ui.createMenu('Add/update popups')
+      .addItem('Broad sectors', 'addNewSector')
+      .addItem('Organisations from exploration', 'addExplorationOrganisations')
       .addItem('Organisation', 'addNewOrganisation')
       .addItem('Person', 'addNewPerson')
       .addItem('Job', 'addNewJob')
@@ -7564,8 +7575,8 @@ function buildMenu() {
       .addItem('Scan jobs at selected org', 'rowActionScanJobsAtSelectedOrg')
       .addItem('Prep application for selected job', 'rowActionPrepSelectedJob')
       .addItem('Referral search for selected job', 'rowActionReferralSearchSelectedJob')
-      .addItem('Search orgs for selected sub-sector', 'rowActionSearchOrgsForSubsector')
-      .addItem('Break down selected sector', 'rowActionBreakDownSelectedSector')
+      .addItem('Create market-map task for selected sub-sector', 'rowActionSearchOrgsForSubsector')
+      .addItem('Create sub-sector task for selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
       .addItem('Break down selected Multi-day task', 'rowActionBreakDownSelectedTask')
       .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
