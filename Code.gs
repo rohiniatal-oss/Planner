@@ -6952,8 +6952,8 @@ function rowActionSearchOrgsForSubsector() {
   withDocumentLock(function () {
     var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
     if (!branch || !branch.id) return;
-    if (appendTodoOnceForWorkflow('Market map: ' + branch.sector + ' - ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added')) {
-      populateToday();
+    if (fireSubsectorAddedDecision(branch.sector, branch.subsector, branch.id)) {
+      renderTodayDecisionCards();
       requestHomeRefresh();
     }
   }, { label: 'rowActionSearchOrgsForSubsector' });
@@ -7575,8 +7575,8 @@ function buildMenu() {
       .addItem('Scan jobs at selected org', 'rowActionScanJobsAtSelectedOrg')
       .addItem('Prep application for selected job', 'rowActionPrepSelectedJob')
       .addItem('Referral search for selected job', 'rowActionReferralSearchSelectedJob')
-      .addItem('Create market-map task for selected sub-sector', 'rowActionSearchOrgsForSubsector')
-      .addItem('Create sub-sector task for selected sector', 'rowActionBreakDownSelectedSector')
+      .addItem('Queue market-map decision for selected sub-sector', 'rowActionSearchOrgsForSubsector')
+      .addItem('Queue sub-sector task for selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
       .addItem('Break down selected Multi-day task', 'rowActionBreakDownSelectedTask')
       .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
