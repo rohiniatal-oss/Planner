@@ -140,7 +140,10 @@ var COLS = {
     WORKFLOW: 6, STATUS: 7, DUE_DATE: 8, TIME_EST: 9,
     NOTES: 10, PARENT_ID: 11, CREATED: 12, COMPLETED: 13,
     COMMITMENT_CLASS: 14, SOURCE: 15, LAST_EDITED: 16,
-    CLASS_CALC_AT: 17, EFFORT_TYPE: 18
+    CLASS_CALC_AT: 17, EFFORT_TYPE: 18,
+    // v7.6 — appended, never inserted mid-schema (would shift every
+    // trailing index file-wide for a purely cosmetic win).
+    PRIORITY_RANK: 19, LINKED_TO: 20, ON_TODAY: 21, HAS_SUBTASKS: 22
   },
 
   ROUNDS: {
@@ -190,7 +193,8 @@ var HEADERS = {
     'Task ID', 'Task', 'Linked object type', 'Linked object ID', 'Org',
     'Workflow type', 'Status', 'Due date', 'Time estimate',
     'Notes', 'Parent To-do ID', 'Created', 'Completed',
-    'Commitment class', 'Source', 'Last edited', 'Class calculated at', 'Effort type'
+    'Commitment class', 'Source', 'Last edited', 'Class calculated at', 'Effort type',
+    'Priority rank', 'Linked to', 'On Today right now', 'Has sub-tasks'
   ],
   'Interview rounds': [
     'Round ID', 'Linked Job ID', 'Job (display)', 'Org (display)',
@@ -250,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.5';
+var SCRIPT_VERSION = 'v7.6';
 
 var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
@@ -1025,6 +1029,16 @@ function resolveDaysToLinkedDate(workflow, objId, objType, dueDate) {
   return daysBetween(today(), targetDate);
 }
 
+// v7.6 §3: the workflows whose commitment class is date-conditional in
+// assignCommitmentClass below (Fixed/Blocking above a day threshold) —
+// used by runQueueHygiene to flag a task that has no usable date at all
+// (neither its own Due date nor a linked Job deadline/Interview date).
+var DATE_CONDITIONAL_WORKFLOWS = [
+  'Interview scheduling', 'Submit application',
+  'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)',
+  'Application preparation'
+];
+
 function assignCommitmentClass(workflow, dueDate, objId, objType) {
   if (!workflow) return 'Backlog';
   var daysToLinked = null;
@@ -1150,9 +1164,37 @@ function runQueueHygiene() {
     // forever while Today reports itself fully planned. Flag them for
     // the "Needs breakdown" mini-section instead \u2014 unless they've
     // already been broken down into real sub-tasks (\u00a74.2 guard).
-    if (String(row[COLS.TODO.TIME_EST - 1]) === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS) {
-      var todoId = String(row[COLS.TODO.ID - 1]);
+    var todoId = String(row[COLS.TODO.ID - 1]);
+    var timeEst = String(row[COLS.TODO.TIME_EST - 1] || '');
+    if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS) {
       if (!hasSubtasks(todoId)) appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+    }
+
+    // v7.6 \u00a73: mechanical, boolean-only Tasks-tab health flags \u2014 each
+    // gets its own bracket category (not the shared [flags] one used by
+    // HOT above) so unrelated problems on the same row can co-exist
+    // instead of clobbering each other (appendNoteFlag dedupes by
+    // category, replacing any prior message in that same category).
+    var workflow = String(row[COLS.TODO.WORKFLOW - 1] || '');
+    var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+    var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+    var dueDate = row[COLS.TODO.DUE_DATE - 1];
+
+    if (!timeEst) {
+      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-estimate] \u26a0 Missing time estimate');
+    }
+    if (workflow !== 'Admin' && (objType === 'None' || !objType)) {
+      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-link] \u26a0 Missing linked object for ' + workflow);
+    }
+    if (DATE_CONDITIONAL_WORKFLOWS.indexOf(workflow) !== -1 && resolveDaysToLinkedDate(workflow, objId, objType, dueDate) === null) {
+      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-date] \u26a0 No due date for a date-sensitive workflow');
+    }
+    // A task that's already been broken down should be Skipped (see
+    // completeBreakdownFromPopup) \u2014 if it's somehow still open, that's a
+    // data-integrity signal worth surfacing, not a silent re-flag as
+    // "needs breakdown" (the hasSubtasks guards above already prevent that).
+    if (hasSubtasks(todoId)) {
+      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[parent-still-open] \u26a0 Already broken down into sub-tasks \u2014 should be Skipped');
     }
   }
 }
@@ -1161,6 +1203,12 @@ function runQueueHygiene() {
 // TASK CREATION & DEDUP
 // =============================================================
 
+// v7.6 §7.3: fuzzy text match (same similarity() + 0.85 threshold already
+// used for Org/Person/Job dedup elsewhere) instead of exact-text — this
+// is the only defense ad-hoc/manual task creation has (no object or
+// workflow to key on by design), and exact-text was brittle to minor
+// rewording. appendTodoOnceForWorkflow's (objType, objId, workflow) key
+// is unrelated and unchanged.
 function isTodoDuplicate(sheet, task, objId, statusToCreate) {
   if (!task) return false;
   var lastRow = sheet.getLastRow();
@@ -1168,11 +1216,10 @@ function isTodoDuplicate(sheet, task, objId, statusToCreate) {
   if (statusToCreate !== 'Not started' && statusToCreate !== 'In progress') return false;
   var data = sheet.getRange(2, 1, lastRow - 1, COLS.TODO.STATUS).getValues();
   for (var i = 0; i < data.length; i++) {
-    if (String(data[i][COLS.TODO.TASK - 1]) === String(task) &&
-        String(data[i][COLS.TODO.OBJ_ID - 1]) === String(objId || '') &&
-        (String(data[i][COLS.TODO.STATUS - 1]) === 'Not started' || String(data[i][COLS.TODO.STATUS - 1]) === 'In progress')) {
-      return true;
-    }
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
+    var st = String(data[i][COLS.TODO.STATUS - 1]);
+    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return true;
   }
   return false;
 }
@@ -1191,15 +1238,20 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
   return false;
 }
 
+// Kept in step with isTodoDuplicate's fuzzy match (same threshold) — this
+// finds the specific task that caused appendTodoWithSource's dedup
+// rejection, so acceptPendingDecision can still link a Decision to it.
+// An exact-only match here would miss anything isTodoDuplicate itself
+// would have flagged, reintroducing the "accepted but unlinked" gap.
 function findOpenTodoByTaskTarget(task, objId) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !task) return '';
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
   for (var i = 0; i < data.length; i++) {
-    if (String(data[i][COLS.TODO.TASK - 1]) !== String(task)) continue;
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st === 'Not started' || st === 'In progress') return String(data[i][COLS.TODO.ID - 1] || '');
+    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return String(data[i][COLS.TODO.ID - 1] || '');
   }
   return '';
 }
@@ -1231,7 +1283,110 @@ function appendTodoWithSource(task, objType, objId, org, workflow, status, dueDa
   row[COLS.TODO.CLASS_CALC_AT - 1] = today();
   row[COLS.TODO.EFFORT_TYPE - 1] = deriveEffortType(workflow || 'Admin');
   sheet.appendRow(row);
+  applyTaskHelperColumns(sheet, sheet.getLastRow());
   return id;
+}
+
+// =============================================================
+// TASKS HELPER COLUMNS (v7.6) — Priority rank, Linked to, On Today
+// right now, Has sub-tasks. Priority rank / On Today / Has sub-tasks are
+// live spreadsheet formulas (self-maintaining — they can never drift
+// from Commitment class / Today's contents / Parent To-do ID, no
+// refresh call needed). Linked to is script-written since it needs a
+// cross-sheet name lookup + HYPERLINK, so it's refreshed on task
+// creation and again by backfillTaskHelperColumns() (wired into
+// repairAllTabs/dailyMaintenance) to catch a renamed source object.
+// =============================================================
+
+function priorityRankFormula(row) {
+  return '=SWITCH($N' + row + ',"Fixed",1,"Blocking",2,"Keep-alive",3,"Active pursuit",4,"Pipeline-building",5,"Backlog",6,99)';
+}
+
+function onTodayFormula(row) {
+  return '=IF(COUNTIF(Today!$C$' + TODAY_TABLE_FIRST_ROW + ':$C$' + TODAY_TABLE_LAST_ROW + ',$A' + row + ')>0,"Yes","No")';
+}
+
+function hasSubtasksFormula(row) {
+  return '=IF(COUNTIF($K$2:$K,$A' + row + ')>0,"Yes","No")';
+}
+
+// objType/objId -> source-tab display name + row, for the "Linked to"
+// HYPERLINK. Sector is a special case: a sector-only task's objId is the
+// literal sector NAME (no Sectors-tab ID exists until it becomes a
+// sub-sector row), so it's shown as plain text with no jump target.
+var LINKED_TO_MAP = {
+  'Job': { sheet: 'Jobs', idCol: 1, nameCol: 2 },
+  'Person': { sheet: 'People', idCol: 1, nameCol: 2 },
+  'Organisation': { sheet: 'Organisations', idCol: 1, nameCol: 2 },
+  'Interview round': { sheet: 'Interviews', idCol: 1, nameCol: 3 },
+  'Sector': { sheet: 'Sectors', idCol: 1, nameCol: 3 }
+};
+
+function resolveLinkedTo(objType, objId) {
+  if (!objId || !objType || objType === 'None') return { text: '', sheetName: '', row: 0 };
+  var spec = LINKED_TO_MAP[objType];
+  if (!spec) return { text: '', sheetName: '', row: 0 };
+  var sheet = getSheet(spec.sheet);
+  if (sheet && sheet.getLastRow() > 1) {
+    var ids = sheet.getRange(2, spec.idCol, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === String(objId)) {
+        var row = i + 2;
+        var name = String(sheet.getRange(row, spec.nameCol).getValue() || '');
+        return { text: name || spec.sheet, sheetName: spec.sheet, row: row };
+      }
+    }
+  }
+  if (objType === 'Sector') return { text: String(objId), sheetName: '', row: 0 }; // sector-only stage — no row to link to
+  return { text: '', sheetName: '', row: 0 };
+}
+
+function writeLinkedTo(sheet, row, objType, objId) {
+  var cell = sheet.getRange(row, COLS.TODO.LINKED_TO);
+  var linked = resolveLinkedTo(objType, objId);
+  if (!linked.text) { cell.setValue(''); return; }
+  if (!linked.row) { cell.setValue(linked.text); return; }
+  var targetSheet = getSheet(linked.sheetName);
+  if (!targetSheet) { cell.setValue(linked.text); return; }
+  cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=A' + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
+}
+
+function applyTaskHelperColumns(sheet, row) {
+  if (!sheet.getRange(row, COLS.TODO.ID).getValue()) return;
+  sheet.getRange(row, COLS.TODO.PRIORITY_RANK).setFormula(priorityRankFormula(row));
+  sheet.getRange(row, COLS.TODO.ON_TODAY).setFormula(onTodayFormula(row));
+  sheet.getRange(row, COLS.TODO.HAS_SUBTASKS).setFormula(hasSubtasksFormula(row));
+  writeLinkedTo(sheet, row,
+    String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue() || ''),
+    String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue() || ''));
+}
+
+// Recomputes all four helper columns for every existing Tasks row —
+// needed for rows created before this deploy (no formulas yet) and to
+// catch a renamed linked object (Linked to is the only one of the four
+// that isn't a self-maintaining formula). Wired into repairAllTabs and
+// dailyMaintenance.
+function backfillTaskHelperColumns() {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return;
+  for (var r = 2; r <= sheet.getLastRow(); r++) {
+    applyTaskHelperColumns(sheet, r);
+  }
+}
+
+// v7.6 §2.7/§2.8: one native basic filter (Apps Script can only manage a
+// single per-sheet basic filter, not multiple named Filter Views — this
+// is the honest substitute for "grouped views", not a lesser version of
+// one) and a frozen header row. Idempotent — checks before creating.
+function setupTasksTabExtras() {
+  var sheet = getSheet('Tasks');
+  if (!sheet) return;
+  sheet.setFrozenRows(1);
+  if (!sheet.getFilter()) {
+    var lastRow = Math.max(sheet.getMaxRows(), 2);
+    var lastCol = HEADERS['To-do'].length;
+    sheet.getRange(1, 1, lastRow, lastCol).createFilter();
+  }
 }
 
 // Creates a Task for (objType, objId, workflow) only if one isn't
@@ -1362,7 +1517,7 @@ function handleJobTodoCompletion(todo, options) {
   var job = getJobRowById(todo.objId);
   if (!job) return;
   if (todo.workflow === 'Application preparation') {
-    appendTodoOnceForWorkflow('Submit application for: ' + job.title, 'Job', todo.objId, job.org, 'Submit application', 'Not started', job.deadline, '15 min', 'Application prep completed.', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Submit application: ' + job.title + ' at ' + job.org, 'Job', todo.objId, job.org, 'Submit application', 'Not started', job.deadline, '15 min', 'Application prep completed.', 'Auto-triggered');
   } else if (todo.workflow === 'Submit application') {
     setJobStatus(todo.objId, 'Applied', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
@@ -1382,7 +1537,7 @@ function handlePersonTodoCompletion(todo, options) {
   var person = getPersonRowById(todo.objId);
   if (!person) return;
   if (todo.workflow === 'Outreach') {
-    appendTodoOnceForWorkflow('Send outreach to ' + person.name, 'Person', todo.objId, person.org, 'Send outreach', 'Not started', '', '15 min', 'Draft prepared.', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Send outreach to ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', todo.objId, person.org, 'Send outreach', 'Not started', '', '15 min', 'Draft prepared.', 'Auto-triggered');
   } else if (todo.workflow === 'Send outreach') {
     movePersonStage(todo.objId, 'Outreach sent', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Contact follow-up') {
@@ -1549,7 +1704,7 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   var sheet = getSheet('Jobs');
 
   if (newStatus === 'Want to apply') {
-    appendTodoOnceForWorkflow('Prep application for: ' + job.title, 'Job', jobId, job.org, 'Application preparation',
+    appendTodoOnceForWorkflow('Prep application: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Application preparation',
       'Not started', job.deadline, '60 min', job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) : '', 'Auto-triggered');
     // Finding people is a suggestion, not automatic — per spec, ask.
     appendPendingDecision('JOB_WANT:' + jobId + ':Referral search', 'Job saved: ' + job.title + ' at ' + job.org,
@@ -1620,10 +1775,10 @@ function createInterviewRoundForJob(jobId, opts) {
   sheet.appendRow(row);
   var newRow = sheet.getLastRow();
   if (!date) {
-    appendTodoOnceForWorkflow('Schedule interview for: ' + job.title, 'Job', jobId, job.org, 'Interview scheduling', 'Not started', '', '15 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Schedule interview: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Interview scheduling', 'Not started', '', '15 min', '', 'Auto-triggered');
   } else {
     if (domain) firePrepCascade(sheet, newRow, domain, jobId, job.title, job.org);
-    else appendTodoOnceForWorkflow('Set domain readiness for: ' + job.title, 'Job', jobId, job.org, 'Interview prep (Domain scoping)', 'Not started', date, '15 min', 'Set Domain readiness on Interviews to unlock prep tasks.', 'Auto-triggered');
+    else appendTodoOnceForWorkflow('Set domain readiness for: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Interview prep (Domain scoping)', 'Not started', date, '15 min', 'Set Domain readiness on Interviews to unlock prep tasks.', 'Auto-triggered');
   }
   appendInteraction('', '', job.org, today(), 'Interview', 'Interview round created: ' + job.title + ' (Round ' + roundNum + ')', 'Useful');
   return id;
@@ -1685,24 +1840,24 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     sheet.getRange(person.row, COLS.PEOPLE.REPLY_RECEIVED).setValue('');
     sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_SENT).setValue('No');
     appendInteraction(personId, person.name, person.org, outreachDate, 'Auto-log', 'Outreach sent', 'Useful');
-    if (follow <= today()) appendTodoOnceForWorkflow('Follow up with ' + person.name, 'Person', personId, person.org, 'Contact follow-up', 'Not started', follow, '15 min', 'Outreach follow-up due.', 'Auto-triggered');
+    if (follow <= today()) appendTodoOnceForWorkflow('Follow up with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Contact follow-up', 'Not started', follow, '15 min', 'Outreach follow-up due.', 'Auto-triggered');
     return;
   }
   if (newStage === 'Engaged') {
-    appendTodoOnceForWorkflow('Reply and arrange conversation with ' + person.name, 'Person', personId, person.org, 'Reply and arrange conversation', 'Not started', '', '15 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Reply and arrange conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Reply and arrange conversation', 'Not started', '', '15 min', '', 'Auto-triggered');
     return;
   }
   if (newStage === 'Conversation scheduled') {
     var convDate = opts.realDate ? parseDateOr(opts.realDate) : sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).getValue();
     if (convDate) sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(convDate);
-    appendTodoOnceForWorkflow('Prep conversation with ' + person.name, 'Person', personId, person.org, 'Conversation prep', 'Not started', convDate ? addDays(new Date(convDate), -1) : '', '30 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Conversation prep', 'Not started', convDate ? addDays(new Date(convDate), -1) : '', '30 min', '', 'Auto-triggered');
     return;
   }
   if (newStage === 'Conversation completed') {
     var doneDate = opts.realDate ? parseDateOr(opts.realDate) : today();
     sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(doneDate);
     appendInteraction(personId, person.name, person.org, doneDate, 'Coffee', 'Conversation completed', 'Useful');
-    appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name, 'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min', '', 'Auto-triggered');
     return;
   }
   if (newStage === 'Nurture') {
@@ -2111,13 +2266,14 @@ function onEditInteractions(sheet, row, col, newVal) {
 function firePrepCascade(sheet, row, domainReadiness, jobId, jobDisplay, orgDisplay) {
   var interviewDate = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
   var dayBefore = interviewDate ? addDays(new Date(interviewDate), -1) : '';
+  var jobAt = jobDisplay + (orgDisplay ? ' at ' + orgDisplay : '');
   if (domainReadiness === 'Weak or new') {
-    appendTodoOnceForWorkflow('Domain scoping / Study plan for: ' + jobDisplay, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '60 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Domain scoping / study plan: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '60 min', '', 'Auto-triggered');
   } else if (domainReadiness === 'Refresh needed') {
-    appendTodoOnceForWorkflow('Domain scoping / Study plan for: ' + jobDisplay, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '30 min', '', 'Auto-triggered');
+    appendTodoOnceForWorkflow('Domain scoping / study plan: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Domain scoping)', 'Not started', '', '30 min', '', 'Auto-triggered');
   }
-  appendTodoOnceForWorkflow('Build Fit case for: ' + jobDisplay, 'Job', jobId, orgDisplay, 'Interview prep (Fit case)', 'Not started', '', '60 min', '', 'Auto-triggered');
-  appendTodoOnceForWorkflow('Day-before review for: ' + jobDisplay, 'Job', jobId, orgDisplay, 'Day-before review', 'Not started', dayBefore, '90 min', '', 'Auto-triggered');
+  appendTodoOnceForWorkflow('Build fit case: ' + jobAt, 'Job', jobId, orgDisplay, 'Interview prep (Fit case)', 'Not started', '', '60 min', '', 'Auto-triggered');
+  appendTodoOnceForWorkflow('Day-before review: ' + jobAt, 'Job', jobId, orgDisplay, 'Day-before review', 'Not started', dayBefore, '90 min', '', 'Auto-triggered');
 }
 
 function onEditRounds(sheet, row, col, newVal) {
@@ -2247,18 +2403,12 @@ function editMayNeedUi(e) {
   return false;
 }
 
-function routeEditEvent(e, triggerMode) {
-  if (!e || !e.range) return;
-  if (triggerMode === 'simple' && editMayNeedUi(e)) return;
-  if (!shouldProcessEditEvent(e)) return;
-  var sheet = e.range.getSheet();
+// v7.6 §7.2: dispatch for exactly one edited cell — the body every
+// single-cell edit already ran through. Pulled out so routeEditEvent can
+// call it once per cell in a multi-cell edit (see below) instead of only
+// ever seeing the top-left cell of the pasted/filled range.
+function dispatchCellEdit(sheet, row, col, value, e) {
   var name = sheet.getName();
-  var row = e.range.getRow();
-  var col = e.range.getColumn();
-  var value = e.range.getValue();
-  // v7.3: hold the document lock for the whole edit so cascades, ID
-  // generation, and completion routing can't interleave with another edit
-  // or the daily trigger. See withDocumentLock.
   withDocumentLock(function () {
     if (name === 'Home') { onEditHome(sheet, row, col, value); return; }
     if (row <= 1) return;
@@ -2274,6 +2424,39 @@ function routeEditEvent(e, triggerMode) {
       case 'Decisions': onEditDecisions(sheet, row, col, value, e); break;
     }
   }, { label: 'edit:' + name + ' r' + row + 'c' + col });
+}
+
+function routeEditEvent(e, triggerMode) {
+  if (!e || !e.range) return;
+  if (triggerMode === 'simple' && editMayNeedUi(e)) return;
+  if (!shouldProcessEditEvent(e)) return;
+  var range = e.range;
+  var sheet = range.getSheet();
+  var numRows = range.getNumRows();
+  var numCols = range.getNumColumns();
+  if (numRows === 1 && numCols === 1) {
+    dispatchCellEdit(sheet, range.getRow(), range.getColumn(), range.getValue(), e);
+    return;
+  }
+  // A paste or fill-drag spanning more than one cell: e.range.getRow()/
+  // getColumn()/getValue() collapse to the top-left cell only, so every
+  // other cell in the range would otherwise get its new value with zero
+  // cascade — no commitment-class recalc, no Today sync, no completion
+  // routing. Loop per affected cell instead of detecting-and-blocking
+  // bulk edits, which would fight the legitimate bulk-editing workflow
+  // this matters for most (e.g. bulk-skipping a stale backlog on Tasks).
+  // e.oldValue isn't populated for multi-cell edits either way, so any
+  // handler logic keyed on it (e.g. Jobs/People status-change cascades,
+  // Decisions' already-resolved check) simply doesn't fire per-cell here
+  // — same as it already doesn't for any other multi-cell paste today.
+  var startRow = range.getRow();
+  var startCol = range.getColumn();
+  var values = range.getValues();
+  for (var r = 0; r < numRows; r++) {
+    for (var c = 0; c < numCols; c++) {
+      dispatchCellEdit(sheet, startRow + r, startCol + c, values[r][c], null);
+    }
+  }
 }
 
 // Simple trigger — always present, zero install step. Handles everything
@@ -3497,13 +3680,30 @@ function nextIncompleteChecklistItem(profile) {
   return null;
 }
 
-function countOpenTasks() {
+// v7.6 §2.10: one extended bulk read over the same data the old
+// countOpenTasks() scanned (Status/Commitment class/Notes), instead of a
+// bare open-task count — no new sheet call, just more out of the same
+// pass. No summary/title row added to Tasks itself (ruled out by §1's
+// row-2 constraint) — this is Home's line, extended.
+function taskQueueSummary() {
   var sheet = getSheet('Tasks');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var statuses = sheet.getRange(2, COLS.TODO.STATUS, sheet.getLastRow() - 1, 1).getValues();
-  var count = 0;
-  statuses.forEach(function (r) { if (['Not started', 'In progress'].indexOf(String(r[0])) !== -1) count++; });
-  return count;
+  if (!sheet || sheet.getLastRow() < 2) return '0 open';
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.COMMITMENT_CLASS).getValues();
+  var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needBreakdown = 0, blockedCount = 0;
+  data.forEach(function (row) {
+    var status = String(row[COLS.TODO.STATUS - 1]);
+    if (status !== 'Not started' && status !== 'In progress') return;
+    open++;
+    var cls = String(row[COLS.TODO.COMMITMENT_CLASS - 1]);
+    if (cls === 'Fixed') fixedCount++;
+    if (cls === 'Blocking') blocking++;
+    var notes = String(row[COLS.TODO.NOTES - 1] || '');
+    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open)\]/.test(notes)) needAttention++;
+    if (notes.indexOf('[needs breakdown]') !== -1) needBreakdown++;
+    if (notes.indexOf('[blocked]') !== -1) blockedCount++;
+  });
+  return open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
+    needAttention + ' need attention · ' + needBreakdown + ' need breakdown · ' + blockedCount + ' blocked';
 }
 
 // v7.4: replaces a plain sheet.clear() — clear() alone was found to leave
@@ -3652,7 +3852,7 @@ function refreshHome() {
   if (todaySheetForLink) {
     sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","Start working ▸")').setFontColor('#01696F').setFontWeight('bold');
   }
-  sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(countOpenTasks() + ' tasks remain in your master queue.').setFontSize(9).setFontColor('#8A8D87');
+  sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(taskQueueSummary()).setFontSize(9).setFontColor('#8A8D87');
 
   // --- Upcoming (§1.5) — read-only, no cascades ---
   sheet.getRange(HOME_UPCOMING_HEADER_ROW, 2, 1, 5).merge().setValue('Upcoming').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
@@ -4226,10 +4426,11 @@ var HEADER_GUIDANCE = {
     'Type': 'call, email, message, referral, etc.', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
   },
   'To-do': {
-    'Task ID': 'system', 'Task': 'work item to execute', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
+    'Task ID': 'system', 'Task': 'Master task queue — inspect, repair, audit', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
     'Status': 'Done routes through the completion engine', 'Due date': 'auto or manual', 'Time estimate': 'planning size', 'Notes': 'why/context',
-    'Parent To-do ID': 'system', 'Created': 'system', 'Completed': 'system', 'Commitment class': 'auto prioritisation', 'Source': 'auto/manual/onboarding/decision',
-    'Last edited': 'system', 'Class calculated at': 'system', 'Effort type': 'auto'
+    'Parent To-do ID': 'system', 'Created': 'system', 'Completed': 'system', 'Commitment class': 'Fixed/Blocking/Keep-alive/Active pursuit/Pipeline-building/Backlog', 'Source': 'auto/manual/onboarding/decision',
+    'Last edited': 'system', 'Class calculated at': 'system', 'Effort type': 'auto',
+    'Priority rank': '1=Fixed … 6=Backlog, sort ascending', 'Linked to': 'jumps to the source row', 'On Today right now': 'auto', 'Has sub-tasks': 'auto'
   },
   'Interview rounds': {
     'Round ID': 'system', 'Linked Job ID': 'system', 'Job (display)': 'auto', 'Org (display)': 'auto', 'Round': 'round number', 'Round type': 'recruiter, case, panel, etc.',
@@ -4294,7 +4495,7 @@ var COLUMN_WIDTHS = {
   'People': { 2: 190, 3: 200, 5: 170, 6: 150, 7: 175, 8: 125, 9: 120, 12: 135, 13: 300 },
   'Jobs': { 2: 260, 3: 200, 5: 145, 6: 120, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 320, 8: 160 },
-  'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320 },
+  'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
   "Today's plan": { 1: 80, 2: 340, 4: 110, 5: 100, 6: 100, 7: 120, 8: 100, 9: 340 },
   'Pending decisions': { 4: 250, 5: 320, 6: 130, 8: 160, 9: 300, 10: 130 }
@@ -4362,8 +4563,39 @@ function applyStatusColorCoding() {
     Object.keys(COMMITMENT_CLASS_COLORS).forEach(function (val) {
       ccRules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(val).setBackground(COMMITMENT_CLASS_COLORS[val]).setRanges([ccRange]).build());
     });
+
+    // v7.6 §2.6: two whole-row rules layered on top of the per-cell maps
+    // above (which stay exactly as-is). Mutual exclusivity is enforced in
+    // the formulas themselves (the highlight rule's NOT(OR(...)) clause),
+    // not by relying on conditional-format rule order.
+    var fullRowRange = todoSheet.getRange(2, 1, Math.max(todoSheet.getMaxRows() - 1, 1), HEADERS['To-do'].length);
+    ccRules = ccRules.filter(function (r) {
+      return !r.getRanges().some(function (rg) { return rg.getColumn() === 1 && rg.getRow() === 2 && rg.getNumColumns() === HEADERS['To-do'].length; });
+    });
+    var statusCol = columnToLetter(COLS.TODO.STATUS);
+    var notesCol = columnToLetter(COLS.TODO.NOTES);
+    var terminalFormula = 'OR($' + statusCol + '2="Done",$' + statusCol + '2="Skipped",$' + statusCol + '2="Cancelled")';
+    ccRules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=' + terminalFormula)
+      .setBackground('#F7F7F5').setFontColor('#B0AEA4')
+      .setRanges([fullRowRange]).build());
+    ccRules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs breakdown|parent-still-open|blocked)\\]"),NOT(' + terminalFormula + '))')
+      .setBackground('#FDE9D9')
+      .setRanges([fullRowRange]).build());
+
     todoSheet.setConditionalFormatRules(ccRules);
   }
+}
+
+function columnToLetter(col) {
+  var letter = '';
+  while (col > 0) {
+    var rem = (col - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    col = Math.floor((col - 1) / 26);
+  }
+  return letter;
 }
 
 function hiddenColumnsFor(canonicalName) {
@@ -4372,7 +4604,11 @@ function hiddenColumnsFor(canonicalName) {
   if (canonicalName === 'Jobs') return [COLS.JOBS.ID, COLS.JOBS.ORG_ID, COLS.JOBS.APPLIED_DATE, COLS.JOBS.CONTACTS_IDS, COLS.JOBS.REVIEW_DATE];
   if (canonicalName === 'People') return [COLS.PEOPLE.ID, COLS.PEOPLE.ORG_ID, COLS.PEOPLE.FOLLOW_UP_SENT, COLS.PEOPLE.OUTREACH_DATE, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT];
   if (canonicalName === 'Conversations') return [COLS.INTERACTIONS.ID, COLS.INTERACTIONS.PERSON_ID];
-  if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.COMMITMENT_CLASS, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE];
+  // v7.6 §2.1: Commitment class unhidden — it's the single most important
+  // triage signal on this tab, and COMMITMENT_CLASS_COLORS conditional
+  // formatting is already wired to it, just previously sitting unused on
+  // a hidden column. The four appended helper columns stay visible too.
+  if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE];
   if (canonicalName === 'Interviews') return [COLS.ROUNDS.ID, COLS.ROUNDS.JOB_ID];
   if (canonicalName === 'Sectors') return [COLS.SECTORS.ID];
   if (canonicalName === 'Decisions') return [COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.TODO_ID];
@@ -4581,12 +4817,12 @@ function materializeDueTasks() {
       var response = String(jData[jj][COLS.JOBS.RESPONSE - 1]);
       if (!jobId || !jobTitle) continue;
       if (jobStatus === 'Applied' && reviewDate && new Date(reviewDate) < todayDate && !response) {
-        if (appendTodoOnceForWorkflow('Check application status for ' + jobTitle, 'Job', jobId, jobOrg, 'Check application response', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
+        if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
       }
       if (jobStatus === 'Want to apply' && deadline) {
         var daysToDeadline = daysBetween(todayDate, new Date(deadline));
         if (daysToDeadline >= 0 && daysToDeadline <= 3) {
-          if (appendTodoOnceForWorkflow('Deadline approaching: ' + jobTitle, 'Job', jobId, jobOrg, 'Admin', 'Not started', deadline, '15 min', 'Deadline in ' + daysToDeadline + ' day(s).', 'Auto-triggered')) created++;
+          if (appendTodoOnceForWorkflow('Deadline approaching: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Admin', 'Not started', deadline, '15 min', 'Deadline in ' + daysToDeadline + ' day(s).', 'Auto-triggered')) created++;
         }
       }
     }
@@ -4907,6 +5143,42 @@ function softCloseRow() {
   else SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.');
 }
 
+// v7.6 §5: prompts for a reason, appends [blocked] <reason> to Notes. No
+// schema change — surfaced via the Home aggregate count and the §2.6
+// flagged-row highlight (the highlight regex already includes "blocked").
+function rowActionMarkTaskBlocked() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt('Mark blocked', 'Why is this task blocked?', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  var reason = resp.getResponseText().trim();
+  if (!reason) { ui.alert('Enter a reason.'); return; }
+  appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
+  refreshHome();
+}
+
+// v7.6 §5: Tasks has no Deferred status of its own (DROPDOWNS.TODO_STATUS
+// has no such value — only Today's Status column does) — this pushes the
+// due date +3 days and recalculates Commitment class immediately,
+// without touching Status at all. Copies the *corrected* version of
+// Today's Deferred branch (see Today_tab_restructure_spec.md §3.1) —
+// the original forgot the recalc step; don't reintroduce that gap here.
+function rowActionDeferSelectedTask() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  var newDue = addDays(today(), 3);
+  sheet.getRange(row, COLS.TODO.DUE_DATE).setValue(newDue);
+  sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
+  sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
+    String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
+    String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
+  sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+  SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
+}
+
 // =============================================================
 // GUIDE TAB — first-time and ongoing reference
 // =============================================================
@@ -4955,6 +5227,15 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Pending Decisions');
   r = writeKV(sheet, r, 'States', 'Pending / Yes / No / Auto-dismissed. There is no "Later" — a suggestion either becomes a Task or is dismissed. Auto-dismissed is system-only, when the underlying state changes.');
+  r++;
+
+  r = writeH2(sheet, r, 'Tasks tab');
+  r = writeKV(sheet, r, 'Commitment class', 'Fixed / Blocking / Keep-alive / Active pursuit / Pipeline-building / Backlog, in priority order — visible now, colour-coded. Sort by Priority rank (1=Fixed…6=Backlog) for a real priority order; sorting Commitment class alone is alphabetical, not priority.');
+  r = writeKV(sheet, r, 'Linked to', 'Jumps to the source row (Job/Person/Organisation/Interview round/Sector). Blank when a task has no linked object (e.g. Admin).');
+  r = writeKV(sheet, r, 'On Today right now / Has sub-tasks', 'Both auto-computed — no manual upkeep.');
+  r = writeKV(sheet, r, 'Row actions', 'Break down (Multi-day only) · Mark blocked (prompts for a reason) · Defer 3 days (pushes the due date and recalculates Commitment class — Tasks has no Deferred status of its own, unlike Today).');
+  r = writeKV(sheet, r, 'Row highlighting', 'Terminal rows (Done/Skipped/Cancelled) dim. Any row carrying a health flag — missing estimate, missing linked object, missing due date on a date-sensitive workflow, already-broken-down parent still open, or manually blocked — highlights instead.');
+  r = writeKV(sheet, r, 'Moving a status backward', 'Every automatic cascade only ever moves forward or ends at a Decision/terminal status — nothing loops on its own. Manually moving a source object backward (e.g. a Job from Interviewing back to Applied) re-runs that forward cascade again, including re-creating a task whose original copy is already Done. This is a known, accepted boundary, not a bug: guarding against backward moves would also block legitimate corrections. Forward-only usage is fully deduplicated; deliberately reversing a status re-does the cascade from that point on.');
   r++;
 
   r = writeH2(sheet, r, 'Jobs statuses');
@@ -5023,6 +5304,8 @@ function repairAllTabs() {
   repairOrganisationsFormulas();
   refreshLinkedContactsDisplay();
   recalculateCommitmentClasses();
+  backfillTaskHelperColumns();
+  setupTasksTabExtras();
 
   bootstrapToday();
   populateToday();
@@ -5052,6 +5335,7 @@ function dailyMaintenance() {
     Logger.log('dailyMaintenance: START ' + new Date());
     checkMorningCarryForward();
     recalculateCommitmentClasses();
+    backfillTaskHelperColumns();
     runQueueHygiene();
     materializeDueTasks();
     checkDomainReadinessFlags();
@@ -5132,6 +5416,8 @@ function buildMenu() {
       .addItem('Break down selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
       .addItem('Break down selected Multi-day task', 'rowActionBreakDownSelectedTask')
+      .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
+      .addItem('Defer selected Task 3 days', 'rowActionDeferSelectedTask')
       .addSeparator()
       .addItem('Link contact to selected Job row', 'linkContactToJob')
       .addItem('Log conversation for selected row', 'logInteractionForRow')
