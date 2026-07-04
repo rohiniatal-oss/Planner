@@ -6590,68 +6590,74 @@ function rewriteGuide() {
   sheet.setColumnWidth(1, 30); sheet.setColumnWidth(2, 220); sheet.setColumnWidth(3, 560);
   sheet.setHiddenGridlines(true);
   var r = 2;
-  sheet.getRange(r, 2).setValue('The Planner — Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
+  sheet.getRange(r, 2).setValue('The Planner - Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
 
-  r = writeH2(sheet, r, 'Operating rhythm');
-  r = writeKV(sheet, r, 'Welcome → Resolve → Capture → Plan → Execute → Monitor', 'Home is where the day starts and Pending Decisions get resolved; Today is purely the execution surface.');
+  r = writeH2(sheet, r, 'Start here (once)');
+  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Triggers & setup > Set up / verify triggers. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
+  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Triggers & setup > Set up / redo onboarding. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
+  r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
+  r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
   r++;
 
-  r = writeH2(sheet, r, 'The flow');
-  r = writeKV(sheet, r, 'Add/update popup', 'Writes the real source tab (Sectors/Organisations/Jobs/People/Conversations/Interviews). Lives on Home now.');
-  r = writeKV(sheet, r, 'Cascades', 'Create Pending Decisions where judgment is genuinely needed. Creating or classifying an Organisation never floods job/people-search work on its own.');
-  r = writeKV(sheet, r, 'Yes on a Decision', 'Creates a Task.');
-  r = writeKV(sheet, r, 'Today', 'Pulls Tasks through a staged priority order. Pending Decisions and Add/update now live on Home.');
-  r = writeKV(sheet, r, 'Completing a Task', 'On Today or Tasks — always routes through the same completion engine, which updates source tabs and can create the next Task or Decision.');
+  r = writeH2(sheet, r, 'Your daily 10 minutes');
+  r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task. No dismisses it.');
+  r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
+  r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
+  r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Done, Deferred, Skipped, or Pull in an option directly from Today.');
+  r = writeKV(sheet, r, '5. End the day', 'Use Today > End-of-day reconcile when you want to carry, defer, or skip unfinished work.');
   r++;
 
-  r = writeH2(sheet, r, 'Onboarding');
-  r = writeKV(sheet, r, 'Set up / redo onboarding', 'A popup captures your starting facts. Redoing onboarding asks for confirmation before it clears existing planner data, then rebuilds from what you enter. You never have to navigate a backend tab manually.');
-  r = writeKV(sheet, r, 'Sectors — 3 stages', '1. Sector-only row → direct task to list 2-4 sub-sectors. 2. Sub-sector row → a Decision asking whether to build an organisation list there. 3. Yes → a Market-map task; No → nothing further.');
-  r = writeKV(sheet, r, 'Direct sheet entry', 'Typing a Job title or Person name before Organisation defers the cascade (flagged [pending-org] in Notes) until Organisation is filled in on that row — it then fires automatically with full context.');
+  r = writeH2(sheet, r, 'How adding things works');
+  r = writeKV(sheet, r, 'Use Home first', 'The Add/update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
+  r = writeKV(sheet, r, 'You can still type in tabs', 'If you type directly into Jobs or People, fill Organisation too. Without an Organisation, the row is saved but the follow-up work waits until the Organisation is filled.');
+  r = writeKV(sheet, r, 'Cream and grey cells', 'Cream cells are yours to edit. Grey cells are filled in and kept up to date by the planner.');
+  r = writeKV(sheet, r, 'Organisation links', 'Type an organisation name on a Job or Person. The planner finds or creates the Organisation and fills the ID behind the scenes.');
   r++;
 
-  r = writeH2(sheet, r, "Today's priority order");
-  r = writeKV(sheet, r, 'Staged, not scored', '1 manually pulled-in tasks · 2 tasks already in progress/touched today · 3 fixed work · 4 blocking work · 5 due/overdue keep-alive work · 6 active pursuit matching your focus · 7 at most one pipeline-building task · 8 active pursuit outside your focus, if capacity remains · 9 near-misses go to Options · 10 everything else stays in Tasks, out of sight but not gone. A kept time buffer applies throughout.');
-  r = writeKV(sheet, r, 'Tier and Energy', 'Organisation Tier breaks ties within a stage — it never changes which stage a task lands in. Low energy sinks Deep-effort work to the bottom of Active pursuit and Pipeline, but never excludes it.');
-  r = writeKV(sheet, r, 'Notes on Today', 'Anything you type into a Today row\u2019s Notes cell is kept across refreshes. The system\u2019s "Why" explanation now lives in the cell\u2019s note (hover to see it) rather than the value.');
-  r = writeKV(sheet, r, 'Today vs Tasks status', 'Today shows "Planned" for work selected for execution. The same state is stored on Tasks as "Not started"; the completion engine maps between them explicitly.');
-  r = writeKV(sheet, r, 'Multi-day tasks', 'Excluded from Today until broken down. A stale one is flagged in the "Needs breakdown" section — use Row actions → Break down (on Tasks) to split it into real sub-tasks.');
+  r = writeH2(sheet, r, 'What each tab is for');
+  r = writeKV(sheet, r, 'Home', 'Start here. Capture updates, resolve Pending Decisions, see what needs attention.');
+  r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
+  r = writeKV(sheet, r, 'Decisions', 'Judgment queue. Yes creates a task; No dismisses it.');
+  r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
+  r = writeKV(sheet, r, 'Sectors / Organisations / Jobs / People', 'The main source tabs. Home popups write here for you.');
+  r = writeKV(sheet, r, 'Conversations / Interviews', 'Mostly filled from updates and task completions. Edit when you need to correct details.');
   r++;
 
-  r = writeH2(sheet, r, 'Pending Decisions');
-  r = writeKV(sheet, r, 'States', 'Pending / Yes / No / Auto-dismissed. There is no "Later" — a suggestion either becomes a Task or is dismissed. Auto-dismissed is system-only, when the underlying state changes.');
+  r = writeH2(sheet, r, 'How Today decides');
+  r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, one pipeline-building task, then useful options.');
+  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer. Work that does not fit remains in Tasks or appears as an Option.');
+  r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
+  r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
+  r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you break them into smaller tasks from Tasks > Row actions > Break down.');
   r++;
 
-  r = writeH2(sheet, r, 'Tasks tab');
-  r = writeKV(sheet, r, 'Commitment class', 'Fixed / Blocking / Keep-alive / Active pursuit / Pipeline-building / Backlog, in priority order — visible now, colour-coded. Sort by Priority rank (1=Fixed…6=Backlog) for a real priority order; sorting Commitment class alone is alphabetical, not priority.');
-  r = writeKV(sheet, r, 'Linked to', 'Jumps to the source row (Job/Person/Organisation/Interview round/Sector). Blank when a task has no linked object (e.g. Admin).');
-  r = writeKV(sheet, r, 'On Today right now / Has sub-tasks', 'Both auto-computed — no manual upkeep.');
-  r = writeKV(sheet, r, 'Row actions', 'Break down (Multi-day only) · Mark blocked (prompts for a reason) · Defer 3 days (pushes the due date and recalculates Commitment class — Tasks has no Deferred status of its own, unlike Today).');
-  r = writeKV(sheet, r, 'Row highlighting', 'Terminal rows (Done/Skipped/Cancelled) dim. Any row carrying a health flag — missing estimate, missing linked object, missing due date on a date-sensitive workflow, already-broken-down parent still open, or manually blocked — highlights instead.');
-  r = writeKV(sheet, r, 'Moving a status backward', 'Every automatic cascade only ever moves forward or ends at a Decision/terminal status — nothing loops on its own. Manually moving a source object backward (e.g. a Job from Interviewing back to Applied) re-runs that forward cascade again, including re-creating a task whose original copy is already Done. This is a known, accepted boundary, not a bug: guarding against backward moves would also block legitimate corrections. Forward-only usage is fully deduplicated; deliberately reversing a status re-does the cascade from that point on.');
+  r = writeH2(sheet, r, 'The status labels');
+  r = writeKV(sheet, r, 'Jobs', 'Want to apply > Applied > Interviewing > Offer / Parked / Closed.');
+  r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
+  r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
+  r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Rejected / Offer / Parked.');
+  r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed.');
   r++;
 
-  r = writeH2(sheet, r, 'Jobs statuses');
-  r = writeKV(sheet, r, 'Six states', 'Want to apply → Applied → Interviewing → Offer / Parked / Closed.');
+  r = writeH2(sheet, r, 'Good to know');
+  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show all columns when you need to inspect them.');
+  r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
+  r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
+  r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for Break down, Mark blocked, and Defer. Today has row actions for pulling, locking, moving, and topping up the day.');
+  r = writeKV(sheet, r, 'Colour cues', 'Colours help scanning, but the actual status text is always the source of truth.');
   r++;
-
-  r = writeH2(sheet, r, 'People stages');
-  r = writeKV(sheet, r, 'Seven states', 'Identified → Outreach sent → Engaged → Conversation scheduled → Conversation completed → Nurture / Closed.');
-  r++;
-
-  r = writeH2(sheet, r, 'Column visibility');
-  sheet.getRange(r, 2).setValue('Every tab shows what you type into leftmost. IDs, backend dates, and system-managed columns are hidden by default. Menu → "Show all columns" reveals them for a research pass.').setFontSize(10).setWrap(true); r += 2;
 
   r = writeH2(sheet, r, 'If something breaks');
-  r = writeKV(sheet, r, 'Menu missing', 'Extensions → Apps Script → run onOpen. Reload.');
+  r = writeKV(sheet, r, 'Menu missing', 'Extensions > Apps Script > run onOpen. Reload the sheet.');
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Triggers & setup > Set up / verify triggers (one-time, grants full authorization for modal dialogs).');
-  r = writeKV(sheet, r, 'Home not refreshing', 'Menu → Refresh Home, or tick the refresh checkbox on Home.');
-  r = writeKV(sheet, r, 'Today looks stale', 'Menu → Today → Populate Today.');
-  r = writeKV(sheet, r, 'Formatting looks off', 'Menu → Maintenance → Repair all tabs.');
+  r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
+  r = writeKV(sheet, r, 'Today looks stale', 'Use The Planner > Today > Populate Today.');
+  r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
+  r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
   r++;
 
   sheet.getRange(r, 2).setValue('Version').setFontSize(12).setFontWeight('bold').setFontColor('#7A7974'); r++;
-  sheet.getRange(r, 2).setValue('Code.gs ' + SCRIPT_VERSION + ' · Google Sheet only · No external dependencies').setFontSize(10).setFontColor('#7A7974').setFontStyle('italic');
+  sheet.getRange(r, 2).setValue('Code.gs ' + SCRIPT_VERSION + ' - Google Sheet only - No external dependencies').setFontSize(10).setFontColor('#7A7974').setFontStyle('italic');
 }
 
 // =============================================================
