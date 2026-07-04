@@ -669,6 +669,44 @@ function findOrgByNameFuzzy(name, threshold) {
   return bestScore >= threshold ? best : null;
 }
 
+function findOrgByNameExact(name) {
+  var sheet = getSheet('Organisations');
+  if (!sheet || sheet.getLastRow() < 2 || !name) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
+  var target = normalizeKeyPart(name);
+  for (var i = 0; i < data.length; i++) {
+    if (normalizeKeyPart(data[i][COLS.ORGS.NAME - 1]) === target) return { row: i + 2, data: data[i], score: 1 };
+  }
+  return null;
+}
+
+function ensureOrgIdForMatchedRow(match) {
+  if (!match) return '';
+  var existingId = match.data[COLS.ORGS.ID - 1];
+  if (existingId) return existingId;
+  var sheet = getSheet('Organisations');
+  if (!sheet) return '';
+  var newId = nextId(sheet, COLS.ORGS.ID, 'ORG');
+  sheet.getRange(match.row, COLS.ORGS.ID).setValue(newId);
+  match.data[COLS.ORGS.ID - 1] = newId;
+  applyOrgRowFormulas(sheet, match.row);
+  appendNoteFlag(sheet, match.row, COLS.ORGS.NOTES, '[repaired-org-id] Org ID added while linking');
+  return newId;
+}
+
+function confirmFuzzyOrgMatch(typedName, match) {
+  if (!match) return false;
+  var canonicalName = String(match.data[COLS.ORGS.NAME - 1] || '');
+  if (normalizeKeyPart(typedName) === normalizeKeyPart(canonicalName)) return true;
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.alert(
+    'Similar organisation found',
+    '"' + typedName + '" looks similar to existing Organisation "' + canonicalName + '". Use the existing Organisation?',
+    ui.ButtonSet.YES_NO
+  );
+  return resp === ui.Button.YES;
+}
+
 // v7.3: single bulk getValues() over the needed columns instead of one
 // getRange().getValue() per field. Matters as Organisations grows into
 // the hundreds — turns ~7 Sheets round-trips per lookup into 1.
@@ -801,14 +839,20 @@ function appendOrgReviewDecision(orgId, orgName, status) {
 function createNameOnlyOrg(orgName, opts) {
   opts = opts || {};
   if (!orgName) return null;
-  var existing = findOrgByNameFuzzy(orgName, 0.85);
+  var existing = findOrgByNameExact(orgName);
+  var declinedSimilar = null;
+  if (!existing) {
+    var similar = findOrgByNameFuzzy(orgName, 0.85);
+    if (similar && (opts.confirmFuzzy === false || confirmFuzzyOrgMatch(orgName, similar))) {
+      existing = similar;
+    } else if (similar) {
+      declinedSimilar = similar;
+    }
+  }
   if (existing) {
     var canonicalName = existing.data[COLS.ORGS.NAME - 1];
-    // v7.6.3 §4.1: the fuzzy match is silent by design (no popup on the
-    // stub path), but if the typed text doesn't match the stored name
-    // verbatim, leave an auditable trace on the matched row instead of
-    // rewriting it without a trace — a wrong canonical name (typo) would
-    // otherwise silently absorb every future correctly-typed mention.
+    // Non-exact fuzzy matches are confirmed before linking; keep an audit
+    // note when the typed text differs from the canonical stored name.
     if (String(orgName).trim() !== String(canonicalName).trim()) {
       var orgSheetForTrace = getSheet('Organisations');
       if (orgSheetForTrace) {
@@ -817,7 +861,7 @@ function createNameOnlyOrg(orgName, opts) {
       }
     }
     if (!opts.deferClassification) ensureOrgClassificationState(existing.row);
-    return { id: existing.data[COLS.ORGS.ID - 1], row: existing.row, name: canonicalName, existing: true };
+    return { id: ensureOrgIdForMatchedRow(existing), row: existing.row, name: canonicalName, existing: true };
   }
   var sheet = getSheet('Organisations');
   if (!sheet) return null;
@@ -834,6 +878,9 @@ function createNameOnlyOrg(orgName, opts) {
   sheet.appendRow(row);
   var newRow = sheet.getLastRow();
   applyOrgRowFormulas(sheet, newRow);
+  if (declinedSimilar) {
+    appendNoteFlag(sheet, newRow, COLS.ORGS.NOTES, '[similar-org-declined: ' + declinedSimilar.data[COLS.ORGS.ID - 1] + ']');
+  }
   if (!opts.deferClassification) markOrgNeedsClassification(newRow, id, orgName);
   if (status === 'Active') fireOrgActiveCascade(id, orgName);
   return { id: id, row: newRow, name: orgName, existing: false };
