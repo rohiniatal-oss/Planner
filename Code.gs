@@ -183,7 +183,7 @@ var HEADERS = {
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
     'Deadline', 'Application status', 'Submitted date',
     'Linked contacts (IDs)', 'People for this application',
-    'Next response check', 'Response received', 'Outcome', 'Notes'
+    'Next response check', 'Response received', 'Application result', 'Notes'
   ],
   Interactions: [
     'Interaction ID', 'Date', 'Person ID', 'Person', 'Organisation',
@@ -271,7 +271,7 @@ var DROPDOWNS = {
   YES_NO: ['Yes', 'No'],
 
   JOB_STATUS: ['Not started', 'In progress', 'Submitted', 'Closed'],
-  JOB_OUTCOME: ['No response yet', 'Interview invite', 'Rejected', 'Offer', 'Parked'],
+  JOB_OUTCOME: ['Waiting', 'Interview invite', 'Rejected'],
 
   INTERACTION_TYPE: ['Intro call', 'Coffee', 'LinkedIn message', 'Email', 'Phone', 'Interview', 'Referral', 'Auto-log', 'Other'],
   INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
@@ -595,8 +595,8 @@ function normalizeJobOutcome(value) {
   var v = String(value || '').trim();
   var legacyMap = {
     '': '',
-    'No response': 'No response yet',
-    'Waiting': 'No response yet',
+    'No response': 'Waiting',
+    'No response yet': 'Waiting',
     'Interview': 'Interview invite',
     'Interviewing': 'Interview invite',
     'Next round': 'Interview invite',
@@ -2714,13 +2714,29 @@ function createJobResponseOutcomeDecision(jobId, reason) {
   if (status !== 'Submitted') return '';
   return appendPendingDecision('JOB_RESPONSE_OUTCOME:' + jobId, reason || 'Job response received: ' + job.title,
     'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', jobId, 'Admin',
-    'Choose the real outcome on Jobs: no response yet / interview invite / rejected / offer / parked.');
+    'Choose the result on Jobs: waiting / interview invite / rejected.');
+}
+
+function recordJobWaitingForResponse(jobId, opts) {
+  opts = opts || {};
+  var job = getJobRowById(jobId);
+  if (!job) return false;
+  var sheet = getSheet('Jobs');
+  var baseDate = opts.realDate ? parseDateOr(opts.realDate) : today();
+  var nextCheck = addDays(baseDate, 7);
+  sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('No');
+  sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Waiting');
+  sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(nextCheck);
+  syncOpenJobResponseCheckDate(jobId, nextCheck);
+  appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
+    'Check application response', 'Not started', nextCheck, '15 min', 'Still waiting as of ' + formatDateHuman(baseDate), opts.source || 'Auto-triggered');
+  return true;
 }
 
 function routeJobOutcome(jobId, outcome, opts) {
   opts = opts || {};
   var normalizedOutcome = normalizeJobOutcome(outcome);
-  if (!jobId || !normalizedOutcome || normalizedOutcome === 'No response yet') return false;
+  if (!jobId || !normalizedOutcome || normalizedOutcome === 'Waiting') return false;
   var job = getJobRowById(jobId);
   if (!job) return false;
   if (normalizedOutcome === 'Interview invite') {
@@ -2735,16 +2751,29 @@ function routeJobOutcome(jobId, outcome, opts) {
     setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
     return true;
   }
-  if (normalizedOutcome === 'Offer') {
-    setJobStatus(jobId, 'Submitted', { source: opts.source || 'job-outcome', realDate: opts.realDate || job.appliedDate || today() });
+  return false;
+}
+
+function routeInterviewOfficialOutcome(jobId, outcome, opts) {
+  opts = opts || {};
+  var job = getJobRowById(jobId);
+  if (!job) return false;
+  if (outcome === 'Rejected') {
+    var sheet = getSheet('Jobs');
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Rejected');
+    return routeJobOutcome(jobId, 'Rejected', { source: opts.source || 'round-outcome' });
+  }
+  if (outcome === 'Offer') {
+    setJobStatus(jobId, 'Submitted', { source: opts.source || 'round-outcome', realDate: opts.realDate || job.appliedDate || today() });
     autoDismissPendingForTarget('Job', jobId, 'Offer recorded');
     setOpenTodosForTarget('Job', jobId, 'Skipped', 'Offer received', ['Check application response', 'Interview follow-up']);
     appendTodoOnceForWorkflow('Decide on offer: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org,
       'Offer decision', 'Not started', opts.realDate || '', '30 min', 'Offer decision/review.', 'Auto-triggered');
     return true;
   }
-  if (normalizedOutcome === 'Parked') {
-    setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
+  if (outcome === 'Parked') {
+    setJobStatus(jobId, 'Closed', { source: opts.source || 'round-outcome' });
     return true;
   }
   return false;
@@ -3830,6 +3859,14 @@ function onEditJobs(sheet, row, col, newVal, e) {
     refreshHome();
     return;
   }
+  if (col === COLS.JOBS.RESPONSE && String(newVal) === 'No') {
+    var waitingJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
+    sheet.getRange(row, COLS.JOBS.ID).setValue(waitingJobId);
+    recordJobWaitingForResponse(waitingJobId, { source: 'job-response' });
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
+    return;
+  }
   if (col === COLS.JOBS.OUTCOME && newVal) {
     var outcomeJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(outcomeJobId);
@@ -3839,8 +3876,11 @@ function onEditJobs(sheet, row, col, newVal, e) {
       return;
     }
     if (normalizedOutcome !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
-    sheet.getRange(row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
-    routeJobOutcome(outcomeJobId, normalizedOutcome, { source: 'job-outcome' });
+    if (normalizedOutcome === 'Waiting') recordJobWaitingForResponse(outcomeJobId, { source: 'job-outcome' });
+    else {
+      sheet.getRange(row, COLS.JOBS.RESPONSE).setValue('Yes');
+      routeJobOutcome(outcomeJobId, normalizedOutcome, { source: 'job-outcome' });
+    }
     refreshDerivedPlanningSurfaces();
     renderTodayDecisionCards();
     requestHomeRefresh();
@@ -4360,9 +4400,11 @@ function onEditRounds(sheet, row, col, newVal) {
       var waitingType = String(sheet.getRange(row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
     }
-    if (String(newVal) === 'Rejected') routeJobOutcome(jobId, 'Rejected', { source: 'round-outcome' });
-    if (String(newVal) === 'Offer') routeJobOutcome(jobId, 'Offer', { source: 'round-outcome' });
-    if (String(newVal) === 'Parked') routeJobOutcome(jobId, 'Parked', { source: 'round-outcome' });
+    if (String(newVal) === 'Rejected') {
+      routeInterviewOfficialOutcome(jobId, 'Rejected', { source: 'round-outcome' });
+    }
+    if (String(newVal) === 'Offer') routeInterviewOfficialOutcome(jobId, 'Offer', { source: 'round-outcome' });
+    if (String(newVal) === 'Parked') routeInterviewOfficialOutcome(jobId, 'Parked', { source: 'round-outcome' });
     if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
     refreshDerivedPlanningSurfaces();
     return;
@@ -6896,7 +6938,7 @@ function captureConfig(captureType) {
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, blank: true, req: true },
       { k: 'appliedDate', l: 'Submitted date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] },
-      { k: 'outcome', l: 'Outcome / latest update', t: 'select', o: jobOutcomes, blank: true, showIf: { k: 'response', v: 'Yes' } }]
+      { k: 'outcome', l: 'Application result', t: 'select', o: jobOutcomes, blank: true, showIfAny: [{ k: 'response', v: 'Yes' }, { k: 'response', v: 'No' }] }]
     },
     'Add/update person': {
       title: 'Add/update person',
@@ -7310,9 +7352,13 @@ function processJobCapture(fields) {
     var normalizedOutcome = normalizeJobOutcome(fields.outcome);
     if (!normalizedOutcome) return failResult('Pick a valid job outcome.', 'outcome', 'INVALID_OUTCOME');
     sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
-    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
-    routeJobOutcome(jobId, normalizedOutcome, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
+    if (normalizedOutcome === 'Waiting') recordJobWaitingForResponse(jobId, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
+    else {
+      sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+      routeJobOutcome(jobId, normalizedOutcome, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
+    }
   }
+  if (fields.response === 'No' && !fields.outcome) recordJobWaitingForResponse(jobId, { source: 'capture-response', realDate: fields.appliedDate || '' });
   if (fields.response === 'Yes' && !fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
   return okResult((exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
@@ -7349,8 +7395,8 @@ var HEADER_GUIDANCE = {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
     'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Submitted date': 'date you submitted the application',
     'Linked contacts (IDs)': 'system', 'People for this application': 'people linked through application/referral actions', 'Next response check': 'system date for checking application response',
-    'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
-    'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
+    'Response received': 'Auto: Waiting = No; invite/rejection = Yes',
+    'Application result': 'Waiting / Interview invite / Rejected',
     'Notes': 'URL/source and prep notes'
   },
   'Interactions': {
@@ -8068,8 +8114,10 @@ function materializeDueTasks() {
       var reviewDate = jData[jj][COLS.JOBS.REVIEW_DATE - 1];
       var deadline = jData[jj][COLS.JOBS.DEADLINE - 1];
       var response = String(jData[jj][COLS.JOBS.RESPONSE - 1]);
+      var outcome = normalizeJobOutcome(jData[jj][COLS.JOBS.OUTCOME - 1]);
       if (!jobId || !jobTitle) continue;
-      if (jobStatus === 'Submitted' && reviewDate && new Date(reviewDate) < todayDate && !response) {
+      var stillWaiting = !response || response === 'No' || outcome === 'Waiting';
+      if (jobStatus === 'Submitted' && reviewDate && new Date(reviewDate) < todayDate && stillWaiting) {
         if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', reviewDate, '15 min', '', 'Auto-triggered')) created++;
       }
     }
@@ -8825,7 +8873,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'The status labels');
-  r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Outcome records interview invite, rejection, offer, or parked.');
+  r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Result is Waiting, Interview invite, or Rejected.');
   r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Rejected / Offer / Parked.');
