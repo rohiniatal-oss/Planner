@@ -254,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.1';
+var SCRIPT_VERSION = 'v7.7.2';
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -4980,6 +4980,19 @@ function applyStatusColorCoding() {
       .setRanges([fullRowRange]).build());
 
     todoSheet.setConditionalFormatRules(ccRules);
+  }
+  var jobsSheet = getSheet('Jobs');
+  if (jobsSheet) {
+    var jobsRange = jobsSheet.getRange(2, 1, Math.max(jobsSheet.getMaxRows() - 1, 1), HEADERS.Jobs.length);
+    var jobsRules = jobsSheet.getConditionalFormatRules().filter(function (r) {
+      return !r.getRanges().some(function (rg) { return rg.getColumn() === 1 && rg.getRow() === 2 && rg.getNumColumns() === HEADERS.Jobs.length; });
+    });
+    var jobsNotesCol = columnToLetter(COLS.JOBS.NOTES);
+    jobsRules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=REGEXMATCH($' + jobsNotesCol + '2,"\\[missed-deadline\\]")')
+      .setBackground('#FDE9D9')
+      .setRanges([jobsRange]).build());
+    jobsSheet.setConditionalFormatRules(jobsRules);
   }
 }
 
