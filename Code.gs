@@ -4027,7 +4027,10 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       else { var pv2 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, near miss on capacity', tags: pv2.tags, userNote: pv2.userNote }); }
     });
 
-  // Stage 7 — at most ONE pipeline-building task, only if capacity remains.
+  // Stage 7 — at most ONE pipeline-building task. This is deliberately
+  // not capacity-gated: a daily plan should keep the top of the funnel
+  // moving even when no-deadline pipeline work would otherwise lose to
+  // louder active-pursuit tasks.
   // §2.2: Tier now comes before age (was pure FIFO) — same comparator as
   // Active pursuit, so a newly-important Tier-A item no longer waits
   // behind an older Tier-C one. §5: Low energy still sinks Deep-effort.
@@ -4035,9 +4038,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     .sort(compareForStage(energyLow));
   if (pipelineCandidates.length) {
     var chosen = pipelineCandidates[0];
-    usedIds[chosen.todoId] = true;
-    if (minutesUsed + chosen.estMin <= capacity) addCommit(chosen, 'pipeline-building — keeping the top of the funnel moving');
-    else { var pv3 = preserved(chosen.todoId); options.push({ todoId: chosen.todoId, task: chosen.task, estMin: chosen.estMin, effort: chosen.effort, reason: 'pipeline-building, no capacity left today', tags: pv3.tags, userNote: pv3.userNote }); }
+    addCommit(chosen, 'pipeline-building — keeping the top of the funnel moving');
     pipelineCandidates.slice(1).forEach(function (p) { usedIds[p.todoId] = true; }); // stays hidden in Tasks — Stage 10
   }
 
