@@ -254,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.6';
+var SCRIPT_VERSION = 'v7.6.2';
 
 var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
@@ -1129,6 +1129,39 @@ function recalcTodosLinkedToObject(linkedObjId) {
   }
 }
 
+function syncTaskHealthFlags(sheet, row, rowData, daysSinceEdit) {
+  var todoId = String(rowData[COLS.TODO.ID - 1] || '');
+  var timeEst = String(rowData[COLS.TODO.TIME_EST - 1] || '');
+  var workflow = String(rowData[COLS.TODO.WORKFLOW - 1] || '');
+  var objType = String(rowData[COLS.TODO.OBJ_TYPE - 1] || '');
+  var objId = String(rowData[COLS.TODO.OBJ_ID - 1] || '');
+  var dueDate = rowData[COLS.TODO.DUE_DATE - 1];
+  var isParent = hasSubtasks(todoId);
+
+  // Mechanical health flags are recomputed every hygiene pass. Sticky
+  // manual/review flags ([blocked], [flags], [review]) are intentionally
+  // not cleared here.
+  if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS && !isParent) {
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+  } else {
+    clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs breakdown]');
+  }
+  if (!timeEst) appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-estimate] \u26a0 Missing time estimate');
+  else clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-estimate]');
+
+  if (workflow !== 'Admin' && (objType === 'None' || !objType)) appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-link] \u26a0 Missing linked object for ' + workflow);
+  else clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-link]');
+
+  if (DATE_CONDITIONAL_WORKFLOWS.indexOf(workflow) !== -1 && resolveDaysToLinkedDate(workflow, objId, objType, dueDate) === null) {
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-date] \u26a0 No due date for a date-sensitive workflow');
+  } else {
+    clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-date]');
+  }
+
+  if (isParent) appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-still-open] \u26a0 Already broken down into sub-tasks \u2014 should be Skipped');
+  else clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-still-open]');
+}
+
 function runQueueHygiene() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return;
@@ -1162,58 +1195,7 @@ function runQueueHygiene() {
         appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[review] \u26a0 Stale');
       }
     }
-    // v7.4 \u00a74.1: Multi-day tasks are excluded from collectTaskPool
-    // entirely (estMin === null), so they'd otherwise sit invisible
-    // forever while Today reports itself fully planned. Flag them for
-    // the "Needs breakdown" mini-section instead \u2014 unless they've
-    // already been broken down into real sub-tasks (\u00a74.2 guard).
-    var todoId = String(row[COLS.TODO.ID - 1]);
-    var timeEst = String(row[COLS.TODO.TIME_EST - 1] || '');
-    var isParent = hasSubtasks(todoId);
-    if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS && !isParent) {
-      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
-    } else {
-      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown]');
-    }
-
-    // v7.6 \u00a73: mechanical, boolean-only Tasks-tab health flags \u2014 each
-    // gets its own bracket category (not the shared [flags] one used by
-    // HOT above) so unrelated problems on the same row can co-exist
-    // instead of clobbering each other (appendNoteFlag dedupes by
-    // category, replacing any prior message in that same category).
-    // v7.6.1: each one is also explicitly CLEARED when its condition is
-    // no longer true \u2014 appendNoteFlag only ever adds/replaces, so without
-    // this a fixed task (e.g. an estimate finally added) stayed flagged
-    // and highlighted forever.
-    var workflow = String(row[COLS.TODO.WORKFLOW - 1] || '');
-    var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
-    var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
-    var dueDate = row[COLS.TODO.DUE_DATE - 1];
-
-    if (!timeEst) {
-      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-estimate] \u26a0 Missing time estimate');
-    } else {
-      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-estimate]');
-    }
-    if (workflow !== 'Admin' && (objType === 'None' || !objType)) {
-      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-link] \u26a0 Missing linked object for ' + workflow);
-    } else {
-      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-link]');
-    }
-    if (DATE_CONDITIONAL_WORKFLOWS.indexOf(workflow) !== -1 && resolveDaysToLinkedDate(workflow, objId, objType, dueDate) === null) {
-      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-date] \u26a0 No due date for a date-sensitive workflow');
-    } else {
-      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-date]');
-    }
-    // A task that's already been broken down should be Skipped (see
-    // completeBreakdownFromPopup) \u2014 if it's somehow still open, that's a
-    // data-integrity signal worth surfacing, not a silent re-flag as
-    // "needs breakdown" (the !isParent guard above already prevents that).
-    if (isParent) {
-      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[parent-still-open] \u26a0 Already broken down into sub-tasks \u2014 should be Skipped');
-    } else {
-      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[parent-still-open]');
-    }
+    syncTaskHealthFlags(sheet, r, row, daysSinceEdit);
   }
 }
 
@@ -1227,23 +1209,27 @@ function runQueueHygiene() {
 // workflow to key on by design), and exact-text was brittle to minor
 // rewording. appendTodoOnceForWorkflow's (objType, objId, workflow) key
 // is unrelated and unchanged.
-// v7.6.1: takes workflow too — objId alone doesn't discriminate between
-// unrelated tasks against the same linked object (e.g. a Job with both
-// an "Application preparation" and a "Check application response" task
-// open at once). When workflow is supplied it must match before the
-// fuzzy-text check even runs, narrowing false-positive risk.
+// v7.6.2: linked/cascade tasks dedupe by object/workflow/open status plus
+// exact task text. Fuzzy matching is reserved for unlinked manual/Admin
+// rows where there is no object/workflow identity to trust.
 function isTodoDuplicate(sheet, task, objId, statusToCreate, workflow) {
   if (!task) return false;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
   if (statusToCreate !== 'Not started' && statusToCreate !== 'In progress') return false;
+  var linked = !!objId || (workflow && workflow !== 'Admin');
   var data = sheet.getRange(2, 1, lastRow - 1, COLS.TODO.STATUS).getValues();
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
     if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
     if (st !== 'Not started' && st !== 'In progress') continue;
-    if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return true;
+    var existingTask = String(data[i][COLS.TODO.TASK - 1]);
+    if (linked) {
+      if (existingTask === String(task)) return true;
+    } else if (similarity(existingTask, String(task)) >= 0.85) {
+      return true;
+    }
   }
   return false;
 }
@@ -1273,13 +1259,17 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
 function findOpenTodoByTaskTarget(task, objId, workflow) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !task) return '';
+  var linked = !!objId || (workflow && workflow !== 'Admin');
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
     if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
     if (st !== 'Not started' && st !== 'In progress') continue;
-    if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return String(data[i][COLS.TODO.ID - 1] || '');
+    var existingTask = String(data[i][COLS.TODO.TASK - 1]);
+    if ((linked && existingTask === String(task)) || (!linked && similarity(existingTask, String(task)) >= 0.85)) {
+      return String(data[i][COLS.TODO.ID - 1] || '');
+    }
   }
   return '';
 }
@@ -1533,8 +1523,13 @@ function completeTodoRow(sheet, row, status, options) {
     if (target === 'Skipped' && !alreadyTerminal && options.source !== 'breakdown') handleSkipCascade(sheet, row);
     if (target === 'Cancelled' && !alreadyTerminal) handleCancelCascade(sheet, row);
     syncTodayRowForTodo(row, target);
-    renderTodayDecisionCards();
-    refreshHome();
+    if (EDIT_BATCH_CONTEXT && EDIT_BATCH_CONTEXT.deferTaskRefresh) {
+      EDIT_BATCH_CONTEXT.needsDecisionRender = true;
+      EDIT_BATCH_CONTEXT.needsHomeRefresh = true;
+    } else {
+      renderTodayDecisionCards();
+      refreshHome();
+    }
     return true;
   }
   return true;
@@ -2466,6 +2461,8 @@ function dispatchCellEdit(sheet, row, col, value, e) {
   }, { label: 'edit:' + name + ' r' + row + 'c' + col });
 }
 
+var EDIT_BATCH_CONTEXT = null;
+
 function routeEditEvent(e, triggerMode) {
   if (!e || !e.range) return;
   if (triggerMode === 'simple' && editMayNeedUi(e)) return;
@@ -2492,9 +2489,25 @@ function routeEditEvent(e, triggerMode) {
   var startRow = range.getRow();
   var startCol = range.getColumn();
   var values = range.getValues();
-  for (var r = 0; r < numRows; r++) {
-    for (var c = 0; c < numCols; c++) {
-      dispatchCellEdit(sheet, startRow + r, startCol + c, values[r][c], null);
+  var isTaskStatusBulk = sheet.getName() === 'Tasks' && startCol === COLS.TODO.STATUS && numCols === 1;
+  var priorBatchContext = EDIT_BATCH_CONTEXT;
+  if (isTaskStatusBulk) {
+    EDIT_BATCH_CONTEXT = { deferTaskRefresh: true, needsDecisionRender: false, needsHomeRefresh: false };
+  }
+  try {
+    for (var r = 0; r < numRows; r++) {
+      for (var c = 0; c < numCols; c++) {
+        dispatchCellEdit(sheet, startRow + r, startCol + c, values[r][c], null);
+      }
+    }
+  } finally {
+    var batchContext = EDIT_BATCH_CONTEXT;
+    EDIT_BATCH_CONTEXT = priorBatchContext;
+    // Keep the per-row cascades, but collapse expensive Home/Today card
+    // refreshes for the common Tasks Status bulk-edit workflow.
+    if (isTaskStatusBulk && batchContext) {
+      if (batchContext.needsDecisionRender) renderTodayDecisionCards();
+      if (batchContext.needsHomeRefresh) refreshHome();
     }
   }
 }
@@ -5099,6 +5112,19 @@ function buildBreakdownHtml(todoId, taskTitle) {
     '.completeBreakdownFromPopup(cfg.todoId,subtasks);}</script>';
 }
 
+function retireBrokenDownParent(parentTodoId, childCount) {
+  var parent = getTodoById(parentTodoId);
+  if (!parent) return false;
+  parent.sheet.getRange(parent.row, COLS.TODO.STATUS).setValue('Skipped');
+  parent.sheet.getRange(parent.row, COLS.TODO.COMPLETED).setValue(today());
+  parent.sheet.getRange(parent.row, COLS.TODO.LAST_EDITED).setValue(today());
+  appendNoteFlag(parent.sheet, parent.row, COLS.TODO.NOTES, '[has-subtasks] broken down into ' + childCount + ' sub-task(s)');
+  // Structural retirement only: do not call completeTodo/handleSkipCascade,
+  // because this is a parent rollup, not an abandoned linked workflow.
+  syncTodayRowForTodo(parent.row, 'Skipped');
+  return true;
+}
+
 function completeBreakdownFromPopup(parentTodoId, subtasks) {
   var parent = getTodoById(parentTodoId);
   if (!parent) return 'Parent task not found.';
@@ -5118,12 +5144,9 @@ function completeBreakdownFromPopup(parentTodoId, subtasks) {
     }
   });
   if (!createdIds.length) return 'No sub-tasks captured.';
-  // Parent becomes a rollup container, not open work — auto-skip it, same
-  // idiom runQueueHygiene already uses for system-retired pipeline tasks,
-  // so it disappears from the open-task pool without a special exclusion
-  // case anywhere else in the file.
-  completeTodo(parentTodoId, 'Skipped', { source: 'breakdown' });
-  appendNoteFlag(parent.sheet, parent.row, COLS.TODO.NOTES, '[has-subtasks] broken down into ' + createdIds.length + ' sub-task(s)');
+  // Parent becomes a rollup container, not open work. Retire it explicitly
+  // so it disappears from the open-task pool without firing skip cascade.
+  retireBrokenDownParent(parentTodoId, createdIds.length);
   populateToday();
   refreshHome();
   return 'Created ' + createdIds.length + ' sub-task(s) and retired the Multi-day parent.';
@@ -5218,6 +5241,7 @@ function rowActionDeferSelectedTask() {
   sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
   // v7.6.1: if this task is currently sitting on Today's Commit list, it
   // would otherwise keep showing stale info until some unrelated refresh.
+  syncTodayRowForTodo(row, 'Not started');
   populateToday();
   refreshHome();
   SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
