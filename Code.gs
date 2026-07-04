@@ -2610,13 +2610,17 @@ function propagateSectorRenameToOrganisations(sectorId) {
   if (orgSheet && orgSheet.getLastRow() >= 2) {
     var data = orgSheet.getRange(2, 1, orgSheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
     for (var i = 0; i < data.length; i++) {
-      var matches = branch.isSectorOnly
-        ? String(data[i][COLS.ORGS.SECTOR_ID - 1]) === String(branch.sectorId)
-        : String(data[i][COLS.ORGS.SUBSECTOR_ID - 1]) === String(branch.subsectorId);
-      if (!matches) continue;
       var r = i + 2;
-      orgSheet.getRange(r, COLS.ORGS.SECTOR).setValue(branch.sector);
-      if (!branch.isSectorOnly) orgSheet.getRange(r, COLS.ORGS.SUBSECTOR).setValue(branch.subsector);
+      if (branch.isSectorOnly) {
+        if (String(data[i][COLS.ORGS.SECTOR_ID - 1]) !== String(branch.sectorId)) continue;
+        orgSheet.getRange(r, COLS.ORGS.SECTOR).setValue(branch.sector);
+      } else {
+        if (String(data[i][COLS.ORGS.SUBSECTOR_ID - 1]) !== String(branch.subsectorId)) continue;
+        orgSheet.getRange(r, COLS.ORGS.SECTOR_ID).setValue(branch.sectorId);
+        orgSheet.getRange(r, COLS.ORGS.SECTOR).setValue(branch.sector);
+        orgSheet.getRange(r, COLS.ORGS.SUBSECTOR_ID).setValue(branch.subsectorId);
+        orgSheet.getRange(r, COLS.ORGS.SUBSECTOR).setValue(branch.subsector);
+      }
       clearNoteFlag(orgSheet, r, COLS.ORGS.NOTES, '[orphaned-sector]');
       count++;
     }
