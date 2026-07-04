@@ -1582,15 +1582,14 @@ var LINKED_TO_MAP = {
   'Job': { sheet: 'Jobs', idCol: 1, nameCol: 2 },
   'Person': { sheet: 'People', idCol: 1, nameCol: 2 },
   'Organisation': { sheet: 'Organisations', idCol: 1, nameCol: 2 },
-  'Interview round': { sheet: 'Interviews', idCol: 1, nameCol: 3 },
-  'Sector': { sheet: 'Sectors', idCol: 1, nameCol: 3 }
+  'Interview round': { sheet: 'Interviews', idCol: 1, nameCol: 3 }
 };
 
 function resolveLinkedTo(objType, objId) {
   if (!objId || !objType || objType === 'None') return { text: '', sheetName: '', row: 0 };
   if (objType === 'Sector') {
     var branch = getSectorBranchById(objId);
-    if (branch) return { text: branch.subsector ? branch.sector + ' - ' + branch.subsector : branch.sector, sheetName: 'Sectors', row: branch.row };
+    if (branch) return { text: branch.subsector ? branch.sector + ' - ' + branch.subsector : branch.sector, sheetName: 'Sectors', row: branch.row, col: branch.subsector ? COLS.SECTORS.SUBSECTOR : COLS.SECTORS.SECTOR };
     return { text: String(objId), sheetName: '', row: 0 };
   }
   var spec = LINKED_TO_MAP[objType];
@@ -1602,7 +1601,7 @@ function resolveLinkedTo(objType, objId) {
       if (String(ids[i][0]) === String(objId)) {
         var row = i + 2;
         var name = String(sheet.getRange(row, spec.nameCol).getValue() || '');
-        return { text: name || spec.sheet, sheetName: spec.sheet, row: row };
+        return { text: name || spec.sheet, sheetName: spec.sheet, row: row, col: spec.nameCol };
       }
     }
   }
@@ -1616,7 +1615,8 @@ function writeLinkedTo(sheet, row, objType, objId) {
   if (!linked.row) { cell.setValue(linked.text); return; }
   var targetSheet = getSheet(linked.sheetName);
   if (!targetSheet) { cell.setValue(linked.text); return; }
-  cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=A' + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
+  var targetCol = linked.col || 1;
+  cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=' + columnToLetter(targetCol) + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
 }
 
 function applyTaskHelperColumns(sheet, row) {
@@ -1894,7 +1894,7 @@ function handleOrganisationTodoCompletion(todo, options) {
 //                                  itself is what triggers stage 2).
 //   Market-mapping Task done   -> prompt to capture the organisations found.
 function handleSectorTodoCompletion(todo, options) {
-  if (todo.workflow === 'Market mapping') {
+  if (todo.workflow === 'Market mapping' && /^Market map:/i.test(String(todo.task || ''))) {
     appendPendingDecision('MARKET_MAP_DONE:' + todo.id, 'Market mapping completed',
       'Add/update organisations found from market map', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
   }
@@ -2722,6 +2722,7 @@ function syncSingleSectorLinkedLabel(branch) {
       if (String(taskData[t][COLS.TODO.OBJ_TYPE - 1]) !== 'Sector') continue;
       if (String(taskData[t][COLS.TODO.OBJ_ID - 1]) !== String(branch.id)) continue;
       if (isTerminalTodoStatus(String(taskData[t][COLS.TODO.STATUS - 1]))) continue;
+      writeLinkedTo(taskSheet, t + 2, 'Sector', branch.id);
       var workflow = String(taskData[t][COLS.TODO.WORKFLOW - 1] || '');
       var desiredTask = '';
       if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
@@ -6943,7 +6944,10 @@ function rowActionSearchOrgsForSubsector() {
   withDocumentLock(function () {
     var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
     if (!branch || !branch.id) return;
-    appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+    if (appendTodoOnceForWorkflow('Market map: ' + branch.sector + ' - ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added')) {
+      populateToday();
+      requestHomeRefresh();
+    }
   }, { label: 'rowActionSearchOrgsForSubsector' });
 }
 
@@ -6954,8 +6958,13 @@ function rowActionBreakDownSelectedSector() {
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   if (!sector) return;
   withDocumentLock(function () {
-    var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
-    fireSectorOnlyTask(branch);
+    var branch = sectorBranchFromRow(row, sheet.getRange(row, 1, 1, HEADERS.Sectors.length).getValues()[0]);
+    if (branch.isSectorOnly) branch = ensureSectorBranchId(sheet, branch);
+    else branch = ensureSectorOnlyBranch(branch.sector || sector, 'manual_sheet_entry');
+    if (fireSectorOnlyTask(branch)) {
+      populateToday();
+      requestHomeRefresh();
+    }
   }, { label: 'rowActionBreakDownSelectedSector' });
 }
 
