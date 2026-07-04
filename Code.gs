@@ -3756,7 +3756,7 @@ function bootstrapToday() {
 //   4. Pull blocking work
 //   5. Pull due / overdue keep-alive work
 //   6. Add active-pursuit work matching focus
-//   7. Guarantee one pipeline-building task, then add more if capacity remains
+//   7. Add pipeline-building work when it fits
 //   8. Keep a time buffer, but fill usable spare capacity with any task that fits
 //   9. Put near-misses in Options
 //  10. Everything else stays hidden in Tasks
@@ -3973,7 +3973,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   var commit = [];
   var options = [];
   var usedIds = {};
-  var bufferMin = Math.max(15, Math.round(availableMinutes * 0.1));
+  var bufferMin = availableMinutes <= 30 ? 0 : Math.max(15, Math.round(availableMinutes * 0.1));
   var capacity = Math.max(0, availableMinutes - bufferMin);
   var minutesUsed = 0;
 
@@ -4050,25 +4050,17 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       else { var pv2 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, near miss on capacity', tags: pv2.tags, userNote: pv2.userNote }); }
     });
 
-  // Stage 7 — guarantee one pipeline-building task, then use spare
-  // capacity for more pipeline-building work. The first one is deliberately
-  // not capacity-gated: a daily plan should keep the top of the funnel
-  // moving even when no-deadline pipeline work would otherwise lose to
-  // louder active-pursuit tasks. Additional pipeline tasks are capacity-
-  // gated, so open time fills with useful no-deadline work without
-  // flooding the day.
+  // Stage 7 — pipeline-building work, capacity-gated like other flexible
+  // work. It should flow in when there is room, but a no-deadline 20 min
+  // task should not appear in a 15 min day.
   // §2.2: Tier now comes before age (was pure FIFO) — same comparator as
   // Active pursuit, so a newly-important Tier-A item no longer waits
   // behind an older Tier-C one. §5: Low energy still sinks Deep-effort.
   var pipelineCandidates = pool.filter(function (p) { return p.cls === 'Pipeline-building' && !usedIds[p.todoId]; })
     .sort(compareForStage(energyLow));
-  if (pipelineCandidates.length) {
-    var chosen = pipelineCandidates[0];
-    addCommit(chosen, 'pipeline-building — keeping the top of the funnel moving');
-    pipelineCandidates.slice(1).forEach(function (p) {
-      if (minutesUsed + p.estMin <= capacity) addCommit(p, 'pipeline-building — spare capacity available');
-    });
-  }
+  pipelineCandidates.forEach(function (p) {
+    if (minutesUsed + p.estMin <= capacity) addCommit(p, 'pipeline-building — fits today');
+  });
 
   // Stage 8 — Focus fallback (§2.4): if capacity remains, pull Active
   // pursuit work that Focus excluded rather than leaving capacity idle.
@@ -4108,7 +4100,10 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   pool.forEach(function (p) {
     if (usedIds[p.todoId] || options.length >= 6) return;
     var pv4 = preserved(p.todoId);
-    options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'not selected today — capacity or priority', tags: pv4.tags, userNote: pv4.userNote });
+    var optionReason = p.estMin > availableMinutes
+      ? 'does not fit today\'s available time'
+      : 'not selected today — capacity or priority';
+    options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: optionReason, tags: pv4.tags, userNote: pv4.userNote });
   });
   // Stage 10 — everything not in commit or options simply isn't written
   // to Today. It's still fully visible and workable from Tasks.
@@ -4155,10 +4150,13 @@ function populateTodayImpl() {
   }
   applyTodayRowStatusDropdowns(sheet);
 
+  var unplannedMin = Math.max(0, availableMinutes - selection.minutesUsed);
   var headline = selection.commit.length
     ? 'Today’s plan is ready — ' + selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's') +
-      ' · ' + selection.minutesUsed + ' min planned · ' + selection.bufferMin + ' min spare'
-    : 'Today’s plan is ready — nothing committed yet.';
+      ' · ' + selection.minutesUsed + ' min planned · ' + unplannedMin + ' min unplanned'
+    : (selection.options.length
+      ? 'Today’s plan is ready — nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
+      : 'Today’s plan is ready — nothing committed yet.');
   clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()));
 
@@ -4166,7 +4164,7 @@ function populateTodayImpl() {
   renderNeedsBreakdown(sheet);
   updateTodayProgress(sheet);
   refreshHome();
-  var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + selection.bufferMin + ' min buffer kept.';
+  var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + unplannedMin + ' min unplanned.';
   if (overflowCount > 0) toastMsg = overflowCount + ' committed task(s) did not fit on Today - see Tasks. ' + toastMsg;
   SpreadsheetApp.getActiveSpreadsheet().toast(toastMsg, 'The Planner', 6);
 }
