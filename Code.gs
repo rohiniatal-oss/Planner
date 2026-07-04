@@ -266,7 +266,7 @@ var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
   ORG_STATUS: ['Mapped', 'Active', 'Dormant', 'Archived'],
 
-  PERSON_STAGE: ['Identified', 'Outreach sent', 'Engaged', 'Conversation scheduled', 'Conversation completed', 'Nurture', 'Closed'],
+  PERSON_STAGE: ['Not contacted', 'Outreach drafted', 'Outreach sent'],
   PERSON_REL_TYPE: ['Ex-colleague / work history', 'Alumni / institutional', 'Warm network', 'Professional community', 'Recruiter / intermediary', 'Field-visible person', 'Cold target search', 'Other'],
   YES_NO: ['Yes', 'No'],
 
@@ -609,10 +609,19 @@ function normalizeJobOutcome(value) {
 function normalizePersonStage(value) {
   var v = String(value || '').trim();
   var legacyMap = {
-    'Outreach ready': 'Identified', 'Pending reply': 'Outreach sent',
-    'No reply': 'Nurture', 'Conversation to reschedule': 'Conversation scheduled',
-    'Relationship active': 'Engaged', 'Qualified': 'Identified',
-    'Opportunity lead': 'Engaged'
+    'Identified': 'Not contacted',
+    'Outreach ready': 'Not contacted',
+    'Qualified': 'Not contacted',
+    'Draft ready': 'Outreach drafted',
+    'Pending reply': 'Outreach sent',
+    'Engaged': 'Outreach sent',
+    'Relationship active': 'Outreach sent',
+    'Opportunity lead': 'Outreach sent',
+    'Conversation scheduled': 'Outreach sent',
+    'Conversation completed': 'Outreach sent',
+    'Nurture': 'Outreach sent',
+    'No reply': 'Outreach sent',
+    'Conversation to reschedule': 'Outreach sent'
   };
   return legacyMap[v] || (DROPDOWNS.PERSON_STAGE.indexOf(v) !== -1 ? v : '');
 }
@@ -1013,8 +1022,8 @@ function promoteOrgForLiveJob(orgId, status) {
 
 function promoteOrgForLivePerson(orgId, stage) {
   var normalized = normalizePersonStage(stage);
-  if (['Outreach sent', 'Engaged', 'Conversation scheduled', 'Conversation completed', 'Nurture'].indexOf(normalized) === -1) return false;
-  return routeOrgLiveEvidence(orgId, 'Live relationship evidence');
+  if (normalized !== 'Outreach sent') return false;
+  return routeOrgLiveEvidence(orgId, 'Live outreach evidence');
 }
 
 function inheritOrgFields(sheet, editedRow, nameCol, orgIdCol) {
@@ -1481,7 +1490,7 @@ function findPeopleByNameOrgScoped(name, orgId, orgName) {
 function getPersonRowById(personId) {
   var sheet = getSheet('People');
   if (!sheet || sheet.getLastRow() < 2 || !personId) return null;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.PEOPLE.STAGE).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.PEOPLE.NOTES).getValues();
   var target = String(personId);
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.PEOPLE.ID - 1]) === target) {
@@ -1491,7 +1500,8 @@ function getPersonRowById(personId) {
         name: row[COLS.PEOPLE.NAME - 1],
         org: row[COLS.PEOPLE.ORG - 1],
         orgId: row[COLS.PEOPLE.ORG_ID - 1],
-        stage: row[COLS.PEOPLE.STAGE - 1]
+        stage: row[COLS.PEOPLE.STAGE - 1],
+        notes: row[COLS.PEOPLE.NOTES - 1]
       };
     }
   }
@@ -2622,7 +2632,7 @@ function handlePersonTodoCompletion(todo, options) {
   var person = getPersonRowById(todo.objId);
   if (!person) return;
   if (todo.workflow === 'Outreach') {
-    appendTodoOnceForWorkflow('Send outreach to ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', todo.objId, person.org, 'Send outreach', 'Not started', '', '15 min', 'Draft prepared.', 'Auto-triggered');
+    movePersonStage(todo.objId, 'Outreach drafted', { source: 'todo-completion' });
   } else if (todo.workflow === 'Send outreach') {
     movePersonStage(todo.objId, 'Outreach sent', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Contact follow-up') {
@@ -2635,7 +2645,7 @@ function handlePersonTodoCompletion(todo, options) {
   } else if (todo.workflow === 'Conversation prep') {
     appendInteraction(todo.objId, person.name, person.org, today(), 'Auto-log', 'Conversation prep completed', 'System log');
   } else if (todo.workflow === 'Thank-you and debrief' || todo.workflow === 'Conversation debrief') {
-    movePersonStage(todo.objId, 'Conversation completed', { source: 'todo-completion', realDate: today() });
+    appendInteraction(todo.objId, person.name, person.org, today(), 'Auto-log', 'Thank-you/debrief completed', 'System log');
   }
 }
 
@@ -2730,7 +2740,7 @@ function handleSkipCascade(todoSheet, row) {
     case 'Outreach':
     case 'Send outreach':
       var people = getSheet('People');
-      if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '\u26a0 Outreach skipped — Identified or Closed?');
+      if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '\u26a0 Outreach skipped - not contacted or closed?');
       break;
     case 'Interview scheduling':
       var rounds = getSheet('Interviews');
@@ -2748,7 +2758,10 @@ function handleSkipCascade(todoSheet, row) {
 function isSourceObjectTerminal(objType, objId) {
   if (objType === 'Job') { var j = getJobRowById(objId); return j && normalizeJobStatus(j.status) === 'Closed'; }
   if (objType === 'Organisation') { var o = getOrgById(objId); return o && ['Archived', 'Dormant'].indexOf(String(o.status)) !== -1; }
-  if (objType === 'Person') { var p = getPersonRowById(objId); return p && String(p.stage) === 'Closed'; }
+  if (objType === 'Person') {
+    var p = getPersonRowById(objId);
+    return p && (String(p.stage) === 'Closed' || String(p.notes || '').indexOf('[closed]') !== -1);
+  }
   return false;
 }
 
@@ -2768,7 +2781,7 @@ function handleCancelCascade(todoSheet, row) {
     case 'Application preparation': case 'Application blocker': case 'Submit application':
       var jobs = getSheet('Jobs'); if (jobs) flagLinkedRow(jobs, COLS.JOBS.ID, objId, COLS.JOBS.NOTES, '⚠ Task cancelled — Park or Close?'); break;
     case 'Outreach': case 'Send outreach':
-      var people = getSheet('People'); if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '⚠ Task cancelled — Identified or Closed?'); break;
+      var people = getSheet('People'); if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '⚠ Task cancelled - not contacted or closed?'); break;
     case 'Interview scheduling':
       var rounds = getSheet('Interviews'); if (rounds) flagLinkedRow(rounds, COLS.ROUNDS.ID, objId, COLS.ROUNDS.NOTES, '⚠ Task cancelled — cancel round?'); break;
   }
@@ -3028,8 +3041,7 @@ function createInterviewRoundForJob(jobId, opts) {
 
 // =============================================================
 // PEOPLE — stage routing
-// Stages: Identified / Outreach sent / Engaged / Conversation scheduled /
-//         Conversation completed / Nurture / Closed
+// Stage is only: Not contacted / Outreach drafted / Outreach sent.
 // =============================================================
 
 function movePersonStage(personId, stage, opts) {
@@ -3056,9 +3068,9 @@ function setPersonFollowUpSent(personId) {
   sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).setValue(cnt + 1);
 }
 
-// The single place Person stage transitions are handled.
+// The single place Person outreach-stage transitions are handled.
 //
-// FIX (confirmed): "Identified" now creates a direct Draft-outreach Task,
+// Not contacted creates a direct Draft-outreach Task.
 // not a Decision. The person answering the onboarding/capture question
 // "have you already reached out?" with No has already told us the next
 // action unambiguously — there's nothing left to ask.
@@ -3070,10 +3082,16 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
   newStage = normalizePersonStage(newStage);
   if (oldStage !== undefined && oldStage !== null && String(oldStage) !== '' && normalizePersonStage(oldStage) === newStage) return;
 
-  if (newStage === 'Identified') {
+  if (newStage === 'Not contacted') {
     appendTodoOnceForWorkflow('Draft outreach to ' + person.name + (person.org ? ' at ' + person.org : ''),
       'Person', personId, person.org, 'Outreach', 'Not started', '', '20 min',
       'When the draft is ready, tick this Task Done — it will create the send-outreach follow-up.', 'Auto-triggered');
+    return;
+  }
+  if (newStage === 'Outreach drafted') {
+    appendTodoOnceForWorkflow('Send outreach to ' + person.name + (person.org ? ' at ' + person.org : ''),
+      'Person', personId, person.org, 'Send outreach', 'Not started', '', '15 min',
+      'Draft prepared.', 'Auto-triggered');
     return;
   }
   if (newStage === 'Outreach sent') {
@@ -3087,31 +3105,62 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     if (follow <= today()) appendTodoOnceForWorkflow('Follow up with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Contact follow-up', 'Not started', follow, '15 min', 'Outreach follow-up due.', 'Auto-triggered');
     return;
   }
-  if (newStage === 'Engaged') {
-    appendTodoOnceForWorkflow('Reply and arrange conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Reply and arrange conversation', 'Not started', '', '15 min', '', 'Auto-triggered');
-    return;
-  }
-  if (newStage === 'Conversation scheduled') {
-    var convDate = opts.realDate ? parseDateOr(opts.realDate) : sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).getValue();
-    if (convDate) sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(convDate);
-    appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Conversation prep', 'Not started', convDate ? addDays(new Date(convDate), -1) : '', '30 min', conversationPrepNotes(), 'Auto-triggered');
-    return;
-  }
-  if (newStage === 'Conversation completed') {
-    var doneDate = opts.realDate ? parseDateOr(opts.realDate) : today();
-    sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(doneDate);
-    appendInteraction(personId, person.name, person.org, doneDate, 'Auto-log', 'Conversation completed', 'System log');
-    appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min', conversationDebriefNotes(), 'Auto-triggered');
-    return;
-  }
-  if (newStage === 'Nurture') {
-    sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_DATE).setValue(addDays(today(), 42));
-    return;
-  }
-  if (newStage === 'Closed') {
-    autoDismissPendingForTarget('Person', personId, 'Person closed');
-    setOpenTodosForTarget('Person', personId, 'Cancelled', 'Person closed');
-  }
+}
+
+function routePersonReplyReceived(personId, opts) {
+  opts = opts || {};
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  sheet.getRange(person.row, COLS.PEOPLE.REPLY_RECEIVED).setValue('Yes');
+  promoteOrgForLivePerson(person.orgId, 'Outreach sent');
+  appendTodoOnceForWorkflow('Reply and arrange conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
+    'Person', personId, person.org, 'Reply and arrange conversation', 'Not started', '', '15 min',
+    opts.notes || 'Reply received; decide whether to schedule, keep warm, or close.', 'Auto-triggered');
+}
+
+function routePersonConversationScheduled(personId, dateValue) {
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  var convDate = dateValue ? parseDateOr(dateValue) : sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).getValue();
+  if (convDate) sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(convDate);
+  promoteOrgForLivePerson(person.orgId, 'Outreach sent');
+  appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
+    'Person', personId, person.org, 'Conversation prep', 'Not started',
+    convDate ? addDays(new Date(convDate), -1) : '', '30 min', conversationPrepNotes(), 'Auto-triggered');
+}
+
+function recordPersonConversationCompleted(personId, dateValue) {
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  var doneDate = dateValue ? parseDateOr(dateValue) : today();
+  sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(doneDate);
+  promoteOrgForLivePerson(person.orgId, 'Outreach sent');
+  appendInteraction(personId, person.name, person.org, doneDate, 'Auto-log', 'Conversation completed', 'System log');
+  appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''),
+    'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min',
+    conversationDebriefNotes(), 'Auto-triggered');
+}
+
+function setPersonKeepWarm(personId) {
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_DATE).setValue(addDays(today(), 42));
+  appendNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[keep-warm] Check in later; follow-up date controls the next task.');
+}
+
+function closePerson(personId, reason) {
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  appendNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[closed] ' + (reason || 'No active outreach.'));
+  sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_DATE).clearContent();
+  sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_SENT).clearContent();
+  autoDismissPendingForTarget('Person', personId, 'Person closed');
+  setOpenTodosForTarget('Person', personId, 'Cancelled', 'Person closed');
 }
 
 // =============================================================
@@ -4127,13 +4176,13 @@ function onEditPeople(sheet, row, col, newVal, e) {
     var personHadPriorOrg = !!(oldPersonOrgName || oldPersonOrgId);
     var personOrgChanged = newPersonOrgName && (!personHadPriorOrg || oldPersonOrgName !== newPersonOrgName || oldPersonOrgId !== newPersonOrgId);
     if (personOrgChanged) propagatePersonOrganisationChange(personIdForOrg, newPersonOrgName, newPersonOrgId, oldPersonOrgName, oldPersonOrgId);
-    var currentPersonStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
+    var currentPersonStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Not contacted');
     if (!sheet.getRange(row, COLS.PEOPLE.STAGE).getValue()) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(currentPersonStage);
     var routedPersonOrgEvidence = promoteOrgForLivePerson(newPersonOrgId, currentPersonStage);
     var pNotes = String(sheet.getRange(row, COLS.PEOPLE.NOTES).getValue() || '');
     if (pNotes.indexOf('[pending-org]') !== -1) {
       clearNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org]');
-      var pStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
+      var pStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Not contacted');
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(pStage);
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), pStage);
       firePersonStageChanged(personIdForOrg, '', pStage, { source: 'manual-org-followup' });
@@ -4147,12 +4196,12 @@ function onEditPeople(sheet, row, col, newVal, e) {
     var editedPersonId = sheet.getRange(row, COLS.PEOPLE.ID).getValue();
     if (e && e.oldValue) propagatePersonNameChange(editedPersonId, String(newVal), String(e.oldValue));
     if (!sheet.getRange(row, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).getValue()) sheet.getRange(row, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).setValue(0);
-    if (!sheet.getRange(row, COLS.PEOPLE.STAGE).getValue()) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Identified');
+    if (!sheet.getRange(row, COLS.PEOPLE.STAGE).getValue()) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Not contacted');
     var orgName = sheet.getRange(row, COLS.PEOPLE.ORG).getValue();
     if (orgName) {
       inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
-      firePersonStageChanged(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), '', 'Identified', { source: 'manual' });
+      firePersonStageChanged(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), '', 'Not contacted', { source: 'manual' });
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     } else {
@@ -4167,11 +4216,10 @@ function onEditPeople(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
-    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Engaged');
-    var pid = sheet.getRange(row, COLS.PEOPLE.ID).getValue();
-    var oldStage = sheet.getRange(row, COLS.PEOPLE.STAGE).getValue();
-    sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Engaged');
-    firePersonStageChanged(pid, oldStage, 'Engaged', { source: 'manual' });
+    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Outreach sent');
+    var pid = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
+    sheet.getRange(row, COLS.PEOPLE.ID).setValue(pid);
+    routePersonReplyReceived(pid, { source: 'manual' });
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
     return;
@@ -4184,14 +4232,10 @@ function onEditPeople(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
-    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Conversation scheduled');
-    var currentStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
-    if (currentStage !== 'Conversation completed') {
-      sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Conversation scheduled');
-      firePersonStageChanged(convPersonId, currentStage, 'Conversation scheduled', { source: 'manual-date', realDate: newVal });
-      refreshDerivedPlanningSurfaces();
-      requestHomeRefresh();
-    }
+    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Outreach sent');
+    routePersonConversationScheduled(convPersonId, newVal);
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.PEOPLE.STAGE) {
@@ -4359,9 +4403,9 @@ function onEditInteractions(sheet, row, col, newVal) {
     appendPendingDecision('INTERACTION_REFERRAL:' + sheet.getRange(row, COLS.INTERACTIONS.ID).getValue() + ':Referral search', 'Referral mentioned by ' + personName,
       'Act on referral from ' + personName, 'Person', personId, 'Referral search', notes || '');
   } else if (outcome === 'Dead end') {
-    movePersonStage(personId, 'Closed', { source: 'interaction' });
+    closePerson(personId, 'Conversation outcome: dead end.');
   } else if (outcome === 'Neutral') {
-    movePersonStage(personId, 'Nurture', { source: 'interaction' });
+    setPersonKeepWarm(personId);
   }
   refreshDerivedPlanningSurfaces();
 }
@@ -6400,9 +6444,8 @@ function collectUpcomingItems(limit) {
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).getValues();
     pData.forEach(function (p) {
-      var stage = String(p[COLS.PEOPLE.STAGE - 1]);
       var d = p[COLS.PEOPLE.CONVERSATION_DATE - 1];
-      if (stage === 'Conversation scheduled' && d && new Date(d) >= t) {
+      if (d && new Date(d) >= t) {
         items.push({ type: 'Conversation', date: new Date(d), label: p[COLS.PEOPLE.NAME - 1] || '' });
       }
     });
@@ -6717,7 +6760,7 @@ function buildSetupHtml() {
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
-    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
+    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -6896,14 +6939,8 @@ function processPeopleOnboarding(fields) {
   var existingPerson = findPersonByNameOrg(fields.name, org ? org.name : '');
   var reached = String(fields.reachedOut || 'No') === 'Yes';
   var replied = String(fields.replied || 'No') === 'Yes';
-  var stage = 'Identified', realDate = null;
-  if (reached && !replied) { stage = 'Outreach sent'; realDate = fields.outreachDate; }
-  if (reached && replied) {
-    var where = fields.whereNow || '';
-    if (where === 'Conversation scheduled') { stage = 'Conversation scheduled'; realDate = fields.conversationDate; }
-    else if (where === 'Already spoke') { stage = 'Conversation completed'; realDate = fields.conversationDate; }
-    else stage = 'Engaged';
-  }
+  var stage = reached ? 'Outreach sent' : 'Not contacted';
+  var realDate = reached ? fields.outreachDate : null;
   var personId = writePersonRow(fields.name, org, fields.role || '');
   promoteOrgForLivePerson(org && org.id, stage);
   if (fields.relType && DROPDOWNS.PERSON_REL_TYPE.indexOf(fields.relType) !== -1) {
@@ -6911,6 +6948,12 @@ function processPeopleOnboarding(fields) {
     if (pRow) getSheet('People').getRange(pRow.row, COLS.PEOPLE.REL_TYPE).setValue(fields.relType);
   }
   firePersonStageChanged(personId, '', stage, { realDate: realDate });
+  if (reached && replied) {
+    var where = fields.whereNow || '';
+    if (where === 'Conversation scheduled') routePersonConversationScheduled(personId, fields.conversationDate);
+    else if (where === 'Already spoke') recordPersonConversationCompleted(personId, fields.conversationDate);
+    else routePersonReplyReceived(personId, { source: 'capture' });
+  }
   if (fields.notes) appendNoteFlag(getSheet('People'), getPersonRowById(personId).row, COLS.PEOPLE.NOTES, fields.notes);
   return okResult((existingPerson ? 'Updated existing' : 'Created') + ' person: ' + fields.name + ' at ' + (org ? org.name : fields.org) + '. Routed the outreach/follow-up state.');
 }
@@ -7224,7 +7267,7 @@ function captureConfig(captureType) {
       { k: 'relType', l: 'Source / relationship', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
       { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
       { k: 'outreachDate', l: 'When did you reach out?', t: 'date', showIf: { k: 'reachedOut', v: 'Yes' } },
-      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Engaged / arranging next step', 'Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
+      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
       { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date', showIfAny: [{ k: 'whereNow', v: 'Conversation scheduled' }, { k: 'whereNow', v: 'Already spoke' }] }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
     },
     'Add/update conversation': {
@@ -7367,8 +7410,7 @@ function completeApplicationPlanFromPopup(payload) {
         if (!personName) return failResult('Add the contact name.', 'personName', 'MISSING_PERSON');
         var personId = writePersonRow(personName, { id: job.orgId, name: job.org }, '');
         var person = getPersonRowById(personId);
-        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
-        promoteOrgForLivePerson(job.orgId, 'Identified');
+        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Not contacted');
         linkPersonIdToJob(job.id, personId);
         var newOutreachId = createReferralOutreachTask(job, personId, 'Application plan');
         if (newOutreachId) created.push(newOutreachId);
@@ -7458,8 +7500,7 @@ function completeReferralSearchResultFromPopup(payload) {
         if (!personName) return failResult('Add the contact name.', 'personName', 'MISSING_PERSON');
         personId = writePersonRow(personName, { id: job.orgId, name: job.org }, String(payload.personRole || '').trim());
         var person = getPersonRowById(personId);
-        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
-        promoteOrgForLivePerson(job.orgId, 'Identified');
+        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Not contacted');
         linkPersonIdToJob(job.id, personId);
         createReferralOutreachTask(job, personId, 'Referral search');
       } else if (result !== 'none') {
@@ -7672,7 +7713,7 @@ function processConversationCapture(fields) {
   var personId = person.data[COLS.PEOPLE.ID - 1];
   var personName = person.data[COLS.PEOPLE.NAME - 1];
   var personOrg = person.data[COLS.PEOPLE.ORG - 1] || (org ? org.name : fields.org || '');
-  promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], 'Conversation completed');
+  promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], 'Outreach sent');
   appendInteraction(personId, personName, personOrg, fields.date || today(), 'Other', fields.notes || '', '');
   if (fields.outcome) {
     var sheet = getSheet('Conversations');
@@ -7755,7 +7796,7 @@ var HEADER_GUIDANCE = {
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
     'Role': 'optional', 'Relationship type': 'source / relationship context; does not route by itself',
-    'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed',
+    'Stage': 'outreach only: Not contacted / Outreach drafted / Outreach sent',
     'Follow-up date': 'auto or manual',
     'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
     'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
@@ -7906,7 +7947,7 @@ var WRAP_COLUMNS = {
 var STATUS_COLOR_MAP = {
   'Sectors': { col: COLS.SECTORS.STATUS, colors: { 'Open': '#FFFFFF', 'Retired': '#F1F3F4' } },
   'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#EAE3DD' } },
-  'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'Outreach sent': '#C2DBFF', 'Engaged': '#CEEAD6', 'Conversation scheduled': '#D7BCE8', 'Conversation completed': '#B6E3E0', 'Nurture': '#FEF7CD', 'Closed': '#F1F3F4' } },
+  'People': { col: COLS.PEOPLE.STAGE, colors: { 'Not contacted': '#E8EAED', 'Outreach drafted': '#FEF7CD', 'Outreach sent': '#C2DBFF' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
   'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
   "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
@@ -8387,6 +8428,44 @@ function clearBodyDropdowns(sheet, canonicalName, maxRow) {
   sheet.getRange(2, 1, maxRow, width).clearDataValidations();
 }
 
+function normalizeExistingPeopleStages(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var rowCount = sheet.getLastRow() - 1;
+  var stageRange = sheet.getRange(2, COLS.PEOPLE.STAGE, rowCount, 1);
+  var replyRange = sheet.getRange(2, COLS.PEOPLE.REPLY_RECEIVED, rowCount, 1);
+  var notesRange = sheet.getRange(2, COLS.PEOPLE.NOTES, rowCount, 1);
+  var values = stageRange.getValues();
+  var replies = replyRange.getValues();
+  var notes = notesRange.getValues();
+  var changed = 0;
+  for (var i = 0; i < values.length; i++) {
+    var raw = String(values[i][0] || '');
+    var normalized = raw === 'Closed' ? 'Outreach sent' : normalizePersonStage(raw);
+    if (raw && normalized && raw !== normalized) {
+      values[i][0] = normalized;
+      changed++;
+    }
+    if (raw === 'Closed' && String(notes[i][0] || '').indexOf('[closed]') === -1) {
+      notes[i][0] = notes[i][0] ? notes[i][0] + '\n[closed] Migrated from old Stage value.' : '[closed] Migrated from old Stage value.';
+      changed++;
+    }
+    if (['Engaged', 'Conversation scheduled', 'Conversation completed'].indexOf(raw) !== -1 && String(replies[i][0] || '') !== 'Yes') {
+      replies[i][0] = 'Yes';
+      changed++;
+    }
+    if (raw === 'Nurture' && String(notes[i][0] || '').indexOf('[keep-warm]') === -1) {
+      notes[i][0] = notes[i][0] ? notes[i][0] + '\n[keep-warm] Migrated from old Stage value.' : '[keep-warm] Migrated from old Stage value.';
+      changed++;
+    }
+  }
+  if (changed) {
+    stageRange.setValues(values);
+    replyRange.setValues(replies);
+    notesRange.setValues(notes);
+  }
+  return changed;
+}
+
 function applySheetDropdowns(canonicalName) {
   var sheet = getSheet(canonicalName);
   if (!sheet) return;
@@ -8401,6 +8480,7 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
     case 'People':
+      normalizeExistingPeopleStages(sheet);
       setDropdown(sheet.getRange(2, COLS.PEOPLE.STAGE, maxRow, 1), DROPDOWNS.PERSON_STAGE, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.PEOPLE.REL_TYPE, maxRow, 1), DROPDOWNS.PERSON_REL_TYPE);
       setDropdown(sheet.getRange(2, COLS.PEOPLE.REPLY_RECEIVED, maxRow, 1), DROPDOWNS.YES_NO);
@@ -8461,13 +8541,18 @@ function materializeDueTasks() {
       var orgName = String(pData[i][COLS.PEOPLE.ORG - 1]);
       var stage = normalizePersonStage(String(pData[i][COLS.PEOPLE.STAGE - 1]));
       var followUpDate = pData[i][COLS.PEOPLE.FOLLOW_UP_DATE - 1];
+      var replyReceived = String(pData[i][COLS.PEOPLE.REPLY_RECEIVED - 1] || '');
       var followUpSent = String(pData[i][COLS.PEOPLE.FOLLOW_UP_SENT - 1]);
+      var peopleNotes = String(pData[i][COLS.PEOPLE.NOTES - 1] || '');
+      var keepWarm = peopleNotes.indexOf('[keep-warm]') !== -1;
+      var closed = peopleNotes.indexOf('[closed]') !== -1;
       if (!personId || !personName) continue;
-      if (stage === 'Outreach sent' && followUpDate && new Date(followUpDate) < todayDate && followUpSent === 'No') {
+      if (closed) continue;
+      if (!keepWarm && replyReceived !== 'Yes' && stage === 'Outreach sent' && followUpDate && new Date(followUpDate) < todayDate && followUpSent === 'No') {
         if (appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
       }
-      if (stage === 'Nurture' && followUpDate && new Date(followUpDate) < todayDate) {
-        if (appendTodoOnceForWorkflow('Nurture check-in with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
+      if (keepWarm && followUpDate && new Date(followUpDate) < todayDate) {
+        if (appendTodoOnceForWorkflow('Keep-warm check-in with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', followUpDate, '15 min', '', 'Auto-triggered')) created++;
       }
     }
   }
@@ -8543,21 +8628,21 @@ function weeklyReview() {
 }
 
 function weeklyReviewImpl() {
-  var summary = { staleNurture: 0, activeEmpty: 0, activeEmptyTasks: 0, activeEmptyAlreadyRouted: 0, orgOrphans: 0, sectorOrphans: 0 };
+  var summary = { staleKeepWarm: 0, activeEmpty: 0, activeEmptyTasks: 0, activeEmptyAlreadyRouted: 0, orgOrphans: 0, sectorOrphans: 0 };
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NOTES).getValues();
     for (var i = 0; i < pData.length; i++) {
-      var stage = String(pData[i][COLS.PEOPLE.STAGE - 1]);
       var fupDate = pData[i][COLS.PEOPLE.FOLLOW_UP_DATE - 1];
-      if (stage === 'Nurture' && fupDate) {
+      var pNotes = String(pData[i][COLS.PEOPLE.NOTES - 1] || '');
+      if (pNotes.indexOf('[closed]') === -1 && pNotes.indexOf('[keep-warm]') !== -1 && fupDate) {
         var daysOver = daysBetween(new Date(fupDate), today());
         if (daysOver >= 14) {
           var pId = String(pData[i][COLS.PEOPLE.ID - 1] || '');
           var hasFollowUp = openTodoExistsForTargetWorkflow('Person', pId, 'Contact follow-up');
           appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES,
-            hasFollowUp ? '[weekly-review] Nurture overdue; follow-up task already open.' : '[weekly-review] Nurture overdue; no follow-up task found.');
-          summary.staleNurture++;
+            hasFollowUp ? '[weekly-review] Keep-warm follow-up overdue; follow-up task already open.' : '[weekly-review] Keep-warm follow-up overdue; no follow-up task found.');
+          summary.staleKeepWarm++;
         }
       }
     }
@@ -8577,7 +8662,7 @@ function weeklyReviewImpl() {
   populateToday();
   refreshHome();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
-  summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' org review route(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleNurture + ' stale nurture, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
+  summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' org review route(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleKeepWarm + ' stale keep-warm, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
   try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
   return summary;
 }
@@ -8728,7 +8813,7 @@ function addNewPerson() {
   withDocumentLock(function () {
     var org = createNameOnlyOrg(orgName, { status: 'Mapped', stub: true });
     var personId = writePersonRow(name, org, '');
-    firePersonStageChanged(personId, '', 'Identified', {});
+    firePersonStageChanged(personId, '', 'Not contacted', {});
   }, { label: 'addNewPerson' });
   ui.alert('Added', 'Person "' + name + '" added. Draft outreach task created.', ui.ButtonSet.OK);
 }
@@ -8752,7 +8837,7 @@ function addNewInteraction() {
   var notesResp = ui.prompt('Key notes', 'What was said/decided?', ui.ButtonSet.OK_CANCEL);
   var notes = notesResp.getSelectedButton() === ui.Button.OK ? notesResp.getResponseText().trim() : '';
   withDocumentLock(function () {
-    promoteOrgForLivePerson(person.data[COLS.PEOPLE.ORG_ID - 1], 'Conversation completed');
+    promoteOrgForLivePerson(person.data[COLS.PEOPLE.ORG_ID - 1], 'Outreach sent');
     appendInteraction(person.data[COLS.PEOPLE.ID - 1], person.data[COLS.PEOPLE.NAME - 1], person.data[COLS.PEOPLE.ORG - 1], today(), 'Other', notes, '');
   }, { label: 'addNewInteraction' });
   ui.alert('Logged', 'Conversation with ' + person.data[COLS.PEOPLE.NAME - 1] + ' logged.', ui.ButtonSet.OK);
@@ -9130,7 +9215,7 @@ function softCloseRow() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   if (sheet.getName() !== 'People' && sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.'); return; }
   withDocumentLock(function () {
-    if (sheet.getName() === 'People') movePersonStage(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed', {});
+    if (sheet.getName() === 'People') closePerson(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed from row action.');
     else setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
   }, { label: 'softCloseRow' });
 }
@@ -9243,7 +9328,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'The status labels');
   r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Result is Waiting, Interview invite, or Rejected.');
-  r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
+  r = writeKV(sheet, r, 'People', 'Stage is outreach only: Not contacted > Outreach drafted > Outreach sent. Reply, follow-up, and conversation details use their own columns.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
   r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed.');
