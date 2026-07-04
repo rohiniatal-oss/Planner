@@ -2077,7 +2077,11 @@ function applyOrgTaxonomyLink(orgRow, sector, subsector) {
     var sectorOnly = upsertSectorBranch({ sector: sector, source: 'organisation_link', sourceObjectType: 'Organisation', createExpansionDecision: false });
     if (sectorOnly) sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sectorOnly.sector);
     sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue('');
-    sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue('');
+    // v7.7.1: sector-only branches now carry a real SEC-* id (see
+    // upsertSectorBranch) — store it here too so detectSectorOrphans and
+    // propagateSectorRenameToOrganisations also cover sector-only links,
+    // not just sub-sector links.
+    sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue(sectorOnly ? sectorOnly.id : '');
     return sectorOnly;
   }
   if (!sector && subsector) {
@@ -2163,71 +2167,26 @@ function fireOrgActiveCascade(orgId, orgName) {
 
 // --- Sectors: Stage 1 (sector-only) and Stage 2/3 (sub-sector) ---
 
-function findOrCreateSectorOnly(sector) {
-  return upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
-  if (!sector) return null;
-  var sheet = getSheet('Sectors');
-  if (!sheet) return null;
-  var key = normalizeKeyPart(sector);
-  if (sheet.getLastRow() >= 2) {
-    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
-    for (var i = 0; i < data.length; i++) {
-      if (normalizeKeyPart(data[i][COLS.SECTORS.SECTOR - 1]) === key && !data[i][COLS.SECTORS.SUBSECTOR - 1]) {
-        return { row: i + 2, sector: data[i][COLS.SECTORS.SECTOR - 1], created: false };
-      }
-    }
-  }
-  sheet.appendRow(['', sector, '']); // no ID yet — only Stage 2/3 assigns one, see findOrCreateSubsector
-  return { row: sheet.getLastRow(), sector: sector, created: true };
-}
-
-function findSubsectorRow(sector, subsector) {
-  return findSectorBranch(sector, subsector);
-  var sheet = getSheet('Sectors');
-  if (!sheet || sheet.getLastRow() < 2) return null;
-  var s = normalizeKeyPart(sector), sub = normalizeKeyPart(subsector);
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
-  for (var i = 0; i < data.length; i++) {
-    if (normalizeKeyPart(data[i][COLS.SECTORS.SECTOR - 1]) === s && normalizeKeyPart(data[i][COLS.SECTORS.SUBSECTOR - 1]) === sub) {
-      return { row: i + 2, id: data[i][COLS.SECTORS.ID - 1], sector: data[i][COLS.SECTORS.SECTOR - 1], subsector: data[i][COLS.SECTORS.SUBSECTOR - 1], created: false };
-    }
-  }
-  return null;
-}
-
 // Stage 1: fires the direct "list sub-sectors" Task. Deduplicated by
 // task text + target so re-editing the same Sector row (or capturing
-// it again via onboarding) never creates a second copy.
+// it again via onboarding) never creates a second copy. Accepts either
+// a sector name (creates/finds the sector-only branch) or an
+// already-resolved branch object (avoids a redundant upsert when the
+// caller already has one, e.g. onEditSectors).
 function fireSectorOnlyTask(sector) {
   var branch = (typeof sector === 'object') ? sector : upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
   if (!branch) return '';
   var linkedTaskText = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
   return appendTodoOnceForWorkflow(linkedTaskText, 'Sector', branch.id, '', 'Sector selection', 'Not started', '', '20 min',
     'Sub-sectors should be narrow enough that a market map of 10-15 organisations is feasible.', 'Auto-triggered');
-  var taskText = 'List 2-4 sub-sectors worth exploring for ' + sector;
-  appendTodoOnceForWorkflow(taskText, 'Sector', sector, '', 'Sector selection', 'Not started', '', '20 min',
-    'Sub-sectors should be narrow enough that a market map of 10-15 organisations is feasible.', 'Auto-triggered');
 }
 
-// Stage 2/3: creates the real Sectors row (only Sub-sector rows ever
-// get an ID — this is what Organisations.Sub-sector ID links against)
-// and raises the "build an org list here?" Decision. Yes on that
-// Decision is what creates the Market-map Task (see acceptPendingDecision
-// -> appendTodoWithSource, workflow 'Market mapping'); No creates nothing.
-function findOrCreateSubsector(sector, subsector) {
-  return upsertSectorBranch({ sector: sector, subsector: subsector, source: 'manual_sheet_entry', createExpansionDecision: true });
-  if (!sector || !subsector) return null;
-  var existing = findSubsectorRow(sector, subsector);
-  if (existing) return existing;
-  var sheet = getSheet('Sectors');
-  if (!sheet) return null;
-  var id = nextId(sheet, COLS.SECTORS.ID, 'SUB');
-  sheet.appendRow([id, sector, subsector]);
-  var result = { row: sheet.getLastRow(), id: id, sector: sector, subsector: subsector, created: true };
-  fireSubsectorAddedDecision(sector, subsector, id);
-  return result;
-}
-
+// Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row
+// (only sub-sector rows carry an ID that Organisations.Sub-sector ID
+// links against) — raises the "build an org list here?" Decision. Yes
+// on that Decision is what creates the Market-map Task (see
+// acceptPendingDecision -> appendTodoWithSource, workflow 'Market
+// mapping'); No creates nothing.
 function fireSubsectorAddedDecision(sector, subsector, subsectorId) {
   var expansionLabel = sector + ' - ' + subsector;
   var expansionKey = 'EXPAND_SUBSECTOR:' + subsectorId;
@@ -2235,16 +2194,12 @@ function fireSubsectorAddedDecision(sector, subsector, subsectorId) {
   return appendPendingDecision(expansionKey, 'Sub-sector added: ' + expansionLabel,
     'Market map: ' + expansionLabel, 'Sector', subsectorId, 'Market mapping',
     'Build a list of target organisations in this sub-sector?');
-  var label = sector + ' — ' + subsector;
-  appendPendingDecision('SUBSECTOR_MARKETMAP:' + subsectorId, 'Sub-sector added: ' + label,
-    'Market map: ' + label, 'Sector', subsectorId, 'Market mapping',
-    'Build a list of target organisations in this sub-sector?');
 }
 
 // onEdit handler for direct typing on the Sectors tab. Uses the exact
-// same two functions as onboarding/popup capture (fireSectorOnlyTask,
-// findOrCreateSubsector) so manual entry and popup capture can never
-// drift apart.
+// same upsertSectorBranch/fireSectorOnlyTask/fireSubsectorAddedDecision
+// path as onboarding/popup capture, so manual entry and popup capture
+// can never drift apart.
 function onEditSectors(sheet, row, col, newVal) {
   if (row <= 1) return;
   if (col === COLS.SECTORS.STATUS) {
@@ -2275,20 +2230,6 @@ function onEditSectors(sheet, row, col, newVal) {
     }
     if (!subsectorValue) fireSectorOnlyTask(branch);
     return;
-  }
-  if (col === COLS.SECTORS.SECTOR && newVal) {
-    var subCell = sheet.getRange(row, COLS.SECTORS.SUBSECTOR);
-    if (!subCell.getValue()) fireSectorOnlyTask(newVal);
-    return;
-  }
-  if (col === COLS.SECTORS.SUBSECTOR && newVal) {
-    var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
-    if (!sector) { appendNoteFlag(sheet, row, COLS.SECTORS.SECTOR, '[taxonomy] Add Sector before Sub-sector'); return; }
-    var idCell = sheet.getRange(row, COLS.SECTORS.ID);
-    if (idCell.getValue()) return; // already processed — Stage 2/3 owns this ID column exclusively
-    var id = nextId(sheet, COLS.SECTORS.ID, 'SUB');
-    idCell.setValue(id);
-    fireSubsectorAddedDecision(sector, newVal, id);
   }
 }
 
@@ -2355,7 +2296,11 @@ function repairSectorTaskLinks() {
     if (!objId || objId.indexOf('SEC-') === 0 || objId.indexOf('SUB-') === 0) continue;
     var taskText = String(data[i][COLS.TODO.TASK - 1] || '');
     var branch = null;
-    var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:â€”|-)\s*(.+)$/);
+    // v7.7.1: legacy "Market map: Sector <sep> Sub-sector" task text used
+    // either a plain hyphen (fireSubsectorAddedDecision) or an em dash
+    // (rowActionSearchOrgsForSubsector) as separator depending on which
+    // code path created it — match both, not just the hyphen.
+    var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:—|-)\s*(.+)$/);
     if (marketMapMatch) branch = upsertSectorBranch({ sector: marketMapMatch[1], subsector: marketMapMatch[2], source: 'repair_backfill', createExpansionDecision: false });
     else branch = upsertSectorBranch({ sector: objId, source: 'repair_backfill', createExpansionDecision: false });
     if (!branch || !branch.id) continue;
@@ -2403,6 +2348,8 @@ function detectSectorOrphans() {
       if (subId && !existing[subId]) {
         appendNoteFlag(orgSheet, i + 2, COLS.ORGS.NOTES, '[orphaned-sector] Linked Sector/Sub-sector no longer exists');
         count++;
+      } else {
+        clearNoteFlag(orgSheet, i + 2, COLS.ORGS.NOTES, '[orphaned-sector]');
       }
     }
   }
@@ -2412,9 +2359,12 @@ function detectSectorOrphans() {
     for (var t = 0; t < taskData.length; t++) {
       var taskSectorId = String(taskData[t][COLS.TODO.OBJ_ID - 1] || '');
       var taskObjType = String(taskData[t][COLS.TODO.OBJ_TYPE - 1]);
-      if (taskObjType === 'Sector' && taskSectorId && (taskSectorId.indexOf('SEC-') === 0 || taskSectorId.indexOf('SUB-') === 0) && !existing[taskSectorId]) {
+      var isResolvedSectorRef = taskSectorId && (taskSectorId.indexOf('SEC-') === 0 || taskSectorId.indexOf('SUB-') === 0);
+      if (taskObjType === 'Sector' && isResolvedSectorRef && !existing[taskSectorId]) {
         appendNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-sector] Linked Sector/Sub-sector no longer exists');
         count++;
+      } else if (taskObjType === 'Sector' && isResolvedSectorRef) {
+        clearNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-sector]');
       }
     }
   }
@@ -4422,9 +4372,9 @@ function processOnboardingCapture(goal, entryPoint, fields) {
   return processNotSureOnboarding(fields);
 }
 
-// Sector onboarding uses the exact same two functions as manual sheet
-// entry (fireSectorOnlyTask / findOrCreateSubsector) — this is what
-// keeps popup capture and direct typing behaviorally identical.
+// Sector onboarding uses the exact same upsertSectorBranch/
+// fireSectorOnlyTask path as manual sheet entry — this is what keeps
+// popup capture and direct typing behaviorally identical.
 function processSectorOnboarding(fields, source) {
   source = source || 'onboarding';
   var sectors = splitInputList(fields.sectorNames);
