@@ -1058,6 +1058,41 @@ function guardManualJobSystemIdEdit(sheet, row, col, e) {
   return true;
 }
 
+function guardManualPeopleSystemIdEdit(sheet, row, col, e) {
+  var messages = {};
+  messages[COLS.PEOPLE.ID] = 'Person ID is system-generated. Type the Name first.';
+  messages[COLS.PEOPLE.ORG_ID] = 'Org ID is filled from Organisation. Type Organisation instead.';
+  messages[COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT] = 'Follow-ups sent count is maintained by the planner.';
+  if (!messages[col]) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  var msg = messages[col];
+  SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'The Planner', 5);
+  return true;
+}
+
+function personRowHasStateBeyondName(sheet, row) {
+  var values = sheet.getRange(row, 1, 1, HEADERS.People.length).getValues()[0];
+  var cols = [
+    COLS.PEOPLE.ID, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID, COLS.PEOPLE.ROLE,
+    COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE,
+    COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.FOLLOW_UP_SENT, COLS.PEOPLE.OUTREACH_DATE,
+    COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT
+  ];
+  for (var i = 0; i < cols.length; i++) {
+    if (String(values[cols[i] - 1] || '').trim()) return true;
+  }
+  return false;
+}
+
+function guardBlankPersonName(sheet, row, col, newVal, e) {
+  if (col !== COLS.PEOPLE.NAME || String(newVal || '').trim()) return false;
+  if (!personRowHasStateBeyondName(sheet, row)) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[name-required] Name identifies this person; close the person instead of blanking it.');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Name is required for an existing Person row.', 'The Planner', 5);
+  return true;
+}
+
 function guardBlankJobOpportunity(sheet, row, col, newVal, e) {
   if (col !== COLS.JOBS.OPPORTUNITY || String(newVal || '').trim()) return false;
   if (!jobRowHasStateBeyondOpportunity(sheet, row)) return false;
@@ -1234,6 +1269,51 @@ function propagateJobOrganisationChange(jobId, newOrgName, newOrgId, oldOrgName,
       }
     });
   }
+}
+
+function propagatePersonNameChange(personId, newName, oldName) {
+  if (!personId || !newName || !oldName || String(newName) === String(oldName)) return;
+  var conversationsSheet = getSheet('Conversations');
+  var tasksSheet = getSheet('Tasks');
+  var decisionsSheet = getSheet('Decisions');
+
+  if (conversationsSheet && conversationsSheet.getLastRow() > 1) {
+    var convData = conversationsSheet.getRange(2, 1, conversationsSheet.getLastRow() - 1, COLS.INTERACTIONS.PERSON_ID).getValues();
+    convData.forEach(function (row, i) {
+      if (String(row[COLS.INTERACTIONS.PERSON_ID - 1]) === String(personId)) linkInteractionPersonCell(i + 2);
+    });
+  }
+
+  if (tasksSheet && tasksSheet.getLastRow() > 1) {
+    var taskData = tasksSheet.getRange(2, 1, tasksSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    taskData.forEach(function (row, i) {
+      var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+      var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+      if (!(objType === 'Person' && objId === String(personId))) return;
+      var r = i + 2;
+      if (!isTerminalTodoStatus(row[COLS.TODO.STATUS - 1])) {
+        var updatedTask = replaceDisplayText(row[COLS.TODO.TASK - 1], oldName, newName);
+        if (updatedTask !== row[COLS.TODO.TASK - 1]) tasksSheet.getRange(r, COLS.TODO.TASK).setValue(updatedTask);
+      }
+      writeLinkedTo(tasksSheet, r, objType, objId);
+    });
+  }
+
+  if (decisionsSheet && decisionsSheet.getLastRow() > 1) {
+    var decisionData = decisionsSheet.getRange(2, 1, decisionsSheet.getLastRow() - 1, COLS.DECISIONS.DECISION).getValues();
+    decisionData.forEach(function (row, i) {
+      var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+      var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+      if (!(targetType === 'Person' && targetId === String(personId))) return;
+      if (String(row[COLS.DECISIONS.DECISION - 1]) !== 'Pending') return;
+      var r = i + 2;
+      var trigger = replaceDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldName, newName);
+      var task = replaceDisplayText(row[COLS.DECISIONS.TASK - 1], oldName, newName);
+      if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
+      if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
+    });
+  }
+  refreshLinkedContactsDisplay();
 }
 
 function collectIdsForOrg(sheet, idCol, orgIdCol, orgId) {
@@ -3959,6 +4039,8 @@ function onEditJobs(sheet, row, col, newVal, e) {
 }
 
 function onEditPeople(sheet, row, col, newVal, e) {
+  if (guardManualPeopleSystemIdEdit(sheet, row, col, e)) return;
+  if (guardBlankPersonName(sheet, row, col, newVal, e)) return;
   if (col === COLS.PEOPLE.NAME || col === COLS.PEOPLE.ORG) checkPeopleDuplicate(sheet, row);
   if (col === COLS.PEOPLE.ORG) {
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
@@ -3979,6 +4061,8 @@ function onEditPeople(sheet, row, col, newVal, e) {
   }
   if (col === COLS.PEOPLE.NAME && newVal) {
     if (!sheet.getRange(row, COLS.PEOPLE.ID).getValue()) sheet.getRange(row, COLS.PEOPLE.ID).setValue(nextId(sheet, COLS.PEOPLE.ID, 'PER'));
+    var editedPersonId = sheet.getRange(row, COLS.PEOPLE.ID).getValue();
+    if (e && e.oldValue) propagatePersonNameChange(editedPersonId, String(newVal), String(e.oldValue));
     if (!sheet.getRange(row, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).getValue()) sheet.getRange(row, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).setValue(0);
     if (!sheet.getRange(row, COLS.PEOPLE.STAGE).getValue()) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Identified');
     var orgName = sheet.getRange(row, COLS.PEOPLE.ORG).getValue();
@@ -9196,13 +9280,28 @@ function syncJobsPeopleHealthFlags() {
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() >= 2) {
     var people = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, HEADERS.People.length).getValues();
+    var personIdRows = {};
+    people.forEach(function (personRow, idx) {
+      var personId = String(personRow[COLS.PEOPLE.ID - 1] || '');
+      if (!personId) return;
+      if (!personIdRows[personId]) personIdRows[personId] = [];
+      personIdRows[personId].push(idx + 2);
+    });
     for (var p = 0; p < people.length; p++) {
-      var personOrgId = String(people[p][COLS.PEOPLE.ORG_ID - 1] || '');
-      if (personOrgId && !orgIds[personOrgId]) {
-        appendNoteFlag(peopleSheet, p + 2, COLS.PEOPLE.NOTES, '[orphaned-org] Linked Organisation no longer exists');
+      var pr = p + 2;
+      var personIdForHealth = String(people[p][COLS.PEOPLE.ID - 1] || '');
+      if (personIdForHealth && personIdRows[personIdForHealth] && personIdRows[personIdForHealth].length > 1) {
+        appendNoteFlag(peopleSheet, pr, COLS.PEOPLE.NOTES, '[duplicate-person-id] Also used on row(s): ' + personIdRows[personIdForHealth].filter(function (r) { return r !== pr; }).join(', '));
         count++;
       } else {
-        clearNoteFlag(peopleSheet, p + 2, COLS.PEOPLE.NOTES, '[orphaned-org]');
+        clearNoteFlag(peopleSheet, pr, COLS.PEOPLE.NOTES, '[duplicate-person-id]');
+      }
+      var personOrgId = String(people[p][COLS.PEOPLE.ORG_ID - 1] || '');
+      if (personOrgId && !orgIds[personOrgId]) {
+        appendNoteFlag(peopleSheet, pr, COLS.PEOPLE.NOTES, '[orphaned-org] Linked Organisation no longer exists');
+        count++;
+      } else {
+        clearNoteFlag(peopleSheet, pr, COLS.PEOPLE.NOTES, '[orphaned-org]');
       }
     }
   }
