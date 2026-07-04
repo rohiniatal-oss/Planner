@@ -181,9 +181,9 @@ var HEADERS = {
   ],
   Jobs: [
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
-    'Deadline', 'Application status', 'Applied date',
+    'Deadline', 'Application status', 'Submitted date',
     'Linked contacts (IDs)', 'People for this application',
-    'Review date', 'Response received', 'Outcome', 'Notes'
+    'Next response check', 'Response received', 'Outcome', 'Notes'
   ],
   Interactions: [
     'Interaction ID', 'Date', 'Person ID', 'Person', 'Organisation',
@@ -2462,7 +2462,7 @@ function handleJobTodoCompletion(todo, options) {
     var submittedDate = options.realDate ? parseDateOr(options.realDate) : today();
     setJobStatus(todo.objId, 'Submitted', { source: options.source || 'todo-completion', realDate: submittedDate });
     updateJobSubmittedDates(todo.objId, submittedDate);
-    if (!options.realDate) appendNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[submitted-date-defaulted] Applied date defaulted to today');
+    if (!options.realDate) appendNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[submitted-date-defaulted] Submitted date defaulted to today');
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
@@ -6395,7 +6395,7 @@ function buildSetupHtml() {
     'var forms={' +
     ' sectors:{title:"Add your first broad sector(s)",fields:[{k:"sectorNames",l:"Broad sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
-    ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
+    ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
@@ -6456,7 +6456,7 @@ function setupChecklistFor(entryPoint, fields) {
   }
   var map = {
     jobs: [{ alwaysDone: true, label: 'Review the start-application decision', text: 'Review the start-application decision', tab: 'Home', notes: 'The captured job queues a Home decision before application work is created.' }],
-    applications: [{ workflow: 'Check application response', label: 'Check application response', text: 'Check application response', tab: 'Tasks', notes: 'Due from the real applied date + 12 days.' }],
+    applications: [{ workflow: 'Check application response', label: 'Check application response', text: 'Check application response', tab: 'Tasks', notes: 'Due from the submitted date + 12 days.' }],
     interviews: [{ workflow: 'Interview scheduling', altWorkflows: ['Interview prep (Domain scoping)', 'Interview prep (Fit case)', 'Day-before review'], label: 'Prepare for the scheduled interview', text: 'Prepare for the scheduled interview', tab: 'Tasks', notes: 'The interview round owns prep timing and follow-up.' }],
     people: [{ workflow: 'Outreach', altWorkflows: ['Send outreach', 'Contact follow-up', 'Reply and arrange conversation'], label: 'Work the next people action', text: 'Work the next people action', tab: 'Tasks', notes: 'Draft outreach, follow up, or arrange a conversation depending on stage.' }],
     // Org onboarding never creates a Task (it only classifies Organisations
@@ -7347,8 +7347,8 @@ var HEADER_GUIDANCE = {
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
-    'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Applied date': 'backend submitted date for response checks',
-    'Linked contacts (IDs)': 'system', 'People for this application': 'people linked through application/referral actions', 'Review date': 'backend follow-up date',
+    'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Submitted date': 'date you submitted the application',
+    'Linked contacts (IDs)': 'system', 'People for this application': 'people linked through application/referral actions', 'Next response check': 'system date for checking application response',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
     'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
     'Notes': 'URL/source and prep notes'
@@ -7388,7 +7388,6 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     'auto': 'Filled automatically',
     'auto from person': 'Filled from Person when known',
     'backend date for response checks': 'Used for response checks',
-    'backend follow-up date': 'Next response check date',
     'cascade type': 'Suggested next-step type'
   };
   if (exact[h]) h = exact[h];
