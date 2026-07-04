@@ -125,7 +125,7 @@ var COLS = {
 
   JOBS: {
     ID: 1, OPPORTUNITY: 2, ORG: 3, ORG_ID: 4,
-    STATUS: 5, DEADLINE: 6, APPLIED_DATE: 7,
+    DEADLINE: 5, STATUS: 6, APPLIED_DATE: 7,
     CONTACTS_IDS: 8, CONTACTS_DISPLAY: 9,
     REVIEW_DATE: 10, RESPONSE: 11, OUTCOME: 12, NOTES: 13
   },
@@ -181,7 +181,7 @@ var HEADERS = {
   ],
   Jobs: [
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
-    'Status', 'Deadline', 'Applied date',
+    'Deadline', 'Status', 'Applied date',
     'Linked contacts (IDs)', 'Linked contacts (display)',
     'Review date', 'Response received', 'Outcome', 'Notes'
   ],
@@ -6533,7 +6533,7 @@ function captureConfig(captureType) {
     'Add/update job': {
       title: 'Add/update job',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
-      { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' }, { k: 'deadline', l: 'Deadline, if any', t: 'date' },
+      { k: 'deadline', l: 'Deadline, if any', t: 'date' }, { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' },
       { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
       { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes, blank: true, showIf: { k: 'status', v: 'Interviewing' } },
       { k: 'interviewDate', l: 'Interview date, if known', t: 'date', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain, blank: true, showIf: { k: 'status', v: 'Interviewing' } }]
@@ -6749,7 +6749,7 @@ var HEADER_GUIDANCE = {
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
-    'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
+    'Deadline': 'needed for Want to apply', 'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
     'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
@@ -6867,7 +6867,7 @@ var COLUMN_WIDTHS = {
   'Sectors': { 2: 190, 4: 260, 5: 100, 6: 300 },
   'Organisations': { 2: 220, 4: 170, 6: 220, 7: 70, 8: 120, 9: 135, 10: 165, 13: 300 },
   'People': { 2: 190, 3: 200, 5: 170, 6: 150, 7: 175, 8: 125, 9: 120, 12: 135, 13: 300 },
-  'Jobs': { 2: 260, 3: 200, 5: 145, 6: 120, 9: 220, 11: 130, 12: 170, 13: 320 },
+  'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 320, 8: 160 },
   'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
@@ -7287,10 +7287,33 @@ function migrateOrganisationSectorIdSchema() {
   return true;
 }
 
+function migrateJobsDeadlineStatusSchema() {
+  var sheet = getSheet('Jobs');
+  if (!sheet || sheet.getLastRow() < 1) return false;
+  var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), HEADERS.Jobs.length)).getValues()[0].map(String);
+  if (headers[4] === 'Deadline' && headers[5] === 'Status') return false;
+  if (!(headers[4] === 'Status' && headers[5] === 'Deadline')) return false;
+
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (rowCount > 0) {
+    var values = sheet.getRange(2, 5, rowCount, 2).getValues();
+    var swapped = values.map(function (row) { return [row[1], row[0]]; });
+    sheet.getRange(2, 5, rowCount, 2).setValues(swapped);
+  }
+  sheet.getRange(1, 1, 1, HEADERS.Jobs.length).setValues([HEADERS.Jobs]);
+  return true;
+}
+
 function migrateSectorIdSchema() {
   var migratedSectors = migrateSectorsTwoIdSchema();
   var migratedOrgs = migrateOrganisationSectorIdSchema();
   return migratedSectors || migratedOrgs;
+}
+
+function migrateWorkbookSchema() {
+  var migratedSectorsOrOrgs = migrateSectorIdSchema();
+  var migratedJobs = migrateJobsDeadlineStatusSchema();
+  return migratedSectorsOrOrgs || migratedJobs;
 }
 
 // =============================================================
@@ -8314,7 +8337,7 @@ function repairAllTabs() {
 
 function repairAllTabsImpl() {
   migrateLegacyTabs();
-  migrateSectorIdSchema();
+  migrateWorkbookSchema();
 
   CANONICAL_TAB_ORDER.forEach(function (name) {
     var headerKey = SHEET_TO_HEADER_KEY[name];
@@ -8370,6 +8393,12 @@ function dailyMaintenance() {
   // interleave with a user edit mid-cascade.
   withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
+    if (migrateJobsDeadlineStatusSchema()) {
+      applySheetDropdowns('Jobs');
+      colorCodeManualFields();
+      applyStatusColorCoding();
+      applyColumnWidths();
+    }
     checkMorningCarryForward();
     recalculateCommitmentClasses();
     backfillTaskHelperColumns();
