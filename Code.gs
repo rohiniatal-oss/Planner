@@ -2465,7 +2465,9 @@ function handleJobTodoCompletion(todo, options) {
     setJobStatus(todo.objId, 'Submitted', { source: options.source || 'todo-completion', realDate: submittedDate });
     updateJobSubmittedDates(todo.objId, submittedDate);
     if (!options.realDate) appendNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[submitted-date-defaulted] Submitted date defaulted to today');
-  } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
+  } else if (todo.workflow === 'Check application response') {
+    if (!options.responseCheckHandled) createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
+  } else if (todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
     if (String(todo.task || '').indexOf('Find referral contact:') !== 0) return;
@@ -4915,6 +4917,13 @@ function onEditTasks(sheet, row, col, newVal, e) {
       runSubmitApplicationPopup(editedTodo.id);
       return;
     }
+    if (isApplicationResponseCheckTask(editedTodo)) {
+      var priorResponseStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
+      sheet.getRange(row, COLS.TODO.STATUS).setValue(priorResponseStatus);
+      sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
+      runApplicationResultPopup(editedTodo.id);
+      return;
+    }
     if (isReferralSearchContactTask(editedTodo)) {
       var priorReferralStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
       sheet.getRange(row, COLS.TODO.STATUS).setValue(priorReferralStatus);
@@ -5792,6 +5801,11 @@ function onEditToday(sheet, row, col, newVal) {
       runSubmitApplicationPopup(String(todoId));
       return;
     }
+    if (isApplicationResponseCheckTask(todo)) {
+      sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
+      runApplicationResultPopup(String(todoId));
+      return;
+    }
     if (isReferralSearchContactTask(todo)) {
       sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
       runReferralSearchResultPopup(String(todoId));
@@ -6040,13 +6054,16 @@ var HOME_PLAN_STATUS_ROW = 16;         // "Ready — N tasks, M minutes." / "Not
 var HOME_PLAN_START_ROW = 17;          // "Start working ▸" HYPERLINK
 var HOME_PLAN_SUBLINE_ROW = 18;        // small muted "<N> tasks remain in your master queue."
 
-var HOME_UPCOMING_HEADER_ROW = 20;
-var HOME_UPCOMING_FIRST_ROW = 21;      // 21..25, 5 rows max
+var HOME_APPLICATIONS_HEADER_ROW = 20;
+var HOME_APPLICATIONS_FIRST_ROW = 21;  // 21..24, 4 rows max
 
-var HOME_REFRESH_ROW = 27;             // small utility row
+var HOME_UPCOMING_HEADER_ROW = 26;
+var HOME_UPCOMING_FIRST_ROW = 27;      // 27..31, 5 rows max
+
+var HOME_REFRESH_ROW = 33;             // small utility row
 var HOME_REFRESH_COL = 2;
 
-var HOME_LAST_REFRESHED_ROW = 29;
+var HOME_LAST_REFRESHED_ROW = 35;
 
 var SETUP_PROP_KEY = 'setupProfile';
 
@@ -6225,6 +6242,34 @@ function collectUpcomingItems(limit) {
   return items.slice(0, limit);
 }
 
+function collectOpenApplications(limit) {
+  limit = limit || 4;
+  var sheet = getSheet('Jobs');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.NOTES).getValues();
+  var items = [];
+  data.forEach(function (row) {
+    var status = normalizeJobStatus(row[COLS.JOBS.STATUS - 1]);
+    if (status !== 'In progress' && status !== 'Submitted') return;
+    var title = String(row[COLS.JOBS.OPPORTUNITY - 1] || '').trim();
+    var org = String(row[COLS.JOBS.ORG - 1] || '').trim();
+    var deadline = row[COLS.JOBS.DEADLINE - 1];
+    var result = normalizeJobOutcome(row[COLS.JOBS.OUTCOME - 1]);
+    var nextCheck = row[COLS.JOBS.REVIEW_DATE - 1];
+    var sortDate = deadline || nextCheck || addDays(today(), 365);
+    var detail = status;
+    if (status === 'Submitted') detail = result || 'Submitted';
+    if (status === 'In progress' && deadline) detail += ' · due ' + formatDateFriendly(deadline);
+    if (status === 'Submitted' && nextCheck && (result || '') === 'Waiting') detail += ' · check ' + formatDateFriendly(nextCheck);
+    items.push({ title: title, org: org, status: status, detail: detail, date: new Date(sortDate) });
+  });
+  items.sort(function (a, b) {
+    if (a.status !== b.status) return a.status === 'In progress' ? -1 : 1;
+    return a.date - b.date;
+  });
+  return items.slice(0, limit);
+}
+
 function refreshHome() {
   var sheet = getSheet('Home');
   if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Home', 0);
@@ -6311,6 +6356,20 @@ function refreshHome() {
     sheet.getRange(HOME_PLAN_SUBLINE_ROW, 7)
       .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Guide")')
       .setFontSize(9).setFontColor('#01696F');
+  }
+
+  // --- Open applications — current state without turning Home into Jobs ---
+  sheet.getRange(HOME_APPLICATIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Open applications').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  var applications = collectOpenApplications(4);
+  if (!applications.length) {
+    sheet.getRange(HOME_APPLICATIONS_FIRST_ROW, 2, 1, 5).merge().setValue('No open applications.').setFontColor('#5F625E');
+  } else {
+    applications.forEach(function (app, idx) {
+      var r = HOME_APPLICATIONS_FIRST_ROW + idx;
+      sheet.getRange(r, 2, 1, 2).merge().setValue(app.title || '(Untitled opportunity)').setFontWeight('bold').setFontColor('#1B474D');
+      sheet.getRange(r, 4).setValue(app.org || '');
+      sheet.getRange(r, 5, 1, 2).merge().setValue(app.detail || app.status).setFontColor('#5F625E');
+    });
   }
 
   // --- Upcoming (§1.5) — read-only, no cascades ---
@@ -6973,8 +7032,8 @@ function captureConfig(captureType) {
       title: 'Application update',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, blank: true, req: true },
-      { k: 'appliedDate', l: 'Submitted date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] },
-      { k: 'outcome', l: 'Application result', t: 'select', o: jobOutcomes, blank: true, showIfAny: [{ k: 'response', v: 'Yes' }, { k: 'response', v: 'No' }] }]
+      { k: 'appliedDate', l: 'Submitted date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] },
+      { k: 'outcome', l: 'Application result', t: 'select', o: jobOutcomes, blank: true, showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }]
     },
     'Add/update person': {
       title: 'Add/update person',
@@ -7155,6 +7214,10 @@ function isReferralSearchContactTask(todo) {
     String(todo.task || '').indexOf('Find referral contact:') === 0;
 }
 
+function isApplicationResponseCheckTask(todo) {
+  return !!todo && todo.workflow === 'Check application response' && todo.objType === 'Job';
+}
+
 function buildReferralSearchResultHtml(todoId) {
   var todo = getTodoById(todoId);
   var job = todo ? getJobRowById(todo.objId) : null;
@@ -7229,6 +7292,72 @@ function completeReferralSearchResultFromPopup(payload) {
       return popupExceptionResult('completeReferralSearchResultFromPopup', err);
     }
   }, { label: 'completeReferralSearchResultFromPopup', timeoutMs: 30000 });
+}
+
+function buildApplicationResultHtml(todoId) {
+  var todo = getTodoById(todoId);
+  var job = todo ? getJobRowById(todo.objId) : null;
+  if (!todo || !job || !isApplicationResponseCheckTask(todo)) return '<p>Application response task not found.</p>';
+  var data = {
+    todoId: todo.id,
+    title: job.title,
+    org: job.org,
+    current: normalizeJobOutcome(job.outcome) || 'Waiting',
+    outcomes: DROPDOWNS.JOB_OUTCOME
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Application result</h2><p id="jobLine"></p>' +
+    '<label>Result<select id="result"></select></label>' +
+    '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;' +
+    'var result=document.getElementById("result");data.outcomes.forEach(function(o){var opt=document.createElement("option");opt.value=o;opt.textContent=o;result.appendChild(opt);});result.value=data.current;' +
+    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Home.";}).completeApplicationResultFromPopup({todoId:data.todoId,outcome:result.value});}</script>';
+}
+
+function runApplicationResultPopup(todoId) {
+  var html = HtmlService.createHtmlOutput(buildApplicationResultHtml(todoId)).setWidth(460).setHeight(300).setTitle('Application result');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Application result');
+}
+
+function completeApplicationResultFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var todo = getTodoById(payload.todoId);
+      var job = todo ? getJobRowById(todo.objId) : null;
+      if (!todo || !job || !isApplicationResponseCheckTask(todo)) return failResult('I could not find that response-check task.', '', 'TASK_NOT_FOUND');
+      if (!isJobSubmittedForResponseTracking(job.id)) return failResult('Set Application status to Submitted before recording a result.', '', 'NOT_SUBMITTED');
+      var outcome = normalizeJobOutcome(payload.outcome);
+      if (!outcome) return failResult('Choose Waiting, Interview invite, or Rejected.', 'outcome', 'INVALID_OUTCOME');
+
+      completeTodo(todo.id, 'Done', { source: 'application-result-popup', responseCheckHandled: true });
+      var sheet = getSheet('Jobs');
+      job = getJobRowById(job.id);
+      if (!job) return failResult('I could not find the job after updating the task.', '', 'JOB_NOT_FOUND');
+      if (outcome === 'Waiting') {
+        recordJobWaitingForResponse(job.id, { source: 'application-result-popup' });
+      } else {
+        sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+        sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(outcome);
+        routeJobOutcome(job.id, outcome, { source: 'application-result-popup' });
+      }
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      return okResult(outcome === 'Waiting' ? 'Still waiting. Next response check scheduled.' : 'Application result recorded: ' + outcome + '.');
+    } catch (err) {
+      return popupExceptionResult('completeApplicationResultFromPopup', err);
+    }
+  }, { label: 'completeApplicationResultFromPopup', timeoutMs: 30000 });
 }
 
 function buildSubmitApplicationHtml(todoId) {
