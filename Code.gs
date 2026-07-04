@@ -6138,6 +6138,10 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
+      sheet.getRange(2, COLS.ORGS.KNOWN_PEOPLE, maxRow, 1).clearDataValidations();
+      sheet.getRange(2, COLS.ORGS.OPEN_OPPS, maxRow, 1).clearDataValidations();
+      sheet.getRange(2, COLS.ORGS.LAST_CHECKED, maxRow, 1).clearDataValidations();
+      sheet.getRange(2, COLS.ORGS.NEXT_CHECK, maxRow, 1).clearDataValidations();
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER);
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
