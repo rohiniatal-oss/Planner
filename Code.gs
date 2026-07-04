@@ -6997,7 +6997,8 @@ function buildMenu() {
 // it" toast that fired even when the trigger was already present.
 function onOpen() {
   buildMenu();
-  populateToday();
+  refreshHome();
+  renderTodayDecisionCards();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var editReady = false;
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); }
