@@ -1984,6 +1984,8 @@ function updateJobSubmittedDates(jobId, submittedDate) {
   sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
   syncOpenJobResponseCheckDate(jobId, review);
   if (normalizeJobStatus(sheet.getRange(job.row, COLS.JOBS.STATUS).getValue()) === 'Submitted' && !sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) {
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('No');
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Waiting');
     appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
       'Check application response', 'Not started', review, '15 min', 'Submitted on ' + formatDateHuman(applied), 'Auto-triggered');
   }
@@ -2717,12 +2719,17 @@ function createJobResponseOutcomeDecision(jobId, reason) {
     'Choose the result on Jobs: waiting / interview invite / rejected.');
 }
 
+function isJobSubmittedForResponseTracking(jobId) {
+  var job = getJobRowById(jobId);
+  return !!job && normalizeJobStatus(job.status) === 'Submitted';
+}
+
 function recordJobWaitingForResponse(jobId, opts) {
   opts = opts || {};
   var job = getJobRowById(jobId);
-  if (!job) return false;
+  if (!job || normalizeJobStatus(job.status) !== 'Submitted') return false;
   var sheet = getSheet('Jobs');
-  var baseDate = opts.realDate ? parseDateOr(opts.realDate) : today();
+  var baseDate = opts.baseDate ? parseDateOr(opts.baseDate) : today();
   var nextCheck = addDays(baseDate, 7);
   sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('No');
   sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Waiting');
@@ -2788,12 +2795,20 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   if (newStatus === 'Not started') {
     autoDismissPendingDecisionByKey(applicationPlanDecisionKey(jobId), 'Application is not in progress');
     clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).clearContent();
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).clearContent();
+    sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Application is not submitted', ['Check application response']);
     return;
   }
   if (newStatus === 'In progress') {
     var decisionId = queueApplicationPlanDecision(job);
     if (decisionId) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan] Use Home decision to plan application tasks.');
     else clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).clearContent();
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).clearContent();
+    sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Application is not submitted', ['Check application response']);
     return;
   }
   if (newStatus === 'Submitted') {
@@ -2801,7 +2816,8 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
     var review = addDays(applied, 12);
     sheet.getRange(job.row, COLS.JOBS.APPLIED_DATE).setValue(applied);
     sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
-    if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('');
+    if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('No');
+    if (!sheet.getRange(job.row, COLS.JOBS.OUTCOME).getValue()) sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Waiting');
     autoDismissPendingForTarget('Job', jobId, 'Application submitted');
     clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job already applied', ['Application preparation', 'Application blocker', 'Submit application']);
@@ -3852,6 +3868,12 @@ function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'Yes') {
     var responseJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(responseJobId);
+    if (!isJobSubmittedForResponseTracking(responseJobId)) {
+      restoreOrClearEditedCell(sheet, row, col, e);
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[response-before-submit] Submit the application before recording a response.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Submit the application before recording a response.', 'The Planner', 5);
+      return;
+    }
     createJobResponseOutcomeDecision(responseJobId, 'Response received for ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue());
     renderTodayDecisionCards();
     refreshHome();
@@ -3860,6 +3882,12 @@ function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'No') {
     var waitingJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(waitingJobId);
+    if (!isJobSubmittedForResponseTracking(waitingJobId)) {
+      restoreOrClearEditedCell(sheet, row, col, e);
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[waiting-before-submit] Submit the application before tracking response checks.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Submit the application before marking it Waiting.', 'The Planner', 5);
+      return;
+    }
     recordJobWaitingForResponse(waitingJobId, { source: 'job-response' });
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
@@ -3871,6 +3899,12 @@ function onEditJobs(sheet, row, col, newVal, e) {
     var normalizedOutcome = normalizeJobOutcome(newVal);
     if (!normalizedOutcome) {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[invalid-value] Job Outcome "' + newVal + '" rejected');
+      return;
+    }
+    if (!isJobSubmittedForResponseTracking(outcomeJobId)) {
+      restoreOrClearEditedCell(sheet, row, col, e);
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[result-before-submit] Submit the application before recording an application result.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Submit the application before recording an application result.', 'The Planner', 5);
       return;
     }
     if (normalizedOutcome !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
@@ -7353,15 +7387,24 @@ function processJobCapture(fields) {
   if (fields.outcome) {
     var normalizedOutcome = normalizeJobOutcome(fields.outcome);
     if (!normalizedOutcome) return failResult('Pick a valid job outcome.', 'outcome', 'INVALID_OUTCOME');
+    if (!isJobSubmittedForResponseTracking(jobId)) {
+      return failResult('Set Application status to Submitted before recording an application result.', 'status', 'RESULT_BEFORE_SUBMIT');
+    }
     sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
-    if (normalizedOutcome === 'Waiting') recordJobWaitingForResponse(jobId, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
+    if (normalizedOutcome === 'Waiting') recordJobWaitingForResponse(jobId, { source: 'capture-outcome' });
     else {
       sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
       routeJobOutcome(jobId, normalizedOutcome, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
     }
   }
-  if (fields.response === 'No' && !fields.outcome) recordJobWaitingForResponse(jobId, { source: 'capture-response', realDate: fields.appliedDate || '' });
-  if (fields.response === 'Yes' && !fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
+  if (fields.response === 'No' && !fields.outcome) {
+    if (!isJobSubmittedForResponseTracking(jobId)) return failResult('Set Application status to Submitted before recording a response.', 'status', 'RESPONSE_BEFORE_SUBMIT');
+    recordJobWaitingForResponse(jobId, { source: 'capture-response' });
+  }
+  if (fields.response === 'Yes' && !fields.outcome) {
+    if (!isJobSubmittedForResponseTracking(jobId)) return failResult('Set Application status to Submitted before recording a response.', 'status', 'RESPONSE_BEFORE_SUBMIT');
+    createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
+  }
   return okResult((exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
 // =============================================================
