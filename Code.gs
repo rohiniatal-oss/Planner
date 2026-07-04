@@ -1093,6 +1093,16 @@ function guardBlankPersonName(sheet, row, col, newVal, e) {
   return true;
 }
 
+function guardPersonNameBeforeOtherFields(sheet, row, col, newVal, e) {
+  if (col === COLS.PEOPLE.ID || col === COLS.PEOPLE.NAME) return false;
+  if (!String(newVal || '').trim()) return false;
+  if (String(sheet.getRange(row, COLS.PEOPLE.NAME).getValue() || '').trim()) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[missing-name] Add Name before filling the rest of this Person row.');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Add Name before filling other Person fields.', 'The Planner', 5);
+  return true;
+}
+
 function guardBlankJobOpportunity(sheet, row, col, newVal, e) {
   if (col !== COLS.JOBS.OPPORTUNITY || String(newVal || '').trim()) return false;
   if (!jobRowHasStateBeyondOpportunity(sheet, row)) return false;
@@ -1309,6 +1319,52 @@ function propagatePersonNameChange(personId, newName, oldName) {
       var r = i + 2;
       var trigger = replaceDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldName, newName);
       var task = replaceDisplayText(row[COLS.DECISIONS.TASK - 1], oldName, newName);
+      if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
+      if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
+    });
+  }
+  refreshLinkedContactsDisplay();
+}
+
+function propagatePersonOrganisationChange(personId, newOrgName, newOrgId, oldOrgName, oldOrgId) {
+  if (!personId) return;
+  var conversationsSheet = getSheet('Conversations');
+  var tasksSheet = getSheet('Tasks');
+  var decisionsSheet = getSheet('Decisions');
+
+  if (conversationsSheet && conversationsSheet.getLastRow() > 1) {
+    var convData = conversationsSheet.getRange(2, 1, conversationsSheet.getLastRow() - 1, COLS.INTERACTIONS.PERSON_ID).getValues();
+    convData.forEach(function (row, i) {
+      if (String(row[COLS.INTERACTIONS.PERSON_ID - 1]) === String(personId)) linkInteractionPersonCell(i + 2);
+    });
+  }
+
+  if (tasksSheet && tasksSheet.getLastRow() > 1) {
+    var taskData = tasksSheet.getRange(2, 1, tasksSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    taskData.forEach(function (row, i) {
+      var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+      var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+      if (!(objType === 'Person' && objId === String(personId))) return;
+      var r = i + 2;
+      if (!isTerminalTodoStatus(row[COLS.TODO.STATUS - 1])) {
+        tasksSheet.getRange(r, COLS.TODO.ORG).setValue(newOrgName || '');
+        var updatedTask = replaceDisplayText(row[COLS.TODO.TASK - 1], oldOrgName, newOrgName);
+        if (updatedTask !== row[COLS.TODO.TASK - 1]) tasksSheet.getRange(r, COLS.TODO.TASK).setValue(updatedTask);
+      }
+      writeLinkedTo(tasksSheet, r, objType, objId);
+    });
+  }
+
+  if (decisionsSheet && decisionsSheet.getLastRow() > 1) {
+    var decisionData = decisionsSheet.getRange(2, 1, decisionsSheet.getLastRow() - 1, COLS.DECISIONS.DECISION).getValues();
+    decisionData.forEach(function (row, i) {
+      var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+      var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+      if (!(targetType === 'Person' && targetId === String(personId))) return;
+      if (String(row[COLS.DECISIONS.DECISION - 1]) !== 'Pending') return;
+      var r = i + 2;
+      var trigger = replaceDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldOrgName, newOrgName);
+      var task = replaceDisplayText(row[COLS.DECISIONS.TASK - 1], oldOrgName, newOrgName);
       if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
       if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
     });
@@ -4041,22 +4097,49 @@ function onEditJobs(sheet, row, col, newVal, e) {
 function onEditPeople(sheet, row, col, newVal, e) {
   if (guardManualPeopleSystemIdEdit(sheet, row, col, e)) return;
   if (guardBlankPersonName(sheet, row, col, newVal, e)) return;
+  if (guardPersonNameBeforeOtherFields(sheet, row, col, newVal, e)) return;
   if (col === COLS.PEOPLE.NAME || col === COLS.PEOPLE.ORG) checkPeopleDuplicate(sheet, row);
   if (col === COLS.PEOPLE.ORG) {
+    var oldPersonOrgName = e && e.oldValue ? String(e.oldValue) : '';
+    var oldPersonOrgId = String(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue() || '');
+    var personNameForOrg = String(sheet.getRange(row, COLS.PEOPLE.NAME).getValue() || '').trim();
+    var typedOrgForPerson = String(newVal || '').trim();
+    var personIdForOrg = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
+    sheet.getRange(row, COLS.PEOPLE.ID).setValue(personIdForOrg);
+    if (!typedOrgForPerson) {
+      sheet.getRange(row, COLS.PEOPLE.ORG_ID).clearContent();
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation to activate outreach tasks.');
+      if (oldPersonOrgName || oldPersonOrgId) propagatePersonOrganisationChange(personIdForOrg, '', '', oldPersonOrgName, oldPersonOrgId);
+      refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
+      return;
+    }
+    if (!personNameForOrg) {
+      sheet.getRange(row, COLS.PEOPLE.ORG_ID).clearContent();
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[missing-name] Add Name before Organisation.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Add Name before Organisation on People.', 'The Planner', 5);
+      return;
+    }
+    clearNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[missing-name]');
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
-    refreshLinkedContactsDisplay();
+    var newPersonOrgName = String(sheet.getRange(row, COLS.PEOPLE.ORG).getValue() || '');
+    var newPersonOrgId = String(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue() || '');
+    var personHadPriorOrg = !!(oldPersonOrgName || oldPersonOrgId);
+    var personOrgChanged = newPersonOrgName && (!personHadPriorOrg || oldPersonOrgName !== newPersonOrgName || oldPersonOrgId !== newPersonOrgId);
+    if (personOrgChanged) propagatePersonOrganisationChange(personIdForOrg, newPersonOrgName, newPersonOrgId, oldPersonOrgName, oldPersonOrgId);
+    var currentPersonStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
+    if (!sheet.getRange(row, COLS.PEOPLE.STAGE).getValue()) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(currentPersonStage);
+    var routedPersonOrgEvidence = promoteOrgForLivePerson(newPersonOrgId, currentPersonStage);
     var pNotes = String(sheet.getRange(row, COLS.PEOPLE.NOTES).getValue() || '');
     if (pNotes.indexOf('[pending-org]') !== -1) {
       clearNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org]');
-      var pId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
-      sheet.getRange(row, COLS.PEOPLE.ID).setValue(pId);
       var pStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(pStage);
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), pStage);
-      firePersonStageChanged(pId, '', pStage, { source: 'manual-org-followup' });
-      refreshDerivedPlanningSurfaces();
-      requestHomeRefresh();
+      firePersonStageChanged(personIdForOrg, '', pStage, { source: 'manual-org-followup' });
     }
+    if (personOrgChanged || routedPersonOrgEvidence) refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.PEOPLE.NAME && newVal) {
