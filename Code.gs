@@ -3574,11 +3574,17 @@ function onEditTasks(sheet, row, col, newVal) {
 // their own label (same bug pattern as the old B3 update-type cell: the
 // label write was always clobbered by the value write two lines later,
 // so "Priority / focus"/"Available minutes"/"Energy" never actually
-// rendered). Column D matches the label/value split row 7 already uses
-// (B7 label, D7 value).
+// rendered). Column D holds the value next to each row's label.
 var TODAY_CELLS = {
   PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6'
 };
+
+// Checkbox-as-button, same convention as HOME_REFRESH_ROW/TODAY_ENDOFDAY_ROW:
+// a self-resetting checkbox that calls populateToday() on tick, so refreshing
+// Today's plan is a visible on-sheet action rather than menu-only.
+var TODAY_REFRESH_ROW = 7;
+var TODAY_REFRESH_COL = 2;
+
 var TODAY_TABLE_HEADER_ROW = 10;
 var TODAY_TABLE_FIRST_ROW = 11;
 var TODAY_TABLE_LAST_ROW = 40;
@@ -3650,6 +3656,10 @@ function bootstrapToday() {
   sheet.getRange('B6').setValue('Energy').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
+
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
+    .setValue('✔ Tick to refresh Today’s plan').setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
@@ -4327,6 +4337,11 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 
 function onEditToday(sheet, row, col, newVal) {
   if ((row === 4 || row === 5 || row === 6) && col === 4) { populateToday(); return; }
+  if (row === TODAY_REFRESH_ROW && col === TODAY_REFRESH_COL && newVal === true) {
+    sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false);
+    populateToday();
+    return;
+  }
   if (row === TODAY_ENDOFDAY_ROW && col === TODAY_ENDOFDAY_COL && newVal === true) {
     sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL).setValue(false);
     endOfDayReconcile();
