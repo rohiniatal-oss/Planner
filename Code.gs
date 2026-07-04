@@ -267,7 +267,7 @@ var DROPDOWNS = {
   ORG_STATUS: ['Mapped', 'Active', 'Dormant', 'Archived'],
 
   PERSON_STAGE: ['Identified', 'Outreach sent', 'Engaged', 'Conversation scheduled', 'Conversation completed', 'Nurture', 'Closed'],
-  PERSON_REL_TYPE: ['Alumni', 'Warm intro', 'Cold', 'Recruiter', 'Other'],
+  PERSON_REL_TYPE: ['Ex-colleague / work history', 'Alumni / institutional', 'Warm network', 'Professional community', 'Recruiter / intermediary', 'Field-visible person', 'Cold target search', 'Other'],
   YES_NO: ['Yes', 'No'],
 
   JOB_STATUS: ['Not started', 'In progress', 'Submitted', 'Closed'],
@@ -6717,7 +6717,7 @@ function buildSetupHtml() {
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
-    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
+    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -7221,7 +7221,7 @@ function captureConfig(captureType) {
     'Add/update person': {
       title: 'Add/update person',
       fields: [{ k: 'name', l: 'Name', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'role', l: 'Role/title, if known', t: 'text' },
-      { k: 'relType', l: 'Relationship type', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
+      { k: 'relType', l: 'Source / relationship', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
       { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
       { k: 'outreachDate', l: 'When did you reach out?', t: 'date', showIf: { k: 'reachedOut', v: 'Yes' } },
       { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Engaged / arranging next step', 'Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
@@ -7754,7 +7754,7 @@ var HEADER_GUIDANCE = {
   },
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
-    'Role': 'optional', 'Relationship type': 'optional',
+    'Role': 'optional', 'Relationship type': 'source / relationship context; does not route by itself',
     'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed',
     'Follow-up date': 'auto or manual',
     'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
