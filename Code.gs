@@ -2230,7 +2230,8 @@ function sectorBranchFromRow(rowNumber, row) {
   var subsector = String(row[COLS.SECTORS.SUBSECTOR - 1] || '');
   var sectorId = String(row[COLS.SECTORS.ID - 1] || '');
   var subsectorId = String(row[COLS.SECTORS.SUBSECTOR_ID - 1] || '');
-  var isSectorOnly = !subsector;
+  var hasSubsectorIdentity = String(subsectorId || '').indexOf('SUB-') === 0;
+  var isSectorOnly = !subsector && !hasSubsectorIdentity;
   return {
     row: rowNumber,
     id: isSectorOnly ? sectorId : subsectorId,
@@ -2253,17 +2254,19 @@ function findSectorBranch(sector, subsector) {
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
   var best = null, bestScore = 0;
   for (var i = 0; i < data.length; i++) {
+    var branch = sectorBranchFromRow(i + 2, data[i]);
+    if (wantSectorOnly && !branch.isSectorOnly) continue;
+    if (!wantSectorOnly && branch.isSectorOnly) continue;
     var rowSector = normalizeKeyPart(data[i][COLS.SECTORS.SECTOR - 1]);
     var rowSub = normalizeKeyPart(data[i][COLS.SECTORS.SUBSECTOR - 1]);
     if (!rowSector) continue;
-    if (wantSectorOnly && rowSub) continue;
     if (!wantSectorOnly && !rowSub) continue;
     var sectorScore = rowSector === wantSector ? 1 : similarity(wantSector, rowSector);
     var subScore = wantSectorOnly ? 1 : (rowSub === wantSub ? 1 : similarity(wantSub, rowSub));
     var score = Math.min(sectorScore, subScore);
     if (score > bestScore) {
       bestScore = score;
-      best = sectorBranchFromRow(i + 2, data[i]);
+      best = branch;
     }
   }
   return bestScore >= 0.85 ? best : null;
@@ -2341,6 +2344,8 @@ function ensureSectorBranchId(sheet, branch) {
   }
 
   var parent = ensureSectorOnlyBranch(branch.sector, 'repair_backfill');
+  branch.parentBranch = parent;
+  branch.parentSectorCreated = !!(parent && parent.created);
   if (parent && branch.sectorId !== parent.sectorId) {
     branch.sectorId = parent.sectorId;
     sheet.getRange(branch.row, COLS.SECTORS.ID).setValue(branch.sectorId);
@@ -2380,8 +2385,16 @@ function upsertSectorBranch(opts) {
       branch = sectorBranchFromRow(sheet.getLastRow(), rowValues);
     }
     created = true;
+    if (!isSectorOnly && sectorOnly && sectorOnly.created) branch.parentSectorCreated = true;
+    if (!isSectorOnly && sectorOnly) branch.parentBranch = sectorOnly;
   }
+  var parentCreatedBeforeEnsure = !!(branch && branch.parentSectorCreated);
+  var parentBranchBeforeEnsure = branch && branch.parentBranch;
   branch = ensureSectorBranchId(sheet, branch);
+  if (parentCreatedBeforeEnsure) {
+    branch.parentSectorCreated = true;
+    branch.parentBranch = parentBranchBeforeEnsure;
+  }
   if (!sheet.getRange(branch.row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(branch.row, COLS.SECTORS.STATUS).setValue('Open');
   if (!branch.sector) sheet.getRange(branch.row, COLS.SECTORS.SECTOR).setValue(sector);
   if (!branch.isSectorOnly && !branch.subsector) sheet.getRange(branch.row, COLS.SECTORS.SUBSECTOR).setValue(subsector);
@@ -2547,15 +2560,38 @@ function onEditSectors(sheet, row, col, newVal) {
     var existingId = String(currentBranch.id || '');
     if (existingId) {
       currentBranch = ensureSectorBranchId(sheet, currentBranch);
+      var parentCreatedByMove = !!(currentBranch && currentBranch.parentSectorCreated);
+      var parentBranchForMove = currentBranch && currentBranch.parentBranch;
       existingId = String(currentBranch.id || '');
       if (!sheet.getRange(row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(row, COLS.SECTORS.STATUS).setValue('Open');
       propagateSectorRenameToOrganisations(existingId);
-      flagDuplicateSectorNameForReview(getSectorBranchById(existingId));
-      if (!subsectorValue) {
-        if (fireSectorOnlyTask(getSectorBranchById(existingId))) refreshDerivedPlanningSurfaces();
-      } else if (fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId)) {
+      currentBranch = getSectorBranchById(existingId);
+      flagDuplicateSectorNameForReview(currentBranch);
+      var labelUpdates = syncSectorLinkedLabels(currentBranch);
+      if (labelUpdates) {
+        populateToday();
         renderTodayDecisionCards();
         requestHomeRefresh();
+      }
+      if (currentBranch && currentBranch.isSectorOnly) {
+        if (fireSectorOnlyTask(getSectorBranchById(existingId))) {
+          refreshDerivedPlanningSurfaces();
+          requestHomeRefresh();
+        }
+      } else if (!subsectorValue) {
+        appendNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[taxonomy] Add Sub-sector name before this child can be used');
+        renderTodayDecisionCards();
+        requestHomeRefresh();
+      } else {
+        clearNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[taxonomy]');
+        if (parentCreatedByMove && parentBranchForMove && fireSectorOnlyTask(parentBranchForMove)) {
+          refreshDerivedPlanningSurfaces();
+          requestHomeRefresh();
+        }
+        if (fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId)) {
+          renderTodayDecisionCards();
+          requestHomeRefresh();
+        }
       }
       return;
     }
@@ -2568,9 +2604,16 @@ function onEditSectors(sheet, row, col, newVal) {
     }
     if (!subsectorValue) {
       flagDuplicateSectorNameForReview(branch);
-      if (fireSectorOnlyTask(branch)) refreshDerivedPlanningSurfaces();
+      if (fireSectorOnlyTask(branch)) {
+        refreshDerivedPlanningSurfaces();
+        requestHomeRefresh();
+      }
     } else {
       flagDuplicateSectorNameForReview(branch);
+      if (branch.parentSectorCreated && branch.parentBranch && fireSectorOnlyTask(branch.parentBranch)) {
+        refreshDerivedPlanningSurfaces();
+        requestHomeRefresh();
+      }
       renderTodayDecisionCards();
       requestHomeRefresh();
     }
@@ -2652,10 +2695,81 @@ function flagDuplicateSectorNameForReview(branch) {
   return duplicate;
 }
 
+function syncSectorLinkedLabels(branch) {
+  if (!branch) return 0;
+  var branches = [branch];
+  var sectorSheet = getSheet('Sectors');
+  if (branch.isSectorOnly && sectorSheet && sectorSheet.getLastRow() >= 2) {
+    var sectorData = sectorSheet.getRange(2, 1, sectorSheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+    for (var s = 0; s < sectorData.length; s++) {
+      var child = sectorBranchFromRow(s + 2, sectorData[s]);
+      if (child.isSectorOnly || String(child.sectorId) !== String(branch.sectorId)) continue;
+      branches.push(child);
+    }
+  }
+  var count = 0;
+  for (var b = 0; b < branches.length; b++) count += syncSingleSectorLinkedLabel(branches[b]);
+  return count;
+}
+
+function syncSingleSectorLinkedLabel(branch) {
+  if (!branch || !branch.id) return 0;
+  var count = 0;
+  var taskSheet = getSheet('Tasks');
+  if (taskSheet && taskSheet.getLastRow() >= 2) {
+    var taskData = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    for (var t = 0; t < taskData.length; t++) {
+      if (String(taskData[t][COLS.TODO.OBJ_TYPE - 1]) !== 'Sector') continue;
+      if (String(taskData[t][COLS.TODO.OBJ_ID - 1]) !== String(branch.id)) continue;
+      if (isTerminalTodoStatus(String(taskData[t][COLS.TODO.STATUS - 1]))) continue;
+      var workflow = String(taskData[t][COLS.TODO.WORKFLOW - 1] || '');
+      var desiredTask = '';
+      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
+      if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) desiredTask = 'Market map: ' + branch.sector + ' - ' + branch.subsector;
+      if (desiredTask && String(taskData[t][COLS.TODO.TASK - 1]) !== desiredTask) {
+        taskSheet.getRange(t + 2, COLS.TODO.TASK).setValue(desiredTask);
+        count++;
+      }
+    }
+  }
+  var decisionSheet = getSheet('Decisions');
+  if (!branch.isSectorOnly && branch.subsector && decisionSheet && decisionSheet.getLastRow() >= 2) {
+    var label = branch.sector + ' - ' + branch.subsector;
+    var decisionData = decisionSheet.getRange(2, 1, decisionSheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+    for (var d = 0; d < decisionData.length; d++) {
+      if (String(decisionData[d][COLS.DECISIONS.TARGET_TYPE - 1]) !== 'Sector') continue;
+      if (String(decisionData[d][COLS.DECISIONS.TARGET_ID - 1]) !== String(branch.id)) continue;
+      if (String(decisionData[d][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
+      if (String(decisionData[d][COLS.DECISIONS.WORKFLOW - 1]) !== 'Market mapping') continue;
+      var row = d + 2;
+      decisionSheet.getRange(row, COLS.DECISIONS.TRIGGER).setValue('Sub-sector added: ' + label);
+      decisionSheet.getRange(row, COLS.DECISIONS.TASK).setValue('Market map: ' + label);
+      count++;
+    }
+  }
+  return count;
+}
+
 function retireSectorBranch(sectorId) {
   if (!sectorId) return 0;
-  var decisions = autoDismissPendingForTarget('Sector', sectorId, 'Sector branch retired');
-  var tasks = setOpenTodosForTarget('Sector', sectorId, 'Skipped', 'Sector branch retired');
+  var branch = getSectorBranchById(sectorId);
+  var targetIds = [String(sectorId)];
+  var sectorSheet = getSheet('Sectors');
+  if (branch && branch.isSectorOnly && sectorSheet && sectorSheet.getLastRow() >= 2) {
+    var data = sectorSheet.getRange(2, 1, sectorSheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var child = sectorBranchFromRow(i + 2, data[i]);
+      if (String(child.sectorId) !== String(branch.sectorId)) continue;
+      sectorSheet.getRange(child.row, COLS.SECTORS.STATUS).setValue('Retired');
+      if (!child.isSectorOnly && child.id) targetIds.push(String(child.id));
+    }
+  }
+  var decisions = 0;
+  var tasks = 0;
+  targetIds.forEach(function (targetId) {
+    decisions += autoDismissPendingForTarget('Sector', targetId, 'Sector branch retired');
+    tasks += setOpenTodosForTarget('Sector', targetId, 'Skipped', 'Sector branch retired');
+  });
   populateToday();
   refreshHome();
   return decisions + tasks;
