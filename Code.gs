@@ -2757,6 +2757,9 @@ function routeJobOutcome(jobId, outcome, opts) {
     return true;
   }
   if (normalizedOutcome === 'Rejected') {
+    var sheet = getSheet('Jobs');
+    sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
+    appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[rejected] Application closed after rejection.');
     setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
     return true;
   }
