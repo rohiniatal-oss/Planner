@@ -243,10 +243,10 @@ var LEGACY_TAB_NAMES = {
   'Decisions': ['Pending decisions', 'Pending Decisions', 'Suggestions']
 };
 
-var CANONICAL_TAB_ORDER = ['Home', 'Today', 'Decisions', 'Tasks', 'Sectors', 'Organisations', 'Jobs', 'People', 'Conversations', 'Interviews', 'Guide'];
+var CANONICAL_TAB_ORDER = ['Home', 'Today', 'Decisions', 'Tasks', 'Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations', 'Guide'];
 var ZONE_WORK_TABS = ['Home', 'Today', 'Decisions', 'Tasks'];
-var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Conversations'];
-var ZONE_REF_TABS = ['Interviews', 'Guide'];
+var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations'];
+var ZONE_REF_TABS = ['Guide'];
 var ZONE_WORK_COLOR = '#1B474D';
 var ZONE_DATA_COLOR = '#964219';
 var ZONE_REF_COLOR = '#7A7974';
