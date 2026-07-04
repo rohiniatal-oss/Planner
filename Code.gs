@@ -1013,7 +1013,10 @@ function checkOrgDuplicate(sheet, editedRow) {
 
 function replaceOrgDisplayText(value, oldName, newName) {
   if (!oldName || !newName || String(oldName) === String(newName)) return value;
-  return String(value || '').split(String(oldName)).join(String(newName));
+  var escaped = String(oldName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(value || '').replace(new RegExp('(^|[^A-Za-z0-9])' + escaped + '(?=$|[^A-Za-z0-9])', 'g'), function (match, prefix) {
+    return prefix + newName;
+  });
 }
 
 function collectIdsForOrg(sheet, idCol, orgIdCol, orgId) {
@@ -2191,7 +2194,7 @@ function handleOrganisationTodoCompletion(todo, options) {
 //                                  itself is what triggers stage 2).
 //   Market-mapping Task done   -> prompt to capture the organisations found.
 function handleSectorTodoCompletion(todo, options) {
-  if (todo.workflow === 'Market mapping' && /^Market map:/i.test(String(todo.task || ''))) {
+  if (todo.workflow === 'Market mapping' && todo.objType === 'Sector' && todo.objId) {
     appendPendingDecision('MARKET_MAP_DONE:' + todo.id, 'Market mapping completed',
       'Add/update organisations found from market map', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
   }
@@ -2591,6 +2594,22 @@ function getSectorBranchById(sectorId) {
   return null;
 }
 
+function buildSectorBranchIndexes() {
+  var out = { byId: {}, bySectorOnly: {}, bySectorSub: {} };
+  var sheet = getSheet('Sectors');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var branch = sectorBranchFromRow(i + 2, data[i]);
+    if (branch.id) out.byId[String(branch.id)] = branch;
+    var sectorKey = normalizeKeyPart(branch.sector);
+    var subKey = normalizeKeyPart(branch.subsector);
+    if (branch.isSectorOnly && sectorKey) out.bySectorOnly[sectorKey] = branch;
+    if (!branch.isSectorOnly && sectorKey && subKey) out.bySectorSub[sectorKey + '|' + subKey] = branch;
+  }
+  return out;
+}
+
 function ensureSectorOnlyBranch(sector, source) {
   sector = String(sector || '').trim().replace(/\s+/g, ' ');
   if (!sector) return null;
@@ -2638,6 +2657,7 @@ function ensureSectorOnlyBranchWithId(sector, sectorId, source) {
 
 function ensureSectorBranchId(sheet, branch) {
   if (!sheet || !branch) return branch;
+  var wasCreated = !!branch.created;
   if (branch.isSectorOnly) {
     if (String(branch.sectorId || '').indexOf('SEC-') !== 0) {
       branch.sectorId = nextId(sheet, COLS.SECTORS.ID, 'SEC');
@@ -2648,6 +2668,7 @@ function ensureSectorBranchId(sheet, branch) {
       sheet.getRange(branch.row, COLS.SECTORS.SUBSECTOR_ID).setValue('');
     }
     branch.id = branch.sectorId;
+    branch.created = wasCreated || !!branch.created;
     return branch;
   }
 
@@ -2663,6 +2684,7 @@ function ensureSectorBranchId(sheet, branch) {
     sheet.getRange(branch.row, COLS.SECTORS.SUBSECTOR_ID).setValue(branch.subsectorId);
   }
   branch.id = branch.subsectorId;
+  branch.created = wasCreated || !!branch.created;
   return branch;
 }
 
@@ -2706,6 +2728,7 @@ function upsertSectorBranch(opts) {
   if (!sheet.getRange(branch.row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(branch.row, COLS.SECTORS.STATUS).setValue('Open');
   if (!branch.sector) sheet.getRange(branch.row, COLS.SECTORS.SECTOR).setValue(sector);
   if (!branch.isSectorOnly && !branch.subsector) sheet.getRange(branch.row, COLS.SECTORS.SUBSECTOR).setValue(subsector);
+  flagDuplicateSectorNameForReview(branch);
   var sourceFlag = sectorSourceFlag(opts.source);
   if (sourceFlag) appendNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, sourceFlag);
   if (opts.notes) appendNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, opts.notes);
@@ -2757,6 +2780,7 @@ function applyOrgTaxonomyLink(orgRow, sector, subsector) {
 function repairOrgTaxonomyLinks() {
   var sheet = getSheet('Organisations');
   if (!sheet || sheet.getLastRow() < 2) return;
+  var sectorIndex = buildSectorBranchIndexes();
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
@@ -2768,7 +2792,7 @@ function repairOrgTaxonomyLinks() {
     var sectorId = data[i][COLS.ORGS.SECTOR_ID - 1];
     var subId = data[i][COLS.ORGS.SUBSECTOR_ID - 1];
     if (subId) {
-      var subBranch = getSectorBranchById(subId);
+      var subBranch = sectorIndex.byId[String(subId)];
       if (subBranch) {
         sheet.getRange(row, COLS.ORGS.SECTOR_ID).setValue(subBranch.sectorId);
         sheet.getRange(row, COLS.ORGS.SECTOR).setValue(subBranch.sector);
@@ -2779,7 +2803,7 @@ function repairOrgTaxonomyLinks() {
       }
     }
     if (sectorId) {
-      var sectorBranch = getSectorBranchById(sectorId);
+      var sectorBranch = sectorIndex.byId[String(sectorId)];
       if (sectorBranch && sectorBranch.isSectorOnly) {
         sheet.getRange(row, COLS.ORGS.SECTOR).setValue(sectorBranch.sector);
         if (sub && !subId) sheet.getRange(row, COLS.ORGS.SUBSECTOR).setValue('');
@@ -2958,6 +2982,17 @@ function onEditSectors(sheet, row, col, newVal) {
     if (!sectorValue && subsectorValue) { appendNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[taxonomy] Add Sector before Sub-sector'); return; }
     if (!sectorValue) return;
     var currentBranch = sectorBranchFromRow(row, sheet.getRange(row, 1, 1, HEADERS.Sectors.length).getValues()[0]);
+    var wasSectorOnlyRow = String(currentBranch.sectorId || '').indexOf('SEC-') === 0 && !currentBranch.subsectorId;
+    if (col === COLS.SECTORS.SUBSECTOR && wasSectorOnlyRow && subsectorValue) {
+      var childBranch = upsertSectorBranch({ sector: sectorValue, subsector: subsectorValue, source: 'manual_sheet_entry', parentSectorId: currentBranch.sectorId, createExpansionDecision: true });
+      sheet.getRange(row, COLS.SECTORS.SUBSECTOR).clearContent();
+      sheet.getRange(row, COLS.SECTORS.SUBSECTOR_ID).clearContent();
+      appendNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[taxonomy] Sub-sector moved to child row ' + (childBranch ? childBranch.row : ''));
+      if (childBranch && childBranch.parentBranch && childBranch.parentBranch.created && fireSectorOnlyTask(childBranch.parentBranch)) refreshDerivedPlanningSurfaces();
+      renderTodayDecisionCards();
+      requestHomeRefresh();
+      return;
+    }
     var existingId = String(currentBranch.id || '');
     if (existingId) {
       currentBranch = ensureSectorBranchId(sheet, currentBranch);
@@ -3350,7 +3385,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     sheet.getRange(row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
     var outcomeStatus = jobStatusForOutcome(normalizedOutcome);
     if (outcomeStatus) setJobStatus(outcomeJobId, outcomeStatus, { source: 'job-outcome' });
-    else refreshDerivedPlanningSurfaces();
+    refreshDerivedPlanningSurfaces();
     autoDismissPendingForTarget('Job', outcomeJobId, 'Job outcome recorded');
     renderTodayDecisionCards();
     requestHomeRefresh();
@@ -5550,7 +5585,6 @@ function todayPlanCounts() {
   var sheet = getSheet('Today');
   if (!sheet) return result;
   var builtDate = getTodayPlanBuiltDate();
-  var headline = String(sheet.getRange('B3').getValue() || '');
   var noteDate = todayPlanDateFromNote(sheet.getRange('B3').getNote());
   var t = today().getTime();
   result.built = (builtDate && builtDate.getTime() === t) || (noteDate && noteDate.getTime() === t);
@@ -5564,7 +5598,6 @@ function todayPlanCounts() {
       result.minutes += parseInt(sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
     }
   }
-  if (!result.built && /^Today.s plan is ready/.test(headline) && (result.commit || result.options)) result.built = true;
   return result;
 }
 
@@ -7212,7 +7245,7 @@ function orgOpenOpportunityCountMap() {
   data.forEach(function (r) {
     var opportunity = String(r[COLS.JOBS.OPPORTUNITY - 1] || '');
     var orgId = String(r[COLS.JOBS.ORG_ID - 1] || '');
-    var status = normalizeJobStatus(r[COLS.JOBS.STATUS - 1]);
+    var status = String(r[COLS.JOBS.STATUS - 1] || '');
     if (opportunity && orgId && status !== 'Closed' && status !== 'Parked') out[orgId] = (out[orgId] || 0) + 1;
   });
   return out;
