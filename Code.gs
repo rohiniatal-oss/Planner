@@ -2652,6 +2652,8 @@ function applicationPlanDueText(job) {
 
 function queueApplicationPlanDecision(job) {
   if (!job || !job.id) return '';
+  var openWorkByJobId = openApplicationWorkByJobId();
+  if (openWorkByJobId[String(job.id)]) return '';
   return appendPendingDecision(
     applicationPlanDecisionKey(job.id),
     'Application in progress: ' + job.title,
@@ -2720,8 +2722,9 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
     return;
   }
   if (newStatus === 'In progress') {
-    queueApplicationPlanDecision(job);
-    appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan] Use Home decision to plan application tasks.');
+    var decisionId = queueApplicationPlanDecision(job);
+    if (decisionId) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan] Use Home decision to plan application tasks.');
+    else clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     return;
   }
   if (newStatus === 'Submitted') {
@@ -7059,6 +7062,8 @@ function processJobCapture(fields) {
   if (!status) return failResult('Pick a valid application status.', 'status', 'INVALID_STATUS');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var existingJob = findJobByTitleOrg(fields.jobTitle, org ? org.name : '');
+  var exactExistingJob = isExactJobTitleOrgMatch(existingJob, fields.jobTitle, org ? org.name : '');
+  var previousStatus = exactExistingJob ? normalizeJobStatus(existingJob.data[COLS.JOBS.STATUS - 1]) : '';
   var jobId = writeJobRow(fields.jobTitle, org, status);
   promoteOrgForLiveJob(org && org.id, status);
   var job = getJobRowById(jobId);
@@ -7069,7 +7074,7 @@ function processJobCapture(fields) {
   }
   if (fields.urlNotes) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, fields.urlNotes);
   var opts = { realDate: fields.appliedDate || '' };
-  fireJobStatusChanged(jobId, '', status, opts);
+  fireJobStatusChanged(jobId, previousStatus, status, opts);
   job = getJobRowById(jobId);
   if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
   if (fields.outcome) {
@@ -7080,7 +7085,7 @@ function processJobCapture(fields) {
     routeJobOutcome(jobId, normalizedOutcome, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
   }
   if (fields.response === 'Yes' && !fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
-  return okResult((existingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
+  return okResult((exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
 // =============================================================
 // VISUAL POLISH — rich-text guidance headers, manual/auto shading,
