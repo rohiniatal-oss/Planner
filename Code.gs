@@ -254,7 +254,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.6.2';
+var SCRIPT_VERSION = 'v7.6.3';
 
 var DROPDOWNS = {
   ORG_TIER: ['A', 'B', 'C'],
@@ -551,6 +551,9 @@ function getOrgById(orgId) {
   return null;
 }
 
+// These formulas intentionally hardcode People/Jobs column letters (D and
+// E). They are safe only under the project convention that new columns
+// are appended, never inserted before existing Org ID / Status columns.
 function applyOrgRowFormulas(sheet, row) {
   sheet.getRange(row, COLS.ORGS.KNOWN_PEOPLE).setFormula('=COUNTIF(People!D:D,A' + row + ')');
   sheet.getRange(row, COLS.ORGS.OPEN_OPPS).setFormula(
@@ -571,7 +574,22 @@ function createNameOnlyOrg(orgName, opts) {
   opts = opts || {};
   if (!orgName) return null;
   var existing = findOrgByNameFuzzy(orgName, 0.85);
-  if (existing) return { id: existing.data[COLS.ORGS.ID - 1], row: existing.row, name: existing.data[COLS.ORGS.NAME - 1], existing: true };
+  if (existing) {
+    var canonicalName = existing.data[COLS.ORGS.NAME - 1];
+    // v7.6.3 §4.1: the fuzzy match is silent by design (no popup on the
+    // stub path), but if the typed text doesn't match the stored name
+    // verbatim, leave an auditable trace on the matched row instead of
+    // rewriting it without a trace — a wrong canonical name (typo) would
+    // otherwise silently absorb every future correctly-typed mention.
+    if (String(orgName).trim() !== String(canonicalName).trim()) {
+      var orgSheetForTrace = getSheet('Organisations');
+      if (orgSheetForTrace) {
+        appendNoteFlag(orgSheetForTrace, existing.row, COLS.ORGS.NOTES, '[matched-typed-as] "' + orgName + '"');
+        appendNoteFlag(orgSheetForTrace, existing.row, COLS.ORGS.NOTES, '[review-name] Possible canonical-name typo');
+      }
+    }
+    return { id: existing.data[COLS.ORGS.ID - 1], row: existing.row, name: canonicalName, existing: true };
+  }
   var sheet = getSheet('Organisations');
   if (!sheet) return null;
   var id = nextId(sheet, COLS.ORGS.ID, 'ORG');
@@ -624,16 +642,27 @@ function checkOrgDuplicate(sheet, editedRow) {
   if (!newName) return;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
-  var names = sheet.getRange(2, COLS.ORGS.NAME, lastRow - 1, 1).getValues();
-  for (var i = 0; i < names.length; i++) {
+  // v7.6.3 §4.2: read Org ID alongside Name so a declined merge can be
+  // remembered by ID (names can change later, IDs don't).
+  var data = sheet.getRange(2, COLS.ORGS.ID, lastRow - 1, COLS.ORGS.NAME - COLS.ORGS.ID + 1).getValues();
+  var editedNotes = String(sheet.getRange(editedRow, COLS.ORGS.NOTES).getValue() || '');
+  for (var i = 0; i < data.length; i++) {
     var rowNum = i + 2;
-    if (rowNum === editedRow || !names[i][0]) continue;
-    if (similarity(newName, String(names[i][0])) >= 0.85) {
+    var candidateId = data[i][0];
+    var candidateName = data[i][COLS.ORGS.NAME - COLS.ORGS.ID];
+    if (rowNum === editedRow || !candidateName) continue;
+    if (similarity(newName, String(candidateName)) >= 0.85) {
+      var reviewFlag = '[reviewed-similar-org: ' + candidateId + ']';
+      if (editedNotes.indexOf(reviewFlag) !== -1) continue; // already declined this specific pair — don't re-prompt
       var ui = SpreadsheetApp.getUi();
       var resp = ui.alert('Possible duplicate organisation',
-        '"' + newName + '" looks similar to "' + names[i][0] + '" (row ' + rowNum + '). Merge into existing?',
+        '"' + newName + '" looks similar to "' + candidateName + '" (row ' + rowNum + '). Merge into existing?',
         ui.ButtonSet.YES_NO);
-      if (resp === ui.Button.YES) sheet.getRange(editedRow, COLS.ORGS.NAME).setValue(names[i][0]);
+      if (resp === ui.Button.YES) {
+        sheet.getRange(editedRow, COLS.ORGS.NAME).setValue(candidateName);
+      } else {
+        appendNoteFlag(sheet, editedRow, COLS.ORGS.NOTES, reviewFlag);
+      }
       break;
     }
   }
@@ -4572,6 +4601,12 @@ var STATUS_COLOR_MAP = {
 
 var COMMITMENT_CLASS_COLORS = { 'Fixed': '#F6C7C3', 'Blocking': '#FDE9D9', 'Keep-alive': '#D2E3FC', 'Active pursuit': '#CEEAD6', 'Pipeline-building': '#E6F4EA', 'Backlog': '#F1F3F4' };
 
+// v7.6.3 §4.5: Organisations already has one STATUS_COLOR_MAP entry (its
+// Status column) — Tier is a second, independent column on the same
+// sheet, so it gets its own small parallel block below, same idiom as
+// COMMITMENT_CLASS_COLORS for Tasks.
+var TIER_COLOR_MAP = { 'A': '#CEEAD6', 'B': '#FEF7CD', 'C': '#F1F3F4' };
+
 function colorCodeManualFields() {
   Object.keys(MANUAL_COLUMNS).forEach(function (headerKey) {
     var canonical = Object.keys(SHEET_TO_HEADER_KEY).filter(function (n) { return SHEET_TO_HEADER_KEY[n] === headerKey; })[0];
@@ -4607,6 +4642,17 @@ function applyStatusColorCoding() {
     });
     sheet.setConditionalFormatRules(rules);
   });
+  var orgSheet = getSheet('Organisations');
+  if (orgSheet) {
+    var tierRange = orgSheet.getRange(2, COLS.ORGS.TIER, Math.max(orgSheet.getMaxRows() - 1, 1), 1);
+    var tierRules = orgSheet.getConditionalFormatRules().filter(function (r) {
+      return !r.getRanges().some(function (rg) { return rg.getColumn() === COLS.ORGS.TIER && rg.getRow() === 2; });
+    });
+    Object.keys(TIER_COLOR_MAP).forEach(function (val) {
+      tierRules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(val).setBackground(TIER_COLOR_MAP[val]).setRanges([tierRange]).build());
+    });
+    orgSheet.setConditionalFormatRules(tierRules);
+  }
   var todoSheet = getSheet('Tasks');
   if (todoSheet) {
     var ccRange = todoSheet.getRange(2, COLS.TODO.COMMITMENT_CLASS, Math.max(todoSheet.getMaxRows() - 1, 1), 1);
@@ -4935,9 +4981,69 @@ function weeklyReviewImpl() {
       }
     }
   }
+  checkOrgActiveEmpty();
+  checkOrgOrphans();
+
   colorCodeManualFields();
   applyColumnWidths();
   refreshAllDropdowns();
+}
+
+// v7.6.3 §4.6: an Organisation marked Active is a deliberate choice to
+// pursue it, but it can still sit with zero known people and zero open
+// opportunities. Flag it as a health signal — never create Tasks from
+// this, and never apply it to Mapped (inert by design).
+function checkOrgActiveEmpty() {
+  var sheet = getSheet('Organisations');
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NOTES).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var row = i + 2;
+    var status = String(data[i][COLS.ORGS.STATUS - 1]);
+    var knownPeople = Number(data[i][COLS.ORGS.KNOWN_PEOPLE - 1]) || 0;
+    var openOpps = Number(data[i][COLS.ORGS.OPEN_OPPS - 1]) || 0;
+    if (status === 'Active' && knownPeople === 0 && openOpps === 0) {
+      appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people or open opportunities yet');
+    } else {
+      clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
+    }
+  }
+}
+
+// v7.6.3 §4.3: manual row deletion never fires onEdit, so People/Jobs/
+// Tasks/Decisions can keep pointing at an Organisation ID that no longer
+// exists. Flagging only — never recreates the Organisation, never
+// deletes or relinks the child row.
+function checkOrgOrphans() {
+  var orgSheet = getSheet('Organisations');
+  if (!orgSheet) return;
+  var validOrgIds = {};
+  if (orgSheet.getLastRow() > 1) {
+    orgSheet.getRange(2, COLS.ORGS.ID, orgSheet.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      if (r[0]) validOrgIds[String(r[0])] = true;
+    });
+  }
+
+  function sweep(sheet, orgIdCol, notesCol, typeCol, requiredType) {
+    if (!sheet || sheet.getLastRow() < 2) return;
+    var width = Math.max(orgIdCol, notesCol, typeCol || 0);
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var row = i + 2;
+      if (typeCol && String(data[i][typeCol - 1] || '') !== requiredType) continue;
+      var orgId = data[i][orgIdCol - 1];
+      if (orgId && !validOrgIds[String(orgId)]) {
+        appendNoteFlag(sheet, row, notesCol, '[orphaned-org] ⚠ Linked Organisation no longer exists');
+      } else {
+        clearNoteFlag(sheet, row, notesCol, '[orphaned-org]');
+      }
+    }
+  }
+
+  sweep(getSheet('People'), COLS.PEOPLE.ORG_ID, COLS.PEOPLE.NOTES);
+  sweep(getSheet('Jobs'), COLS.JOBS.ORG_ID, COLS.JOBS.NOTES);
+  sweep(getSheet('Tasks'), COLS.TODO.OBJ_ID, COLS.TODO.NOTES, COLS.TODO.OBJ_TYPE, 'Organisation');
+  sweep(getSheet('Decisions'), COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.NOTES, COLS.DECISIONS.TARGET_TYPE, 'Organisation');
 }
 
 // =============================================================
@@ -5502,6 +5608,7 @@ function buildMenu() {
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
       .addItem('Migrate legacy tab names', 'migrateLegacyTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')
+      .addItem('Run weekly review now', 'weeklyReview')
       .addItem('Full refresh', 'fullRefresh')
       .addItem('Recalculate commitment classes', 'recalculateCommitmentClasses')
       .addItem('Show all columns', 'showAllColumns'))
