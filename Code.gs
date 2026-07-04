@@ -1304,6 +1304,15 @@ function findJobByTitleOrg(title, org) {
   return bestScore >= 0.85 ? best : null;
 }
 
+function isExactJobTitleOrgMatch(match, title, org) {
+  if (!match) return false;
+  var titleKey = normalizeKeyPart(title);
+  var orgKey = normalizeKeyPart(org);
+  var existingTitleKey = normalizeKeyPart(match.data[COLS.JOBS.OPPORTUNITY - 1]);
+  var existingOrgKey = normalizeKeyPart(match.data[COLS.JOBS.ORG - 1]);
+  return !!titleKey && titleKey === existingTitleKey && (!orgKey || orgKey === existingOrgKey);
+}
+
 // v7.3: single bulk read (see getOrgById).
 function getJobRowById(jobId) {
   var sheet = getSheet('Jobs');
@@ -6281,7 +6290,8 @@ function processNotSureOnboarding(fields) {
 function writeJobRow(title, org, status) {
   var sheet = getSheet('Jobs');
   var existing = findJobByTitleOrg(title, org ? org.name : '');
-  if (existing) {
+  var exactExisting = isExactJobTitleOrgMatch(existing, title, org ? org.name : '');
+  if (exactExisting) {
     var normalizedStatus = normalizeJobStatus(status);
     if (normalizedStatus && normalizeJobStatus(existing.data[COLS.JOBS.STATUS - 1]) !== normalizedStatus) {
       sheet.getRange(existing.row, COLS.JOBS.STATUS).setValue(normalizedStatus);
@@ -6296,6 +6306,9 @@ function writeJobRow(title, org, status) {
   row[COLS.JOBS.ORG_ID - 1] = org ? org.id : '';
   row[COLS.JOBS.STATUS - 1] = normalizeJobStatus(status) || status;
   sheet.appendRow(row);
+  if (existing && !exactExisting) {
+    appendNoteFlag(sheet, sheet.getLastRow(), COLS.JOBS.NOTES, '[possible-duplicate-job] Similar to row ' + existing.row + ': ' + existing.data[COLS.JOBS.OPPORTUNITY - 1]);
+  }
   return id;
 }
 
@@ -8073,8 +8086,29 @@ function syncJobsPeopleHealthFlags() {
   var jobsSheet = getSheet('Jobs');
   if (jobsSheet && jobsSheet.getLastRow() >= 2) {
     var jobs = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, HEADERS.Jobs.length).getValues();
+    var jobIdRows = {};
+    jobs.forEach(function (jobRow, idx) {
+      var jobId = String(jobRow[COLS.JOBS.ID - 1] || '');
+      if (!jobId) return;
+      if (!jobIdRows[jobId]) jobIdRows[jobId] = [];
+      jobIdRows[jobId].push(idx + 2);
+    });
     for (var j = 0; j < jobs.length; j++) {
       var jr = j + 2;
+      var jobId = String(jobs[j][COLS.JOBS.ID - 1] || '');
+      var opportunity = String(jobs[j][COLS.JOBS.OPPORTUNITY - 1] || '');
+      if (opportunity && !jobId) {
+        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missing-job-id] Opportunity has no Job ID; run row action or repair after checking the row');
+        count++;
+      } else {
+        clearNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missing-job-id]');
+      }
+      if (jobId && jobIdRows[jobId] && jobIdRows[jobId].length > 1) {
+        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[duplicate-job-id] Also used on row(s): ' + jobIdRows[jobId].filter(function (r) { return r !== jr; }).join(', '));
+        count++;
+      } else {
+        clearNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[duplicate-job-id]');
+      }
       var status = normalizeJobStatus(jobs[j][COLS.JOBS.STATUS - 1]);
       var deadline = jobs[j][COLS.JOBS.DEADLINE - 1];
       if (status === 'Want to apply' && deadline && new Date(deadline) < todayDate) {
