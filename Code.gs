@@ -3478,8 +3478,27 @@ function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.ORG) {
     var oldJobOrgName = e && e.oldValue ? String(e.oldValue) : '';
     var oldJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
+    var jobTitleForOrg = String(sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue() || '').trim();
+    var typedOrgForJob = String(newVal || '').trim();
+    if (!typedOrgForJob) {
+      sheet.getRange(row, COLS.JOBS.ORG_ID).clearContent();
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
+      refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
+      return;
+    }
+    if (!jobTitleForOrg) {
+      sheet.getRange(row, COLS.JOBS.ORG_ID).clearContent();
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[missing-opportunity] Add Opportunity before Organisation.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Add Opportunity before Organisation on Jobs.', 'The Planner', 5);
+      return;
+    }
+    clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[missing-opportunity]');
+    var ensuredJobIdForOrg = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
+    sheet.getRange(row, COLS.JOBS.ID).setValue(ensuredJobIdForOrg);
+    if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
-    var relinkJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
+    var relinkJobId = ensuredJobIdForOrg;
     var relinkJobStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
     var newJobOrgName = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '');
     var newJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
