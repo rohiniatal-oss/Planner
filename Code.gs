@@ -759,7 +759,10 @@ function syncOrgReviewSchedules() {
 function appendOrgReviewDecision(orgId, orgName, status) {
   status = normalizeOrgStatus(status);
   if (!orgId || !orgName || (status !== 'Active' && status !== 'Dormant')) return '';
+  var sheet = getSheet('Organisations');
+  var org = getOrgById(orgId);
   if (orgPursuitRouteExists(orgId)) {
+    if (sheet && org) appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[review-routed] Org review already has an open route');
     scheduleOrgReviewById(orgId, { stampLastChecked: true });
     return '';
   }
@@ -771,7 +774,10 @@ function appendOrgReviewDecision(orgId, orgName, status) {
     ? 'Decide whether to reactivate, extend dormancy, or archive.'
     : 'Decide whether to find people, scan jobs, keep active, park, or archive.';
   var decisionId = appendPendingDecision(key, trigger, task, 'Organisation', orgId, 'Org research', notes);
-  if (decisionId) scheduleOrgReviewById(orgId, { stampLastChecked: true });
+  if (decisionId) {
+    if (sheet && org) appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[review-routed] Org review decision queued');
+    scheduleOrgReviewById(orgId, { stampLastChecked: true });
+  }
   return decisionId;
 }
 
@@ -918,15 +924,39 @@ function promoteMappedOrgToActive(orgId, reason) {
   return true;
 }
 
+function queueDormantOrgReactivationDecision(org, reason) {
+  if (!org || String(org.status) !== 'Dormant') return false;
+  appendPendingDecision(
+    'ORG_DORMANT_LIVE:' + org.id,
+    'Live evidence found for Dormant organisation: ' + org.name,
+    'Review dormant org: ' + org.name,
+    'Organisation',
+    org.id,
+    'Org research',
+    'New live work exists: ' + (reason || 'linked job/person activity') + '. Decide whether to reactivate, keep dormant, or archive.'
+  );
+  var sheet = getSheet('Organisations');
+  if (sheet) appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[dormant-live] Live linked work exists; reactivation decision queued');
+  return true;
+}
+
+function routeOrgLiveEvidence(orgId, reason) {
+  var org = getOrgById(orgId);
+  if (!org) return false;
+  if (String(org.status) === 'Mapped') return promoteMappedOrgToActive(orgId, reason);
+  if (String(org.status) === 'Dormant') return queueDormantOrgReactivationDecision(org, reason);
+  return false;
+}
+
 function promoteOrgForLiveJob(orgId, status) {
   if (['Want to apply', 'Applied', 'Interviewing', 'Offer'].indexOf(normalizeJobStatus(status)) === -1) return false;
-  return promoteMappedOrgToActive(orgId, 'Live job/application evidence');
+  return routeOrgLiveEvidence(orgId, 'Live job/application evidence');
 }
 
 function promoteOrgForLivePerson(orgId, stage) {
   var normalized = normalizePersonStage(stage);
   if (['Outreach sent', 'Engaged', 'Conversation scheduled', 'Conversation completed', 'Nurture'].indexOf(normalized) === -1) return false;
-  return promoteMappedOrgToActive(orgId, 'Live relationship evidence');
+  return routeOrgLiveEvidence(orgId, 'Live relationship evidence');
 }
 
 function inheritOrgFields(sheet, editedRow, nameCol, orgIdCol) {
@@ -3257,6 +3287,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), jStatus);
       fireJobStatusChanged(jId, '', jStatus, { source: 'manual-org-followup' });
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     }
     return;
   }
@@ -3269,6 +3300,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.STATUS).getValue());
       fireJobStatusChanged(sheet.getRange(row, COLS.JOBS.ID).getValue(), '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     } else {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
     }
@@ -3278,6 +3310,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue()));
     syncJobsPeopleHealthFlags();
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'Yes') {
@@ -3324,6 +3357,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     fireJobStatusChanged(id, e && e.oldValue, status, { source: 'manual' });
     syncJobsPeopleHealthFlags();
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }
 }
 
@@ -3341,6 +3375,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), pStage);
       firePersonStageChanged(pId, '', pStage, { source: 'manual-org-followup' });
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     }
     return;
   }
@@ -3354,6 +3389,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
       firePersonStageChanged(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), '', 'Identified', { source: 'manual' });
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     } else {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation to activate outreach task (leave blank and use the Tasks menu if there is none).');
     }
@@ -3371,6 +3407,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Engaged');
     firePersonStageChanged(pid, oldStage, 'Engaged', { source: 'manual' });
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.PEOPLE.CONVERSATION_DATE && newVal) {
@@ -3387,6 +3424,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Conversation scheduled');
       firePersonStageChanged(convPersonId, currentStage, 'Conversation scheduled', { source: 'manual-date', realDate: newVal });
       refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
     }
     return;
   }
@@ -3407,6 +3445,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), stage);
     firePersonStageChanged(personId, e && e.oldValue, stage, { source: 'manual' });
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }
 }
 
@@ -6360,8 +6399,8 @@ var HEADER_GUIDANCE = {
     'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
     'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
-    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant parks; Archived retires',
-    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'system trigger; Active +14, Dormant +42', 'Notes': 'context, links, why it matters'
+    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant pauses org-level suggestions; Archived retires',
+    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'hidden system trigger; Active +14, Dormant +42', 'Notes': 'context, links, review/classification flags'
   },
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
@@ -7254,15 +7293,7 @@ function addExplorationOrganisations() {
 }
 
 function addNewOrganisation() {
-  var ui = SpreadsheetApp.getUi();
-  var nameResp = ui.prompt('Add new organisation', 'Organisation name:', ui.ButtonSet.OK_CANCEL);
-  if (nameResp.getSelectedButton() !== ui.Button.OK) return;
-  var name = nameResp.getResponseText().trim();
-  if (!name) { ui.alert('Organisation required.', ui.ButtonSet.OK); return; }
-  withDocumentLock(function () {
-    createNameOnlyOrg(name, { status: 'Mapped', tier: 'B' });
-  }, { label: 'addNewOrganisation' });
-  ui.alert('Added', 'Organisation "' + name + '" added as Mapped. Set Status to Active from Organisations when you\'re ready to pursue it.', ui.ButtonSet.OK);
+  runCapturePopup('Add/update organisation');
 }
 
 function addNewInterview() {
