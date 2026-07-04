@@ -1206,6 +1206,19 @@ function findPendingDecisionByKey(key) {
   return null;
 }
 
+function pendingDecisionExistsForTargetWorkflow(targetType, targetId, workflow) {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2 || !targetId) return false;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
+    if (String(data[i][COLS.DECISIONS.TARGET_TYPE - 1]) !== String(targetType)) continue;
+    if (String(data[i][COLS.DECISIONS.TARGET_ID - 1]) !== String(targetId)) continue;
+    if (String(data[i][COLS.DECISIONS.WORKFLOW - 1]) === String(workflow)) return true;
+  }
+  return false;
+}
+
 function getDecisionRowById(decisionId) {
   var sheet = ensureDecisionsTab();
   if (!sheet || sheet.getLastRow() < 2 || !decisionId) return null;
@@ -6261,7 +6274,7 @@ var HEADER_GUIDANCE = {
     'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
     'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant parks; Archived retires',
-    'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
+    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
@@ -6985,7 +6998,7 @@ function weeklyReview() {
 }
 
 function weeklyReviewImpl() {
-  var summary = { staleNurture: 0, activeEmpty: 0, orgOrphans: 0, sectorOrphans: 0 };
+  var summary = { staleNurture: 0, activeEmpty: 0, activeEmptyTasks: 0, activeEmptyAlreadyRouted: 0, orgOrphans: 0, sectorOrphans: 0 };
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NOTES).getValues();
@@ -7004,7 +7017,10 @@ function weeklyReviewImpl() {
       }
     }
   }
-  summary.activeEmpty = checkOrgActiveEmpty();
+  var activeEmpty = checkOrgActiveEmpty();
+  summary.activeEmpty = activeEmpty.flagged;
+  summary.activeEmptyTasks = activeEmpty.tasksCreated;
+  summary.activeEmptyAlreadyRouted = activeEmpty.alreadyRouted;
   summary.orgOrphans = checkOrgOrphans();
   summary.sectorOrphans = detectSectorOrphans();
 
@@ -7012,34 +7028,82 @@ function weeklyReviewImpl() {
   applyColumnWidths();
   refreshAllDropdowns();
   checkTriggerHealth();
+  populateToday();
+  refreshHome();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
-  summary.message = 'Weekly review: ' + summary.staleNurture + ' stale nurture, ' + summary.activeEmpty + ' empty Active orgs, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
+  summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' review task(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleNurture + ' stale nurture, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
   try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
   return summary;
 }
 
-// v7.6.3 §4.6: an Organisation marked Active is a deliberate choice to
-// pursue it, but it can still sit with zero known people and zero open
-// opportunities. Flag it as a health signal — never create Tasks from
-// this, and never apply it to Mapped (inert by design).
+function orgPursuitRouteExists(orgId) {
+  var workflows = ['People sourcing', 'Org job scan', 'Org research'];
+  for (var i = 0; i < workflows.length; i++) {
+    if (openTodoExistsForTargetWorkflow('Organisation', orgId, workflows[i])) return true;
+    if (pendingDecisionExistsForTargetWorkflow('Organisation', orgId, workflows[i])) return true;
+  }
+  return false;
+}
+
+function orgKnownPeopleCountMap() {
+  var out = {};
+  var sheet = getSheet('People');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, COLS.PEOPLE.ORG_ID, sheet.getLastRow() - 1, 1).getValues();
+  data.forEach(function (r) {
+    var orgId = String(r[0] || '');
+    if (orgId) out[orgId] = (out[orgId] || 0) + 1;
+  });
+  return out;
+}
+
+function orgOpenOpportunityCountMap() {
+  var out = {};
+  var sheet = getSheet('Jobs');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.STATUS).getValues();
+  data.forEach(function (r) {
+    var orgId = String(r[COLS.JOBS.ORG_ID - 1] || '');
+    var status = normalizeJobStatus(r[COLS.JOBS.STATUS - 1]);
+    if (orgId && status !== 'Closed' && status !== 'Parked') out[orgId] = (out[orgId] || 0) + 1;
+  });
+  return out;
+}
+
+// An Organisation marked Active is a deliberate choice to pursue it. If it
+// still has no people and no open opportunities, weekly review turns that
+// hidden health signal into one visible review task, unless a pursuit route
+// is already open in Decisions or Tasks.
 function checkOrgActiveEmpty() {
   var sheet = getSheet('Organisations');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var count = 0;
+  var result = { flagged: 0, tasksCreated: 0, alreadyRouted: 0 };
+  if (!sheet || sheet.getLastRow() < 2) return result;
+  var knownPeopleByOrg = orgKnownPeopleCountMap();
+  var openOppsByOrg = orgOpenOpportunityCountMap();
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NOTES).getValues();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
+    var orgId = String(data[i][COLS.ORGS.ID - 1] || '');
+    var orgName = String(data[i][COLS.ORGS.NAME - 1] || '');
     var status = String(data[i][COLS.ORGS.STATUS - 1]);
-    var knownPeople = Number(data[i][COLS.ORGS.KNOWN_PEOPLE - 1]) || 0;
-    var openOpps = Number(data[i][COLS.ORGS.OPEN_OPPS - 1]) || 0;
-    if (status === 'Active' && knownPeople === 0 && openOpps === 0) {
-      appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people or open opportunities yet');
-      count++;
+    var knownPeople = knownPeopleByOrg[orgId] || 0;
+    var openOpps = openOppsByOrg[orgId] || 0;
+    if (status === 'Active' && orgId && knownPeople === 0 && openOpps === 0) {
+      result.flagged++;
+      if (orgPursuitRouteExists(orgId)) {
+        appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people/open opportunities; pursuit route already open');
+        result.alreadyRouted++;
+      } else {
+        var taskId = appendTodoOnceForWorkflow('Review active org with no pipeline: ' + orgName, 'Organisation', orgId, orgName, 'Org research', 'Not started', '', '30 min', 'Decide whether to find people, scan jobs, park, or archive.', 'Auto-triggered');
+        appendNoteFlag(sheet, row, COLS.ORGS.NOTES, taskId ? '[active-empty] Active but no people/open opportunities; review task created' : '[active-empty] Active but no people/open opportunities; review route already open');
+        if (taskId) result.tasksCreated++;
+        else result.alreadyRouted++;
+      }
     } else {
       clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
     }
   }
-  return count;
+  return result;
 }
 
 // v7.6.3 §4.3: manual row deletion never fires onEdit, so People/Jobs/
