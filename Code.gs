@@ -3599,9 +3599,12 @@ function onEditJobs(sheet, row, col, newVal, e) {
     var relinkJobStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
     var newJobOrgName = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '');
     var newJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
-    if (relinkJobId && newJobOrgName && ((oldJobOrgName && oldJobOrgName !== newJobOrgName) || (oldJobOrgId && oldJobOrgId !== newJobOrgId))) {
+    var jobOrgChanged = relinkJobId && newJobOrgName && ((oldJobOrgName && oldJobOrgName !== newJobOrgName) || (oldJobOrgId && oldJobOrgId !== newJobOrgId));
+    if (jobOrgChanged) {
       propagateJobOrganisationChange(relinkJobId, newJobOrgName, newJobOrgId, oldJobOrgName, oldJobOrgId);
-      promoteOrgForLiveJob(newJobOrgId, relinkJobStatus);
+    }
+    var routedOrgEvidence = promoteOrgForLiveJob(newJobOrgId, relinkJobStatus);
+    if (jobOrgChanged || routedOrgEvidence) {
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     }
