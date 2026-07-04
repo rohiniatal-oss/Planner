@@ -5047,11 +5047,11 @@ function buildSetupHtml() {
     ' showStep(3);}' +
     'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' if(existingRows>0&&goal!=="skipped"&&entryPoint!=="skip"&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
+    ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
-    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
+    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetConfirmed:resetConfirmed});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -5289,7 +5289,7 @@ function completeSetupFromPopup(payload) {
   var validation = validateOnboardingPayload(goal, entryPoint, fields);
   if (!validation.ok) return validation;
   var shouldReset = goal !== 'skipped' && entryPoint !== 'skip';
-  if (shouldReset && plannerDataRowCount() > 0) {
+  if (shouldReset && plannerDataRowCount() > 0 && payload.resetConfirmed !== true) {
     var resp = SpreadsheetApp.getUi().alert(
       'Clear existing planner data?',
       'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Continue?',
