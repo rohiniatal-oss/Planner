@@ -454,6 +454,17 @@ function setTodayPlanBuiltDate(d) {
   maintenanceProps().setProperty('todayPlanBuiltDate', Utilities.formatDate(d, plannerTimeZone(), 'yyyy-MM-dd'));
 }
 
+function todayPlanBuiltDateNote(d) {
+  return 'Built date: ' + Utilities.formatDate(d, plannerTimeZone(), 'yyyy-MM-dd');
+}
+
+function todayPlanDateFromNote(note) {
+  var match = String(note || '').match(/Built date:\s*(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  var d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function readMaintenanceHealth() {
   var props = maintenanceProps();
   var now = new Date();
@@ -4149,7 +4160,7 @@ function populateTodayImpl() {
       ' · ' + selection.minutesUsed + ' min planned · ' + selection.bufferMin + ' min spare'
     : 'Today’s plan is ready — nothing committed yet.';
   clearTodayPlanHeadlineValidation(sheet);
-  sheet.getRange('B3').setValue(headline);
+  sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()));
 
   renderTodayDecisionCards();
   renderNeedsBreakdown(sheet);
@@ -4790,19 +4801,21 @@ function hardResetHomeSheet(sheet) {
   try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
 }
 
-// v7.4: Today's-plan hero counts — built only if the plan was actually
-// (re)generated today (todayPlanBuiltDate), not just because the B2
-// display happens to show today's date; a row counts as Commit unless
-// its Slot cell starts with 'O' (Option rows are written as 'O1', 'O2',
-// ... by writeTodayRow).
+// v7.4: Today's-plan hero counts. Prefer the explicit build date stored
+// in document properties / the B3 note, then fall back to the visible
+// ready headline plus actual Today rows so Home cannot contradict the
+// Today tab if a property write is missing or stale.
+// A row counts as Commit unless its Slot cell starts with 'O' (Option
+// rows are written as 'O1', 'O2', ... by writeTodayRow).
 function todayPlanCounts() {
   var result = { built: false, commit: 0, minutes: 0, options: 0 };
   var sheet = getSheet('Today');
   if (!sheet) return result;
   var builtDate = getTodayPlanBuiltDate();
-  if (!builtDate) return result;
-  result.built = builtDate.getTime() === today().getTime();
-  if (!result.built) return result;
+  var headline = String(sheet.getRange('B3').getValue() || '');
+  var noteDate = todayPlanDateFromNote(sheet.getRange('B3').getNote());
+  var t = today().getTime();
+  result.built = (builtDate && builtDate.getTime() === t) || (noteDate && noteDate.getTime() === t);
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
     if (!slot) continue;
@@ -4813,6 +4826,7 @@ function todayPlanCounts() {
       result.minutes += parseInt(sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
     }
   }
+  if (!result.built && /^Today.s plan is ready/.test(headline) && (result.commit || result.options)) result.built = true;
   return result;
 }
 
