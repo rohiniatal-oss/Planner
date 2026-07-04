@@ -120,7 +120,8 @@ var COLS = {
     FOLLOW_UP_DATE: 8, REPLY_RECEIVED: 9,
     FOLLOW_UP_SENT: 10, OUTREACH_DATE: 11,
     CONVERSATION_DATE: 12, NOTES: 13,
-    FOLLOW_UPS_SENT_COUNT: 14
+    FOLLOW_UPS_SENT_COUNT: 14,
+    LAST_INTERACTION: 15, NEXT_ACTION: 16, LINKED_JOBS: 17
   },
 
   JOBS: {
@@ -132,7 +133,7 @@ var COLS = {
 
   INTERACTIONS: {
     ID: 1, DATE: 2, PERSON_ID: 3, PERSON: 4, ORG: 5,
-    TYPE: 6, NOTES: 7, OUTCOME: 8
+    TYPE: 6, STATUS: 7, NOTES: 8, OUTCOME: 9
   },
 
   TODO: {
@@ -177,7 +178,8 @@ var HEADERS = {
     'Role', 'Relationship source', 'Relationship status',
     'Next follow-up date', 'Reply received',
     'Follow-up sent?', 'Outreach date', 'Conversation date',
-    'Context / notes', 'Follow-ups sent count'
+    'Context / notes', 'Follow-ups sent count',
+    'Last interaction', 'Next action', 'Linked jobs'
   ],
   Jobs: [
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
@@ -187,7 +189,7 @@ var HEADERS = {
   ],
   Interactions: [
     'Interaction ID', 'Date', 'Person ID', 'Person', 'Organisation',
-    'Type', 'Key notes', 'Outcome'
+    'Type', 'Interaction status', 'Key notes', 'Outcome'
   ],
   'To-do': [
     'Task ID', 'Task', 'Linked object type', 'Linked object ID', 'Org',
@@ -274,6 +276,7 @@ var DROPDOWNS = {
   JOB_OUTCOME: ['Waiting', 'Interview invite', 'Rejected'],
 
   INTERACTION_TYPE: ['Intro call', 'Coffee', 'LinkedIn message', 'Email', 'Phone', 'Interview', 'Referral', 'Auto-log', 'Other'],
+  INTERACTION_STATUS: ['Scheduled', 'Completed', 'Cancelled'],
   INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
 
   TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'None'],
@@ -1070,6 +1073,9 @@ function guardManualPeopleSystemIdEdit(sheet, row, col, e) {
   messages[COLS.PEOPLE.ID] = 'Person ID is system-generated. Type the Name first.';
   messages[COLS.PEOPLE.ORG_ID] = 'Org ID is filled from Organisation. Type Organisation instead.';
   messages[COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT] = 'Follow-ups sent count is maintained by the planner.';
+  messages[COLS.PEOPLE.LAST_INTERACTION] = 'Last interaction is maintained from Conversations.';
+  messages[COLS.PEOPLE.NEXT_ACTION] = 'Next action is maintained from open Tasks.';
+  messages[COLS.PEOPLE.LINKED_JOBS] = 'Linked jobs is maintained from Jobs.';
   if (!messages[col]) return false;
   restoreOrClearEditedCell(sheet, row, col, e);
   var msg = messages[col];
@@ -3049,7 +3055,12 @@ function movePersonStage(personId, stage, opts) {
   var sheet = getSheet('People');
   var normalized = normalizePersonStage(stage);
   var old = sheet.getRange(person.row, COLS.PEOPLE.STAGE).getValue();
-  if (normalizePersonStage(old) === normalized) return;
+  if (normalizePersonStage(old) === normalized) {
+    if (opts.realDate && (normalized === 'Conversation scheduled' || normalized === 'Conversation completed' || normalized === 'Keep warm')) {
+      firePersonStageChanged(personId, '', normalized, opts);
+    }
+    return;
+  }
   sheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue(normalized);
   firePersonStageChanged(personId, old, normalized, opts);
 }
@@ -3119,6 +3130,8 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
       clearNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[missing-date]');
     } else {
       appendNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[missing-date] Add conversation date to create prep task.');
+      promoteOrgForLivePerson(person.orgId, newStage);
+      return;
     }
     promoteOrgForLivePerson(person.orgId, newStage);
     appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
@@ -3130,7 +3143,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     var completedDate = opts.realDate ? parseDateOr(opts.realDate) : (sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).getValue() || today());
     sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).setValue(completedDate);
     promoteOrgForLivePerson(person.orgId, newStage);
-    appendInteraction(personId, person.name, person.org, completedDate, 'Auto-log', 'Conversation completed', 'System log');
+    if (!opts.skipInteractionLog) appendInteraction(personId, person.name, person.org, completedDate, 'Auto-log', 'Conversation completed', 'System log');
     appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''),
       'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min',
       conversationDebriefNotes(), 'Auto-triggered');
@@ -4261,21 +4274,25 @@ function onEditPeople(sheet, row, col, newVal, e) {
 // CONVERSATIONS (Interactions tab)
 // =============================================================
 
-function appendInteraction(personId, personName, org, dateValue, typeValue, notes, outcome) {
+function appendInteraction(personId, personName, org, dateValue, typeValue, notes, outcome, statusValue) {
+  migrateInteractionsStatusSchema();
   var sheet = getSheet('Conversations');
   if (!sheet) return '';
   var id = nextId(sheet, COLS.INTERACTIONS.ID, 'INT');
   var row = new Array(HEADERS.Interactions.length).fill('');
+  var interactionStatus = statusValue || 'Completed';
   row[COLS.INTERACTIONS.ID - 1] = id;
-  row[COLS.INTERACTIONS.DATE - 1] = dateValue || today();
+  row[COLS.INTERACTIONS.DATE - 1] = dateValue || (interactionStatus === 'Scheduled' ? '' : today());
   row[COLS.INTERACTIONS.PERSON_ID - 1] = personId || '';
   row[COLS.INTERACTIONS.PERSON - 1] = personName || '';
   row[COLS.INTERACTIONS.ORG - 1] = org || '';
   row[COLS.INTERACTIONS.TYPE - 1] = typeValue || 'Auto-log';
+  row[COLS.INTERACTIONS.STATUS - 1] = interactionStatus;
   row[COLS.INTERACTIONS.NOTES - 1] = notes || '';
   row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || (typeValue === 'Auto-log' ? 'System log' : '');
   sheet.appendRow(row);
   linkInteractionPersonCell(sheet.getLastRow());
+  syncPeopleHelperColumns();
   return id;
 }
 
@@ -4315,6 +4332,82 @@ function repairInteractionPersonLinks() {
     if (sheet.getRange(r, COLS.INTERACTIONS.PERSON_ID).getValue() && linkInteractionPersonCell(r)) fixed++;
   }
   return fixed;
+}
+
+function personLastInteractionMap() {
+  var out = {};
+  var sheet = getSheet('Conversations');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Interactions.length).getValues();
+  data.forEach(function (r) {
+    var personId = String(r[COLS.INTERACTIONS.PERSON_ID - 1] || '');
+    var status = String(r[COLS.INTERACTIONS.STATUS - 1] || 'Completed');
+    var dateValue = r[COLS.INTERACTIONS.DATE - 1];
+    if (!personId || status !== 'Completed' || !dateValue) return;
+    var time = new Date(dateValue).getTime();
+    if (isNaN(time)) return;
+    if (!out[personId] || time > out[personId].time) out[personId] = { date: dateValue, time: time };
+  });
+  return out;
+}
+
+function personNextActionMap() {
+  var out = {};
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var objType = String(data[i][COLS.TODO.OBJ_TYPE - 1] || '');
+    var personId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
+    var status = String(data[i][COLS.TODO.STATUS - 1] || '');
+    if (objType !== 'Person' || !personId || (status !== 'Not started' && status !== 'In progress')) continue;
+    var due = data[i][COLS.TODO.DUE_DATE - 1];
+    var dueTime = due ? new Date(due).getTime() : 9999999999999;
+    if (isNaN(dueTime)) dueTime = 9999999999999;
+    var label = String(data[i][COLS.TODO.TASK - 1] || '');
+    if (due && dueTime !== 9999999999999) label += ' (due ' + formatDateHuman(due) + ')';
+    if (!out[personId] || dueTime < out[personId].dueTime) out[personId] = { label: label, dueTime: dueTime };
+  }
+  return out;
+}
+
+function personLinkedJobsMap() {
+  var out = {};
+  var sheet = getSheet('Jobs');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Jobs.length).getValues();
+  data.forEach(function (r) {
+    var title = String(r[COLS.JOBS.OPPORTUNITY - 1] || '');
+    var org = String(r[COLS.JOBS.ORG - 1] || '');
+    var ids = parseLinkedContactIds(r[COLS.JOBS.CONTACTS_IDS - 1]);
+    ids.forEach(function (personId) {
+      if (!out[personId]) out[personId] = [];
+      out[personId].push(title + (org ? ' at ' + org : ''));
+    });
+  });
+  return out;
+}
+
+function syncPeopleHelperColumns() {
+  migrateInteractionsStatusSchema();
+  var sheet = getSheet('People');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var rowCount = sheet.getLastRow() - 1;
+  var data = sheet.getRange(2, 1, rowCount, HEADERS.People.length).getValues();
+  var lastByPerson = personLastInteractionMap();
+  var nextByPerson = personNextActionMap();
+  var jobsByPerson = personLinkedJobsMap();
+  var values = [];
+  for (var i = 0; i < data.length; i++) {
+    var personId = String(data[i][COLS.PEOPLE.ID - 1] || '');
+    values.push([
+      lastByPerson[personId] ? lastByPerson[personId].date : '',
+      nextByPerson[personId] ? nextByPerson[personId].label : '',
+      jobsByPerson[personId] ? jobsByPerson[personId].join('\n') : ''
+    ]);
+  }
+  sheet.getRange(2, COLS.PEOPLE.LAST_INTERACTION, rowCount, 3).setValues(values);
+  return rowCount;
 }
 
 function resolveInteractionPersonSelection(selection) {
@@ -4359,6 +4452,31 @@ function refreshInteractionPersonDropdown() {
   setDropdown(iSheet.getRange(2, COLS.INTERACTIONS.PERSON, maxRow, 1), labels);
 }
 
+function routeInteractionStatusForPerson(sheet, row, statusValue) {
+  var status = String(statusValue || '').trim();
+  if (DROPDOWNS.INTERACTION_STATUS.indexOf(status) === -1) return false;
+  var personId = sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).getValue();
+  var dateValue = sheet.getRange(row, COLS.INTERACTIONS.DATE).getValue();
+  if (!personId) {
+    appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] Status set but Person not identified - cascade skipped.');
+    return false;
+  }
+  if (status === 'Scheduled') {
+    if (!dateValue) appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[missing-date] Add conversation date to create prep task.');
+    routePersonConversationScheduled(personId, dateValue);
+    return true;
+  }
+  if (status === 'Completed') {
+    movePersonStage(personId, 'Conversation completed', { realDate: dateValue || today(), skipInteractionLog: true });
+    return true;
+  }
+  if (status === 'Cancelled') {
+    setOpenTodosForTarget('Person', personId, 'Cancelled', 'Conversation cancelled', ['Conversation prep']);
+    return true;
+  }
+  return false;
+}
+
 function onEditInteractions(sheet, row, col, newVal) {
   if (col === COLS.INTERACTIONS.PERSON && newVal) {
     var resolved = resolveInteractionPersonSelection(String(newVal));
@@ -4368,7 +4486,9 @@ function onEditInteractions(sheet, row, col, newVal) {
       sheet.getRange(row, COLS.INTERACTIONS.ORG).setValue(person.data[COLS.PEOPLE.ORG - 1] || '');
       if (!sheet.getRange(row, COLS.INTERACTIONS.DATE).getValue()) sheet.getRange(row, COLS.INTERACTIONS.DATE).setValue(today());
       if (!sheet.getRange(row, COLS.INTERACTIONS.ID).getValue()) sheet.getRange(row, COLS.INTERACTIONS.ID).setValue(nextId(sheet, COLS.INTERACTIONS.ID, 'INT'));
+      if (!sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue()) sheet.getRange(row, COLS.INTERACTIONS.STATUS).setValue('Completed');
       linkInteractionPersonCell(row);
+      syncPeopleHelperColumns();
     } else if (resolved.ambiguous) {
       appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] Ambiguous person name - pick the dropdown entry with organisation or fill Person ID.');
       SpreadsheetApp.getActiveSpreadsheet().toast('More than one matching person. Pick the entry with organisation or fill Person ID.', 'The Planner', 5);
@@ -4379,10 +4499,28 @@ function onEditInteractions(sheet, row, col, newVal) {
   }
   if (col === COLS.INTERACTIONS.PERSON_ID && newVal) {
     linkInteractionPersonCell(row);
+    syncPeopleHelperColumns();
+    return;
+  }
+  if (col === COLS.INTERACTIONS.DATE && newVal) {
+    var datedStatus = String(sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue() || '');
+    if (datedStatus === 'Scheduled' || datedStatus === 'Completed') {
+      routeInteractionStatusForPerson(sheet, row, datedStatus);
+      refreshDerivedPlanningSurfaces();
+      syncPeopleHelperColumns();
+    }
+    return;
+  }
+  if (col === COLS.INTERACTIONS.STATUS && newVal) {
+    if (routeInteractionStatusForPerson(sheet, row, newVal)) {
+      refreshDerivedPlanningSurfaces();
+      syncPeopleHelperColumns();
+    }
     return;
   }
   if (col !== COLS.INTERACTIONS.OUTCOME || !newVal) return;
   if (String(newVal) === 'System log') return;
+  if (!sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue()) sheet.getRange(row, COLS.INTERACTIONS.STATUS).setValue('Completed');
   var personId = sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).getValue();
   var personName = sheet.getRange(row, COLS.INTERACTIONS.PERSON).getValue();
   var org = sheet.getRange(row, COLS.INTERACTIONS.ORG).getValue();
@@ -4392,6 +4530,7 @@ function onEditInteractions(sheet, row, col, newVal) {
     appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] \u26a0 Outcome set but Person not identified — cascade skipped');
     return;
   }
+  if (String(sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue() || '') === 'Completed') routeInteractionStatusForPerson(sheet, row, 'Completed');
   if (outcome === 'Follow-up needed') {
     appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, org, 'Contact follow-up', 'Not started', addDays(today(), 3), '15 min', notes || '', 'Auto-triggered');
   } else if (outcome === 'Opportunity created') {
@@ -4406,6 +4545,8 @@ function onEditInteractions(sheet, row, col, newVal) {
     setPersonKeepWarm(personId);
   }
   refreshDerivedPlanningSurfaces();
+  syncPeopleHelperColumns();
+  requestHomeRefresh();
 }
 
 // =============================================================
@@ -5117,6 +5258,7 @@ function requestHomeRefresh() {
 }
 
 function refreshDerivedPlanningSurfaces() {
+  syncPeopleHelperColumns();
   populateToday();
 }
 
@@ -7273,6 +7415,7 @@ function captureConfig(captureType) {
     'Add/update conversation': {
       title: 'Add/update conversation',
       fields: [{ k: 'person', l: 'Person', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
+      { k: 'status', l: 'Interaction status', t: 'select', o: DROPDOWNS.INTERACTION_STATUS, defaultValue: 'Completed' },
       { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true }]
     },
     'Add/update interview': {
@@ -7704,7 +7847,6 @@ function processConversationCapture(fields) {
   var person = resolved.person;
   var createdPerson = false;
   if (!person) {
-    if (!fields.org) return failResult('I need the organisation before creating a new person for this conversation.', 'org', 'MISSING_ORG');
     var newPersonId = writePersonRow(fields.person, org, '');
     person = getPersonRowById(newPersonId);
     createdPerson = true;
@@ -7713,14 +7855,17 @@ function processConversationCapture(fields) {
   var personId = person.data[COLS.PEOPLE.ID - 1];
   var personName = person.data[COLS.PEOPLE.NAME - 1];
   var personOrg = person.data[COLS.PEOPLE.ORG - 1] || (org ? org.name : fields.org || '');
-  promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], 'Outreach sent');
-  appendInteraction(personId, personName, personOrg, fields.date || today(), 'Other', fields.notes || '', '');
+  var status = fields.status || 'Completed';
+  if (status !== 'Cancelled') promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], status === 'Scheduled' ? 'Conversation scheduled' : 'Conversation completed');
+  appendInteraction(personId, personName, personOrg, fields.date || '', 'Other', fields.notes || '', '', status);
+  var interactionSheet = getSheet('Conversations');
+  var interactionRow = interactionSheet.getLastRow();
+  routeInteractionStatusForPerson(interactionSheet, interactionRow, status);
   if (fields.outcome) {
-    var sheet = getSheet('Conversations');
-    var interactionRow = sheet.getLastRow();
-    sheet.getRange(interactionRow, COLS.INTERACTIONS.OUTCOME).setValue(fields.outcome);
-    onEditInteractions(sheet, interactionRow, COLS.INTERACTIONS.OUTCOME, fields.outcome);
+    interactionSheet.getRange(interactionRow, COLS.INTERACTIONS.OUTCOME).setValue(fields.outcome);
+    onEditInteractions(interactionSheet, interactionRow, COLS.INTERACTIONS.OUTCOME, fields.outcome);
   }
+  syncPeopleHelperColumns();
   return okResult('Captured the conversation update for ' + personName + (createdPerson ? ' and created the person row.' : '.'));
 }
 
@@ -7799,7 +7944,8 @@ var HEADER_GUIDANCE = {
     'Relationship status': 'Identified / To outreach / Drafted / Sent / Replied / Scheduled / Completed / Keep warm / Closed',
     'Next follow-up date': 'auto or manual',
     'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
-    'Context / notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
+    'Context / notes': 'source, context, next angle', 'Follow-ups sent count': 'system',
+    'Last interaction': 'automatic from completed Conversations', 'Next action': 'automatic from open Tasks', 'Linked jobs': 'automatic from Jobs'
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
@@ -7811,7 +7957,7 @@ var HEADER_GUIDANCE = {
   },
   'Interactions': {
     'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'Prefer Home > Add update; pick or type person', 'Organisation': 'auto from person',
-    'Type': 'call, email, message, referral, etc.', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
+    'Type': 'call, email, message, referral, etc.', 'Interaction status': 'Scheduled / Completed / Cancelled', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
   },
   'To-do': {
     'Task ID': 'system', 'Task': 'Master task queue — inspect, repair, audit', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
@@ -7910,7 +8056,7 @@ var MANUAL_COLUMNS = {
   'Organisations': [COLS.ORGS.NAME, COLS.ORGS.SECTOR, COLS.ORGS.SUBSECTOR, COLS.ORGS.TIER, COLS.ORGS.STATUS, COLS.ORGS.NOTES],
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
-  'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
+  'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
   'To-do': [COLS.TODO.STATUS, COLS.TODO.NOTES],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
@@ -7919,9 +8065,9 @@ var MANUAL_COLUMNS = {
 var COLUMN_WIDTHS = {
   'Sectors': { 2: 190, 4: 260, 5: 100, 6: 300 },
   'Organisations': { 2: 220, 4: 170, 6: 220, 7: 70, 8: 120, 9: 135, 10: 165, 13: 300 },
-  'People': { 2: 190, 3: 200, 5: 170, 6: 150, 7: 175, 8: 125, 9: 120, 12: 135, 13: 300 },
+  'People': { 2: 190, 3: 200, 5: 170, 6: 175, 7: 185, 8: 125, 9: 120, 11: 125, 12: 135, 13: 300, 15: 125, 16: 260, 17: 260 },
   'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 9: 220, 11: 130, 12: 170, 13: 320 },
-  'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 320, 8: 160 },
+  'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 135, 8: 320, 9: 160 },
   'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
   "Today's plan": { 1: 80, 2: 340, 4: 110, 5: 100, 6: 100, 7: 120, 8: 100, 9: 340 },
@@ -7929,7 +8075,7 @@ var COLUMN_WIDTHS = {
 };
 
 var WRAP_COLUMNS = {
-  'Sectors': [COLS.SECTORS.SUBSECTOR, COLS.SECTORS.NOTES], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES],
+  'Sectors': [COLS.SECTORS.SUBSECTOR, COLS.SECTORS.NOTES], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES, COLS.PEOPLE.NEXT_ACTION, COLS.PEOPLE.LINKED_JOBS],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES], 'Interactions': [COLS.INTERACTIONS.NOTES],
   'To-do': [COLS.TODO.TASK, COLS.TODO.NOTES], 'Interview rounds': [COLS.ROUNDS.NOTES],
   "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES]
@@ -8405,6 +8551,25 @@ function migrateJobsDeadlineStatusSchema() {
   return changed;
 }
 
+function migrateInteractionsStatusSchema() {
+  var sheet = getSheet('Conversations');
+  if (!sheet || sheet.getLastRow() < 1) return false;
+  var width = Math.max(sheet.getLastColumn(), HEADERS.Interactions.length);
+  var headers = sheet.getRange(1, 1, 1, width).getValues()[0].map(String);
+  if (headers[COLS.INTERACTIONS.STATUS - 1] === 'Interaction status') return false;
+  var oldNotesAtStatus = headers[COLS.INTERACTIONS.STATUS - 1] === 'Key notes' && headers[COLS.INTERACTIONS.NOTES - 1] === 'Outcome';
+  if (!oldNotesAtStatus) return false;
+  sheet.insertColumnBefore(COLS.INTERACTIONS.STATUS);
+  sheet.getRange(1, 1, 1, HEADERS.Interactions.length).setValues([HEADERS.Interactions]);
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (rowCount > 0) {
+    var statuses = [];
+    for (var i = 0; i < rowCount; i++) statuses.push(['Completed']);
+    sheet.getRange(2, COLS.INTERACTIONS.STATUS, rowCount, 1).setValues(statuses);
+  }
+  return true;
+}
+
 function migrateSectorIdSchema() {
   var migratedSectors = migrateSectorsTwoIdSchema();
   var migratedOrgs = migrateOrganisationSectorIdSchema();
@@ -8414,7 +8579,8 @@ function migrateSectorIdSchema() {
 function migrateWorkbookSchema() {
   var migratedSectorsOrOrgs = migrateSectorIdSchema();
   var migratedJobs = migrateJobsDeadlineStatusSchema();
-  return migratedSectorsOrOrgs || migratedJobs;
+  var migratedInteractions = migrateInteractionsStatusSchema();
+  return migratedSectorsOrOrgs || migratedJobs || migratedInteractions;
 }
 
 // =============================================================
@@ -8482,6 +8648,7 @@ function applySheetDropdowns(canonicalName) {
       break;
     case 'Conversations':
       setDropdown(sheet.getRange(2, COLS.INTERACTIONS.TYPE, maxRow, 1), DROPDOWNS.INTERACTION_TYPE);
+      setDropdown(sheet.getRange(2, COLS.INTERACTIONS.STATUS, maxRow, 1), DROPDOWNS.INTERACTION_STATUS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.INTERACTIONS.OUTCOME, maxRow, 1), DROPDOWNS.INTERACTION_OUTCOME, { allowInvalid: false });
       refreshInteractionPersonDropdown();
       break;
@@ -9528,6 +9695,7 @@ function repairAllTabsImpl() {
   syncOrgReviewSchedules();
   refreshLinkedContactsDisplay();
   repairInteractionPersonLinks();
+  syncPeopleHelperColumns();
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
   setupTasksTabExtras();
@@ -9559,8 +9727,11 @@ function dailyMaintenance() {
   // interleave with a user edit mid-cascade.
   withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
-    if (migrateJobsDeadlineStatusSchema()) {
+    var migratedJobs = migrateJobsDeadlineStatusSchema();
+    var migratedInteractions = migrateInteractionsStatusSchema();
+    if (migratedJobs || migratedInteractions) {
       applySheetDropdowns('Jobs');
+      applySheetDropdowns('Conversations');
       colorCodeManualFields();
       applyStatusColorCoding();
       applyColumnWidths();
@@ -9580,6 +9751,7 @@ function dailyMaintenance() {
     checkInterviewRoundHealthFlags();
     refreshInteractionPersonDropdown();
     repairInteractionPersonLinks();
+    syncPeopleHelperColumns();
     populateToday();
     refreshHome();
     checkTriggerHealth();
