@@ -5113,7 +5113,7 @@ function splitInputList(value) {
 function setupChecklistFor(entryPoint, fields) {
   if (entryPoint === 'sectors') {
     return [{
-      workflow: 'Sector selection',
+      alwaysDone: true,
       label: 'List 2-4 sub-sectors worth exploring',
       text: 'List 2-4 sub-sectors worth exploring',
       tab: 'Today',
