@@ -269,7 +269,7 @@ var DROPDOWNS = {
   JOB_STATUS: ['Want to apply', 'Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'],
 
   INTERACTION_TYPE: ['Intro call', 'Coffee', 'LinkedIn message', 'Email', 'Phone', 'Interview', 'Referral', 'Auto-log', 'Other'],
-  INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed'],
+  INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
 
   TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'None'],
   TODO_WORKFLOW: [
@@ -675,13 +675,28 @@ function findPersonByNameOrg(name, org) {
   if (!sheet || sheet.getLastRow() < 2 || !name) return null;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
   var n = normalizeKeyPart(name), o = normalizeKeyPart(org);
+  var best = null, bestScore = 0;
   for (var i = 0; i < data.length; i++) {
-    if (normalizeKeyPart(data[i][COLS.PEOPLE.NAME - 1]) === n &&
-        (!o || normalizeKeyPart(data[i][COLS.PEOPLE.ORG - 1]) === o)) {
-      return { row: i + 2, data: data[i] };
-    }
+    var sameOrg = !o || normalizeKeyPart(data[i][COLS.PEOPLE.ORG - 1]) === o || normalizeKeyPart(data[i][COLS.PEOPLE.ORG_ID - 1]) === o;
+    if (!sameOrg) continue;
+    var score = similarity(n, normalizeKeyPart(data[i][COLS.PEOPLE.NAME - 1]));
+    if (score > bestScore) { bestScore = score; best = { row: i + 2, data: data[i], score: score }; }
   }
-  return null;
+  return bestScore >= 0.85 ? best : null;
+}
+
+function findPeopleByNameOrgScoped(name, orgId, orgName) {
+  var sheet = getSheet('People');
+  if (!sheet || sheet.getLastRow() < 2 || !name) return [];
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
+  var n = normalizeKeyPart(name), orgKey = normalizeKeyPart(orgName), idKey = String(orgId || '');
+  var matches = [];
+  for (var i = 0; i < data.length; i++) {
+    var sameOrg = idKey ? String(data[i][COLS.PEOPLE.ORG_ID - 1]) === idKey : (orgKey && normalizeKeyPart(data[i][COLS.PEOPLE.ORG - 1]) === orgKey);
+    if (!sameOrg) continue;
+    if (similarity(n, normalizeKeyPart(data[i][COLS.PEOPLE.NAME - 1])) >= 0.85) matches.push({ row: i + 2, data: data[i] });
+  }
+  return matches;
 }
 
 // v7.3: single bulk read (see getOrgById).
@@ -708,6 +723,7 @@ function getPersonRowById(personId) {
 function checkPeopleDuplicate(sheet, editedRow) {
   var newName = sheet.getRange(editedRow, COLS.PEOPLE.NAME).getValue();
   var newOrg = sheet.getRange(editedRow, COLS.PEOPLE.ORG).getValue();
+  var newOrgId = sheet.getRange(editedRow, COLS.PEOPLE.ORG_ID).getValue();
   if (!newName) return;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
@@ -718,7 +734,9 @@ function checkPeopleDuplicate(sheet, editedRow) {
     var existingName = String(data[i][COLS.PEOPLE.NAME - 1]);
     if (!existingName || similarity(newName, existingName) < 0.85) continue;
     var existingOrg = String(data[i][COLS.PEOPLE.ORG - 1]);
-    if (newOrg && existingOrg && similarity(newOrg, existingOrg) < 0.8) continue;
+    var existingOrgId = String(data[i][COLS.PEOPLE.ORG_ID - 1] || '');
+    if (newOrgId && existingOrgId && String(newOrgId) !== existingOrgId) continue;
+    if (!newOrgId && newOrg && existingOrg && normalizeKeyPart(newOrg) !== normalizeKeyPart(existingOrg)) continue;
     var ui = SpreadsheetApp.getUi();
     var resp = ui.alert('Possible duplicate person',
       '"' + existingName + '" at "' + existingOrg + '" already exists (row ' + existingRow + ').', ui.ButtonSet.OK);
@@ -731,20 +749,21 @@ function findJobByTitleOrg(title, org) {
   if (!sheet || sheet.getLastRow() < 2 || !title) return null;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Jobs.length).getValues();
   var t = normalizeKeyPart(title), o = normalizeKeyPart(org);
+  var best = null, bestScore = 0;
   for (var i = 0; i < data.length; i++) {
-    if (normalizeKeyPart(data[i][COLS.JOBS.OPPORTUNITY - 1]) === t &&
-        (!o || normalizeKeyPart(data[i][COLS.JOBS.ORG - 1]) === o)) {
-      return { row: i + 2, data: data[i] };
-    }
+    var sameOrg = !o || normalizeKeyPart(data[i][COLS.JOBS.ORG - 1]) === o || normalizeKeyPart(data[i][COLS.JOBS.ORG_ID - 1]) === o;
+    if (!sameOrg) continue;
+    var score = similarity(t, normalizeKeyPart(data[i][COLS.JOBS.OPPORTUNITY - 1]));
+    if (score > bestScore) { bestScore = score; best = { row: i + 2, data: data[i], score: score }; }
   }
-  return null;
+  return bestScore >= 0.85 ? best : null;
 }
 
 // v7.3: single bulk read (see getOrgById).
 function getJobRowById(jobId) {
   var sheet = getSheet('Jobs');
   if (!sheet || sheet.getLastRow() < 2 || !jobId) return null;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.APPLIED_DATE).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.NOTES).getValues();
   var target = String(jobId);
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.JOBS.ID - 1]) === target) {
@@ -756,7 +775,9 @@ function getJobRowById(jobId) {
         orgId: row[COLS.JOBS.ORG_ID - 1],
         status: row[COLS.JOBS.STATUS - 1],
         deadline: row[COLS.JOBS.DEADLINE - 1],
-        appliedDate: row[COLS.JOBS.APPLIED_DATE - 1]
+        appliedDate: row[COLS.JOBS.APPLIED_DATE - 1],
+        response: row[COLS.JOBS.RESPONSE - 1],
+        outcome: row[COLS.JOBS.OUTCOME - 1]
       };
     }
   }
@@ -766,6 +787,7 @@ function getJobRowById(jobId) {
 function checkJobDuplicate(sheet, editedRow) {
   var newTitle = sheet.getRange(editedRow, COLS.JOBS.OPPORTUNITY).getValue();
   var newOrg = sheet.getRange(editedRow, COLS.JOBS.ORG).getValue();
+  var newOrgId = sheet.getRange(editedRow, COLS.JOBS.ORG_ID).getValue();
   if (!newTitle) return;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
@@ -776,7 +798,9 @@ function checkJobDuplicate(sheet, editedRow) {
     var existingTitle = String(data[i][COLS.JOBS.OPPORTUNITY - 1]);
     if (!existingTitle || similarity(newTitle, existingTitle) < 0.85) continue;
     var existingOrg = String(data[i][COLS.JOBS.ORG - 1]);
-    if (newOrg && existingOrg && existingOrg.toLowerCase() !== String(newOrg).toLowerCase()) continue;
+    var existingOrgId = String(data[i][COLS.JOBS.ORG_ID - 1] || '');
+    if (newOrgId && existingOrgId && String(newOrgId) !== existingOrgId) continue;
+    if (!newOrgId && newOrg && existingOrg && normalizeKeyPart(existingOrg) !== normalizeKeyPart(newOrg)) continue;
     SpreadsheetApp.getUi().alert('Possible duplicate job',
       '"' + existingTitle + '" at "' + existingOrg + '" already exists (row ' + existingRow + ').', SpreadsheetApp.getUi().ButtonSet.OK);
     break;
@@ -811,6 +835,19 @@ function jobHasRounds(jobId) {
   var ids = sheet.getRange(2, COLS.ROUNDS.JOB_ID, sheet.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === String(jobId)) return true;
   return false;
+}
+
+function nextRoundNumberForJob(jobId) {
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 2 || !jobId) return 1;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ROUNDS.ROUND).getValues();
+  var maxRound = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.ROUNDS.JOB_ID - 1]) !== String(jobId)) continue;
+    var round = parseInt(data[i][COLS.ROUNDS.ROUND - 1], 10);
+    if (!isNaN(round)) maxRound = Math.max(maxRound, round);
+  }
+  return maxRound + 1;
 }
 
 // =============================================================
@@ -1587,9 +1624,7 @@ function handleJobTodoCompletion(todo, options) {
   } else if (todo.workflow === 'Submit application') {
     setJobStatus(todo.objId, 'Applied', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
-    appendPendingDecision('JOB_RESPONSE_OUTCOME:' + todo.id, 'Response check completed: ' + job.title,
-      'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', todo.objId, 'Admin',
-      'Choose the real outcome on Jobs: no response yet / interview / rejected / offer / parked.');
+    createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
       'Add/update people found at ' + job.org, 'Organisation', job.orgId, 'People sourcing', todo.notes || '');
@@ -1608,13 +1643,13 @@ function handlePersonTodoCompletion(todo, options) {
     movePersonStage(todo.objId, 'Outreach sent', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Contact follow-up') {
     setPersonFollowUpSent(todo.objId);
-    appendInteraction(todo.objId, person.name, person.org, today(), 'Email', 'Follow-up sent', 'Useful');
+    appendInteraction(todo.objId, person.name, person.org, today(), 'Auto-log', 'Follow-up sent', 'System log');
   } else if (todo.workflow === 'Reply and arrange conversation') {
     appendPendingDecision('PERSON_REPLY_OUTCOME:' + todo.id, 'Reply handled: ' + person.name,
       'Record conversation outcome / next step for ' + person.name, 'Person', todo.objId, 'Admin',
       'Choose: scheduled / next action / nurture / closed.');
   } else if (todo.workflow === 'Conversation prep') {
-    appendInteraction(todo.objId, person.name, person.org, today(), 'Auto-log', 'Conversation prep completed', 'Useful');
+    appendInteraction(todo.objId, person.name, person.org, today(), 'Auto-log', 'Conversation prep completed', 'System log');
   } else if (todo.workflow === 'Thank-you and debrief' || todo.workflow === 'Conversation debrief') {
     movePersonStage(todo.objId, 'Conversation completed', { source: 'todo-completion', realDate: today() });
   }
@@ -1762,6 +1797,16 @@ function getJobInfo(jobId) { var j = getJobRowById(jobId); return j ? { title: j
 // The single place Job status transitions are handled — called from
 // onEditJobs (manual edit), setJobStatus (programmatic), and onboarding
 // capture. Never called twice for the same transition.
+function createJobResponseOutcomeDecision(jobId, reason) {
+  var job = getJobRowById(jobId);
+  if (!job) return '';
+  var status = normalizeJobStatus(job.status);
+  if (['Applied', 'Interviewing', 'Offer'].indexOf(status) === -1) return '';
+  return appendPendingDecision('JOB_RESPONSE_OUTCOME:' + jobId, reason || 'Job response received: ' + job.title,
+    'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', jobId, 'Admin',
+    'Choose the real outcome on Jobs: no response yet / interview / rejected / offer / parked.');
+}
+
 function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   opts = opts || {};
   var job = getJobRowById(jobId);
@@ -1822,7 +1867,7 @@ function createInterviewRoundForJob(jobId, opts) {
   var details = opts.roundDetails || {};
   var sheet = getSheet('Interviews');
   var id = nextId(sheet, COLS.ROUNDS.ID, 'RND');
-  var roundNum = parseInt(details.roundNum || 1, 10) || 1;
+  var roundNum = parseInt(details.roundNum || nextRoundNumberForJob(jobId), 10) || nextRoundNumberForJob(jobId);
   var roundType = details.roundType || 'Other';
   if (DROPDOWNS.ROUND_TYPE.indexOf(roundType) === -1) roundType = 'Other';
   var date = details.interviewDate || '';
@@ -1905,7 +1950,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_DATE).setValue(follow);
     sheet.getRange(person.row, COLS.PEOPLE.REPLY_RECEIVED).setValue('');
     sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_SENT).setValue('No');
-    appendInteraction(personId, person.name, person.org, outreachDate, 'Auto-log', 'Outreach sent', 'Useful');
+    appendInteraction(personId, person.name, person.org, outreachDate, 'Auto-log', 'Outreach sent', 'System log');
     if (follow <= today()) appendTodoOnceForWorkflow('Follow up with ' + person.name + (person.org ? ' at ' + person.org : ''), 'Person', personId, person.org, 'Contact follow-up', 'Not started', follow, '15 min', 'Outreach follow-up due.', 'Auto-triggered');
     return;
   }
@@ -2398,7 +2443,24 @@ function onEditJobs(sheet, row, col, newVal, e) {
     }
     return;
   }
-  if (col === COLS.JOBS.DEADLINE) { recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue())); return; }
+  if (col === COLS.JOBS.DEADLINE) { recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue())); syncJobsPeopleHealthFlags(); return; }
+  if (col === COLS.JOBS.RESPONSE && String(newVal) === 'Yes') {
+    var responseJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
+    sheet.getRange(row, COLS.JOBS.ID).setValue(responseJobId);
+    createJobResponseOutcomeDecision(responseJobId, 'Response received for ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue());
+    renderTodayDecisionCards();
+    refreshHome();
+    return;
+  }
+  if (col === COLS.JOBS.OUTCOME && newVal) {
+    var outcomeJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
+    sheet.getRange(row, COLS.JOBS.ID).setValue(outcomeJobId);
+    if (!sheet.getRange(row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(row, COLS.JOBS.RESPONSE).setValue('Yes');
+    createJobResponseOutcomeDecision(outcomeJobId, 'Outcome entered for ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue());
+    renderTodayDecisionCards();
+    refreshHome();
+    return;
+  }
   if (col === COLS.JOBS.STATUS) {
     var status = normalizeJobStatus(newVal);
     if (status !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.STATUS).setValue(status);
@@ -2410,6 +2472,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     }
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
     fireJobStatusChanged(id, e && e.oldValue, status, { source: 'manual' });
+    syncJobsPeopleHealthFlags();
   }
 }
 
@@ -2483,7 +2546,7 @@ function appendInteraction(personId, personName, org, dateValue, typeValue, note
   row[COLS.INTERACTIONS.ORG - 1] = org || '';
   row[COLS.INTERACTIONS.TYPE - 1] = typeValue || 'Auto-log';
   row[COLS.INTERACTIONS.NOTES - 1] = notes || '';
-  row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || 'Useful';
+  row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || (typeValue === 'Auto-log' ? 'System log' : 'Useful');
   sheet.appendRow(row);
   return id;
 }
@@ -4691,11 +4754,16 @@ function processJobCapture(fields) {
   var sheet = getSheet('Jobs');
   if (fields.deadline) sheet.getRange(job.row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
   if (fields.urlNotes) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, fields.urlNotes);
-  if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
-  if (fields.outcome) sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(fields.outcome);
   var opts = { realDate: fields.appliedDate || '' };
   if (status === 'Interviewing') opts.roundDetails = { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' };
   fireJobStatusChanged(jobId, '', status, opts);
+  job = getJobRowById(jobId);
+  if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
+  if (fields.outcome) {
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(fields.outcome);
+    if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+  }
+  if (fields.response === 'Yes' || fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
   return 'Captured the job/application update.';
 }
 
@@ -4718,13 +4786,17 @@ var HEADER_GUIDANCE = {
     'Person ID': 'system', 'Name': '1. Type name', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
     'Role': 'optional', 'Relationship type': 'optional', 'Stage': 'real state of the relationship', 'Follow-up date': 'auto or manual',
     'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
-    'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
+    'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system',
+    'Name': 'Type a contact name; Organisation unlocks outreach tasks',
+    'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed'
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': '1. Job title', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
     'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
-    'Response received': 'Yes/No when known', 'Outcome': 'result or close reason', 'Notes': 'URL/source and prep notes'
+    'Response received': 'Yes/No when known', 'Outcome': 'result or close reason', 'Notes': 'URL/source and prep notes',
+    'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
+    'Outcome': 'Entering an outcome marks Response received = Yes'
   },
   'Interactions': {
     'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'pick or type person', 'Organisation': 'auto from person',
@@ -5497,8 +5569,16 @@ function linkContactToJob() {
   var resp = ui.prompt('Link contact to Job', 'Person name(s), comma-separated:', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var names = resp.getResponseText().split(',').map(function (s) { return s.trim(); }).filter(String);
-  var newIds = [], notFound = [];
-  names.forEach(function (nm) { var p = findPersonByNameOrg(nm, ''); if (p) newIds.push(String(p.data[COLS.PEOPLE.ID - 1])); else notFound.push(nm); });
+  var jobOrgId = sheet.getRange(row, COLS.JOBS.ORG_ID).getValue();
+  var jobOrg = sheet.getRange(row, COLS.JOBS.ORG).getValue();
+  var newIds = [], notFound = [], ambiguous = [];
+  names.forEach(function (nm) {
+    var matches = findPeopleByNameOrgScoped(nm, jobOrgId, jobOrg);
+    if (matches.length === 1) newIds.push(String(matches[0].data[COLS.PEOPLE.ID - 1]));
+    else if (matches.length > 1) ambiguous.push(nm);
+    else notFound.push(nm);
+  });
+  if (ambiguous.length) ui.alert('Ambiguous contact(s)', ambiguous.join(', ') + ' matched more than one person at ' + (jobOrg || 'this organisation') + '. Link manually from People first.', ui.ButtonSet.OK);
   if (notFound.length) ui.alert('Some names not found', notFound.join(', '), ui.ButtonSet.OK);
   if (!newIds.length) return;
   var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
@@ -5678,6 +5758,101 @@ function repairOrganisationsFormulas() {
   }
 }
 
+function orgIdExistsMap() {
+  var sheet = getSheet('Organisations');
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var ids = sheet.getRange(2, COLS.ORGS.ID, sheet.getLastRow() - 1, 1).getValues();
+  ids.forEach(function (r) { if (r[0]) out[String(r[0])] = true; });
+  return out;
+}
+
+function jobIdExistsMap() {
+  var sheet = getSheet('Jobs');
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var ids = sheet.getRange(2, COLS.JOBS.ID, sheet.getLastRow() - 1, 1).getValues();
+  ids.forEach(function (r) { if (r[0]) out[String(r[0])] = true; });
+  return out;
+}
+
+function personIdExistsMap() {
+  var sheet = getSheet('People');
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var ids = sheet.getRange(2, COLS.PEOPLE.ID, sheet.getLastRow() - 1, 1).getValues();
+  ids.forEach(function (r) { if (r[0]) out[String(r[0])] = true; });
+  return out;
+}
+
+function syncJobsPeopleHealthFlags() {
+  var todayDate = today();
+  var count = 0;
+  var orgIds = orgIdExistsMap();
+  var jobsSheet = getSheet('Jobs');
+  if (jobsSheet && jobsSheet.getLastRow() >= 2) {
+    var jobs = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, HEADERS.Jobs.length).getValues();
+    for (var j = 0; j < jobs.length; j++) {
+      var jr = j + 2;
+      var status = normalizeJobStatus(jobs[j][COLS.JOBS.STATUS - 1]);
+      var deadline = jobs[j][COLS.JOBS.DEADLINE - 1];
+      if (status === 'Want to apply' && deadline && new Date(deadline) < todayDate) {
+        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missed-deadline] Deadline passed while still Want to apply');
+        count++;
+      } else {
+        clearNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missed-deadline]');
+      }
+      var jobOrgId = String(jobs[j][COLS.JOBS.ORG_ID - 1] || '');
+      if (jobOrgId && !orgIds[jobOrgId]) {
+        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[orphaned-org] Linked Organisation no longer exists');
+        count++;
+      } else {
+        clearNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[orphaned-org]');
+      }
+    }
+  }
+  var peopleSheet = getSheet('People');
+  if (peopleSheet && peopleSheet.getLastRow() >= 2) {
+    var people = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, HEADERS.People.length).getValues();
+    for (var p = 0; p < people.length; p++) {
+      var personOrgId = String(people[p][COLS.PEOPLE.ORG_ID - 1] || '');
+      if (personOrgId && !orgIds[personOrgId]) {
+        appendNoteFlag(peopleSheet, p + 2, COLS.PEOPLE.NOTES, '[orphaned-org] Linked Organisation no longer exists');
+        count++;
+      } else {
+        clearNoteFlag(peopleSheet, p + 2, COLS.PEOPLE.NOTES, '[orphaned-org]');
+      }
+    }
+  }
+  var taskSheet = getSheet('Tasks');
+  if (taskSheet && taskSheet.getLastRow() >= 2) {
+    var jobIds = jobIdExistsMap(), personIds = personIdExistsMap();
+    var tasks = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    for (var t = 0; t < tasks.length; t++) {
+      var type = String(tasks[t][COLS.TODO.OBJ_TYPE - 1] || '');
+      var id = String(tasks[t][COLS.TODO.OBJ_ID - 1] || '');
+      if ((type === 'Job' && id && !jobIds[id]) || (type === 'Person' && id && !personIds[id])) {
+        appendNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-link] Linked ' + type + ' no longer exists');
+        count++;
+      }
+    }
+  }
+  var decisionSheet = getSheet('Decisions');
+  if (decisionSheet && decisionSheet.getLastRow() >= 2) {
+    var dJobIds = jobIdExistsMap(), dPersonIds = personIdExistsMap();
+    var decisions = decisionSheet.getRange(2, 1, decisionSheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+    for (var d = 0; d < decisions.length; d++) {
+      var dType = String(decisions[d][COLS.DECISIONS.TARGET_TYPE - 1] || '');
+      var dId = String(decisions[d][COLS.DECISIONS.TARGET_ID - 1] || '');
+      if ((dType === 'Job' && dId && !dJobIds[dId]) || (dType === 'Person' && dId && !dPersonIds[dId])) {
+        appendNoteFlag(decisionSheet, d + 2, COLS.DECISIONS.NOTES, '[orphaned-link] Linked ' + dType + ' no longer exists');
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
 function ensureCanonicalSheet(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = getSheet(name);
@@ -5709,6 +5884,7 @@ function repairAllTabs() {
   repairOrgTaxonomyLinks();
   repairSectorTaskLinks();
   detectSectorOrphans();
+  syncJobsPeopleHealthFlags();
   repairOrganisationsFormulas();
   refreshLinkedContactsDisplay();
   recalculateCommitmentClasses();
@@ -5749,6 +5925,7 @@ function dailyMaintenance() {
     repairSectorRows();
     repairSectorTaskLinks();
     detectSectorOrphans();
+    syncJobsPeopleHealthFlags();
     checkDomainReadinessFlags();
     refreshInteractionPersonDropdown();
     populateToday();
