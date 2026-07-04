@@ -182,7 +182,7 @@ var HEADERS = {
   Jobs: [
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
     'Deadline', 'Application status', 'Applied date',
-    'Linked contacts (IDs)', 'Linked contacts (display)',
+    'Linked contacts (IDs)', 'People for this application',
     'Review date', 'Response received', 'Outcome', 'Notes'
   ],
   Interactions: [
@@ -1045,11 +1045,15 @@ function jobRowHasStateBeyondOpportunity(sheet, row) {
 }
 
 function guardManualJobSystemIdEdit(sheet, row, col, e) {
-  if (col !== COLS.JOBS.ID && col !== COLS.JOBS.ORG_ID) return false;
+  var messages = {};
+  messages[COLS.JOBS.ID] = 'Job ID is system-generated. Type the Opportunity first.';
+  messages[COLS.JOBS.ORG_ID] = 'Org ID is filled from Organisation. Type Organisation instead.';
+  messages[COLS.JOBS.CONTACTS_IDS] = 'Linked contact IDs are filled by application/referral actions.';
+  messages[COLS.JOBS.CONTACTS_DISPLAY] = 'People for this application is filled by application/referral actions.';
+  if (!messages[col]) return false;
   restoreOrClearEditedCell(sheet, row, col, e);
-  var msg = col === COLS.JOBS.ID
-    ? 'Job ID is system-generated. Type the Opportunity first.'
-    : 'Org ID is filled from Organisation. Type Organisation instead.';
+  if (col === COLS.JOBS.CONTACTS_DISPLAY) refreshLinkedContactsDisplay();
+  var msg = messages[col];
   SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'The Planner', 5);
   return true;
 }
@@ -2463,6 +2467,7 @@ function handleJobTodoCompletion(todo, options) {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
     if (String(todo.task || '').indexOf('Find referral contact:') !== 0) return;
+    if (options.referralSearchHandled) return;
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
       'Add/update referral contact found for ' + job.title + ' at ' + job.org,
       'Job', todo.objId, 'People sourcing',
@@ -3773,6 +3778,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     var jobOrgChanged = relinkJobId && newJobOrgName && ((oldJobOrgName && oldJobOrgName !== newJobOrgName) || (oldJobOrgId && oldJobOrgId !== newJobOrgId));
     if (jobOrgChanged) {
       propagateJobOrganisationChange(relinkJobId, newJobOrgName, newJobOrgId, oldJobOrgName, oldJobOrgId);
+      refreshLinkedContactsDisplay();
     }
     var routedOrgEvidence = promoteOrgForLiveJob(newJobOrgId, relinkJobStatus);
     if (jobOrgChanged || routedOrgEvidence) {
@@ -3867,6 +3873,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
   if (col === COLS.PEOPLE.NAME || col === COLS.PEOPLE.ORG) checkPeopleDuplicate(sheet, row);
   if (col === COLS.PEOPLE.ORG) {
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    refreshLinkedContactsDisplay();
     var pNotes = String(sheet.getRange(row, COLS.PEOPLE.NOTES).getValue() || '');
     if (pNotes.indexOf('[pending-org]') !== -1) {
       clearNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org]');
@@ -3895,6 +3902,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     } else {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation to activate outreach task (leave blank and use the Tasks menu if there is none).');
     }
+    refreshLinkedContactsDisplay();
     return;
   }
   if (col === COLS.PEOPLE.REPLY_RECEIVED && String(newVal) === 'Yes') {
@@ -4829,6 +4837,13 @@ function onEditTasks(sheet, row, col, newVal, e) {
       runSubmitApplicationPopup(editedTodo.id);
       return;
     }
+    if (isReferralSearchContactTask(editedTodo)) {
+      var priorReferralStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
+      sheet.getRange(row, COLS.TODO.STATUS).setValue(priorReferralStatus);
+      sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
+      runReferralSearchResultPopup(editedTodo.id);
+      return;
+    }
   }
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE || col === COLS.TODO.TIME_EST) sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE) {
@@ -5151,7 +5166,7 @@ function collectTaskPool(focus, tierLookup) {
 
 function taskMatchesFocus(workflow, objType, focus) {
   if (!focus || focus === 'Default') return true;
-  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
+  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Referral search', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
   if (focus === 'Networking') return objType === 'Person';
   if (focus === 'Interviews') return objType === 'Interview round' || /Interview/.test(workflow);
   if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'People sourcing', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
@@ -5697,6 +5712,11 @@ function onEditToday(sheet, row, col, newVal) {
     if (todo && todo.workflow === 'Submit application' && todo.objType === 'Job') {
       sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
       runSubmitApplicationPopup(String(todoId));
+      return;
+    }
+    if (isReferralSearchContactTask(todo)) {
+      sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
+      runReferralSearchResultPopup(String(todoId));
       return;
     }
   }
@@ -6668,14 +6688,33 @@ function knownPeopleForJob(jobId) {
   return out.filter(function (p) { return p.id && p.name; });
 }
 
+function parseLinkedContactIds(value) {
+  return String(value || '').split(',').map(function (s) { return s.trim(); }).filter(String);
+}
+
+function uniqueLinkedContactIds(ids) {
+  var seen = {}, out = [];
+  (ids || []).forEach(function (id) {
+    var clean = String(id || '').trim();
+    if (!clean || seen[clean]) return;
+    seen[clean] = true;
+    out.push(clean);
+  });
+  return out;
+}
+
+function writeLinkedContactIdsForJobRow(sheet, row, ids) {
+  var clean = uniqueLinkedContactIds(ids);
+  sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(clean.join(', '));
+  return clean;
+}
+
 function linkPersonIdToJob(jobId, personId) {
   var job = getJobRowById(jobId), person = getPersonRowById(personId);
   if (!job || !person) return false;
   var sheet = getSheet('Jobs');
   var existing = String(sheet.getRange(job.row, COLS.JOBS.CONTACTS_IDS).getValue() || '');
-  var ids = existing.split(',').map(function (s) { return s.trim(); }).filter(String);
-  if (ids.indexOf(String(personId)) === -1) ids.push(String(personId));
-  sheet.getRange(job.row, COLS.JOBS.CONTACTS_IDS).setValue(ids.join(', '));
+  writeLinkedContactIdsForJobRow(sheet, job.row, parseLinkedContactIds(existing).concat([personId]));
   refreshLinkedContactsDisplay();
   return true;
 }
@@ -6683,7 +6722,7 @@ function linkPersonIdToJob(jobId, personId) {
 function createReferralOutreachTask(job, personId, source) {
   var person = getPersonRowById(personId);
   if (!job || !person) return '';
-  var personName = String(person.data[COLS.PEOPLE.NAME - 1] || '');
+  var personName = String(person.name || '');
   var task = 'Draft outreach to ' + personName + ' about ' + job.title + ' at ' + job.org;
   return appendTodoWithSource(task, 'Person', personId, job.org, 'Outreach', 'Not started',
     applicationPlanDueDate(job), '20 min',
@@ -6996,7 +7035,7 @@ function completeApplicationPlanFromPopup(payload) {
       } else if (referralPlan === 'find_contact') {
         var findId = createApplicationPlanTask(job, 'Find referral contact: ' + job.title + ' at ' + job.org,
           'Referral search', due, '30 min',
-          'If you find someone, mark Done and accept the follow-up decision to add/link them. If not, choose No; submit still proceeds.');
+          'When done, the planner asks whether to link an existing person, add a new person, or close without a referral. Submit still proceeds.');
         if (findId) created.push(findId);
       } else if (referralPlan === 'known_person') {
         if (!payload.personId) return failResult('Choose the known person.', 'personId', 'MISSING_PERSON');
@@ -7008,7 +7047,7 @@ function completeApplicationPlanFromPopup(payload) {
         if (!personName) return failResult('Add the contact name.', 'personName', 'MISSING_PERSON');
         var personId = writePersonRow(personName, { id: job.orgId, name: job.org }, '');
         var person = getPersonRowById(personId);
-        if (person && !person.data[COLS.PEOPLE.STAGE - 1]) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
+        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
         promoteOrgForLivePerson(job.orgId, 'Identified');
         linkPersonIdToJob(job.id, personId);
         var newOutreachId = createReferralOutreachTask(job, personId, 'Application plan');
@@ -7031,6 +7070,87 @@ function completeApplicationPlanFromPopup(payload) {
       return popupExceptionResult('completeApplicationPlanFromPopup', err);
     }
   }, { label: 'completeApplicationPlanFromPopup', timeoutMs: 30000 });
+}
+
+function isReferralSearchContactTask(todo) {
+  return !!todo && todo.workflow === 'Referral search' && todo.objType === 'Job' &&
+    String(todo.task || '').indexOf('Find referral contact:') === 0;
+}
+
+function buildReferralSearchResultHtml(todoId) {
+  var todo = getTodoById(todoId);
+  var job = todo ? getJobRowById(todo.objId) : null;
+  if (!todo || !job || !isReferralSearchContactTask(todo)) return '<p>Referral search task not found.</p>';
+  var data = {
+    todoId: todo.id,
+    title: job.title,
+    org: job.org,
+    people: knownPeopleForJob(job.id)
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'select,input{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Referral/contact search</h2><p id="jobLine"></p>' +
+    '<label>Result<select id="result"><option value="none">No useful contact found</option><option value="known">Use someone already in People</option><option value="new">Add someone new</option></select></label>' +
+    '<label id="knownBlock" class="hidden">Person<select id="personId"></select></label>' +
+    '<label id="newNameBlock" class="hidden">Contact name<input id="personName"></label>' +
+    '<label id="newRoleBlock" class="hidden">Role/title, if known<input id="personRole"></label>' +
+    '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;' +
+    'var person=document.getElementById("personId");data.people.forEach(function(p){var opt=document.createElement("option");opt.value=p.id;opt.textContent=p.name+(p.role?" - "+p.role:"")+(p.stage?" ("+p.stage+")":"");person.appendChild(opt);});' +
+    'var result=document.getElementById("result");if(!data.people.length){Array.prototype.forEach.call(result.options,function(o){if(o.value==="known")o.disabled=true;});}function update(){var known=result.value==="known",nw=result.value==="new";document.getElementById("knownBlock").className=known?"":"hidden";document.getElementById("newNameBlock").className=nw?"":"hidden";document.getElementById("newRoleBlock").className=nw?"":"hidden";}' +
+    'result.onchange=update;update();' +
+    'function save(){var payload={todoId:data.todoId,result:result.value,personId:person.value,personName:document.getElementById("personName").value,personRole:document.getElementById("personRole").value};var status=document.getElementById("status");if(payload.result==="known"&&!payload.personId){status.textContent="Choose the person.";return;}if(payload.result==="new"&&!String(payload.personName||"").trim()){status.textContent="Add the contact name.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeReferralSearchResultFromPopup(payload);}</script>';
+}
+
+function runReferralSearchResultPopup(todoId) {
+  var html = HtmlService.createHtmlOutput(buildReferralSearchResultHtml(todoId)).setWidth(520).setHeight(430).setTitle('Referral/contact search');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Referral/contact search');
+}
+
+function completeReferralSearchResultFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var todo = getTodoById(payload.todoId);
+      var job = todo ? getJobRowById(todo.objId) : null;
+      if (!todo || !job || !isReferralSearchContactTask(todo)) return failResult('I could not find that referral search task.', '', 'TASK_NOT_FOUND');
+      var result = String(payload.result || 'none');
+      var personId = '';
+      if (result === 'known') {
+        if (!payload.personId) return failResult('Choose the person.', 'personId', 'MISSING_PERSON');
+        personId = String(payload.personId);
+        if (!linkPersonIdToJob(job.id, personId)) return failResult('I could not link that person to the job.', 'personId', 'LINK_FAILED');
+        createReferralOutreachTask(job, personId, 'Referral search');
+      } else if (result === 'new') {
+        var personName = String(payload.personName || '').trim();
+        if (!personName) return failResult('Add the contact name.', 'personName', 'MISSING_PERSON');
+        personId = writePersonRow(personName, { id: job.orgId, name: job.org }, String(payload.personRole || '').trim());
+        var person = getPersonRowById(personId);
+        if (person && !person.stage) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
+        promoteOrgForLivePerson(job.orgId, 'Identified');
+        linkPersonIdToJob(job.id, personId);
+        createReferralOutreachTask(job, personId, 'Referral search');
+      } else if (result !== 'none') {
+        return failResult('Choose what happened with the referral search.', 'result', 'INVALID_RESULT');
+      }
+      completeTodo(todo.id, 'Done', { source: 'referral-popup', referralSearchHandled: true });
+      refreshLinkedContactsDisplay();
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      return okResult(result === 'none' ? 'Referral search closed. Submit is not blocked.' : 'Contact linked to this application and outreach task created.');
+    } catch (err) {
+      return popupExceptionResult('completeReferralSearchResultFromPopup', err);
+    }
+  }, { label: 'completeReferralSearchResultFromPopup', timeoutMs: 30000 });
 }
 
 function buildSubmitApplicationHtml(todoId) {
@@ -7228,7 +7348,7 @@ var HEADER_GUIDANCE = {
   'Jobs': {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
     'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Applied date': 'backend submitted date for response checks',
-    'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
+    'Linked contacts (IDs)': 'system', 'People for this application': 'people linked through application/referral actions', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
     'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
     'Notes': 'URL/source and prep notes'
@@ -8341,7 +8461,7 @@ function rowActionReferralSearchSelectedJob() {
     setJobStatus(job.id, 'In progress', { source: 'row-action-referral' });
     promoteOrgForLiveJob(job.orgId, 'In progress');
     appendTodoWithSource('Find referral contact: ' + job.title + ' at ' + job.org, 'Job', job.id, job.org, 'Referral search', 'Not started',
-      applicationPlanDueDate(job), '30 min', 'Referral is optional; submit without it if timing is tight.', 'Manually added');
+      applicationPlanDueDate(job), '30 min', 'When done, the planner asks whether to link someone or close without a referral. Submit is not blocked.', 'Manually added');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionReferralSearchSelectedJob' });
@@ -8518,7 +8638,7 @@ function linkContactToJob() {
   if (!newIds.length) return;
   withDocumentLock(function () {
     var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
-    sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(existing ? existing + ', ' + newIds.join(', ') : newIds.join(', '));
+    writeLinkedContactIdsForJobRow(sheet, row, parseLinkedContactIds(existing).concat(newIds));
     refreshLinkedContactsDisplay();
   }, { label: 'linkContactToJob' });
 }
@@ -8529,14 +8649,46 @@ function refreshLinkedContactsDisplay() {
   var bodyRows = Math.max(jobsSheet.getMaxRows() - 1, 1);
   jobsSheet.getRange(2, COLS.JOBS.CONTACTS_DISPLAY, bodyRows, 1).clearContent().clearNote().clearDataValidations();
   if (jobsSheet.getLastRow() < 2) return;
-  var peopleData = peopleSheet.getLastRow() > 1 ? peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NAME).getValues() : [];
-  for (var r = 2; r <= jobsSheet.getLastRow(); r++) {
-    var idsRaw = jobsSheet.getRange(r, COLS.JOBS.CONTACTS_IDS).getValue();
-    if (!idsRaw) continue;
-    var ids = String(idsRaw).split(',').map(function (s) { return s.trim(); });
-    var names = [];
-    for (var i = 0; i < peopleData.length; i++) { if (ids.indexOf(String(peopleData[i][COLS.PEOPLE.ID - 1])) !== -1) names.push(String(peopleData[i][COLS.PEOPLE.NAME - 1])); }
+  var peopleById = {};
+  if (peopleSheet.getLastRow() > 1) {
+    var peopleData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, HEADERS.People.length).getValues();
+    peopleData.forEach(function (p) {
+      var id = String(p[COLS.PEOPLE.ID - 1] || '');
+      if (!id) return;
+      peopleById[id] = {
+        name: String(p[COLS.PEOPLE.NAME - 1] || ''),
+        orgId: String(p[COLS.PEOPLE.ORG_ID - 1] || ''),
+        org: String(p[COLS.PEOPLE.ORG - 1] || '')
+      };
+    });
+  }
+  var jobData = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, HEADERS.Jobs.length).getValues();
+  for (var i = 0; i < jobData.length; i++) {
+    var r = i + 2;
+    var ids = uniqueLinkedContactIds(parseLinkedContactIds(jobData[i][COLS.JOBS.CONTACTS_IDS - 1]));
+    if (!ids.length) {
+      clearNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[orphaned-contact]');
+      clearNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[contact-org-mismatch]');
+      continue;
+    }
+    var idsRaw = String(jobData[i][COLS.JOBS.CONTACTS_IDS - 1] || '');
+    if (ids.join(', ') !== idsRaw) jobsSheet.getRange(r, COLS.JOBS.CONTACTS_IDS).setValue(ids.join(', '));
+    var names = [], missing = [], mismatch = [];
+    var jobOrgId = String(jobData[i][COLS.JOBS.ORG_ID - 1] || '');
+    ids.forEach(function (id) {
+      var person = peopleById[id];
+      if (!person) {
+        missing.push(id);
+        return;
+      }
+      names.push(person.name || id);
+      if (jobOrgId && person.orgId && String(person.orgId) !== jobOrgId) mismatch.push(person.name || id);
+    });
     jobsSheet.getRange(r, COLS.JOBS.CONTACTS_DISPLAY).setValue(names.join(', '));
+    if (missing.length) appendNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[orphaned-contact] Linked person ID not found: ' + missing.join(', '));
+    else clearNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[orphaned-contact]');
+    if (mismatch.length) appendNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[contact-org-mismatch] Linked contact belongs to another organisation: ' + mismatch.join(', '));
+    else clearNoteFlag(jobsSheet, r, COLS.JOBS.NOTES, '[contact-org-mismatch]');
   }
 }
 
