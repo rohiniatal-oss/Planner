@@ -3176,6 +3176,20 @@ function recordPersonConversationCompleted(personId, dateValue) {
   movePersonStage(personId, 'Conversation completed', { realDate: dateValue });
 }
 
+function routePersonConversationCancelled(personId) {
+  var person = getPersonRowById(personId);
+  if (!person) return;
+  var sheet = getSheet('People');
+  setOpenTodosForTarget('Person', personId, 'Cancelled', 'Conversation cancelled', ['Conversation prep']);
+  if (normalizePersonStage(person.stage) === 'Conversation scheduled') {
+    sheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue('Replied');
+    appendNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[conversation-cancelled] Conversation cancelled; arrange a new time, keep warm, or close.');
+    appendTodoOnceForWorkflow('Reschedule conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
+      'Person', personId, person.org, 'Reschedule conversation', 'Not started', '', '15 min',
+      'Conversation was cancelled. Arrange a new time, keep warm, or close.', 'Auto-triggered');
+  }
+}
+
 function setPersonKeepWarm(personId) {
   movePersonStage(personId, 'Keep warm', {});
 }
@@ -4329,7 +4343,13 @@ function repairInteractionPersonLinks() {
   if (!sheet || sheet.getLastRow() < 2) return 0;
   var fixed = 0;
   for (var r = 2; r <= sheet.getLastRow(); r++) {
-    if (sheet.getRange(r, COLS.INTERACTIONS.PERSON_ID).getValue() && linkInteractionPersonCell(r)) fixed++;
+    if (!sheet.getRange(r, COLS.INTERACTIONS.PERSON_ID).getValue()) continue;
+    if (linkInteractionPersonCell(r)) {
+      clearNoteFlag(sheet, r, COLS.INTERACTIONS.NOTES, '[orphaned-person]');
+      fixed++;
+    } else {
+      appendNoteFlag(sheet, r, COLS.INTERACTIONS.NOTES, '[orphaned-person] Person ID no longer matches a People row.');
+    }
   }
   return fixed;
 }
@@ -4410,6 +4430,41 @@ function syncPeopleHelperColumns() {
   return rowCount;
 }
 
+function interactionNoOrgLabel() {
+  return 'No organisation';
+}
+
+function findSingleBlankOrgPersonByExactName(name) {
+  var sheet = getSheet('People');
+  if (!sheet || sheet.getLastRow() < 2 || !name) return { person: null, ambiguous: false };
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
+  var wanted = normalizeKeyPart(name);
+  var matches = [];
+  for (var i = 0; i < data.length; i++) {
+    if (normalizeKeyPart(data[i][COLS.PEOPLE.NAME - 1]) !== wanted) continue;
+    if (data[i][COLS.PEOPLE.ORG - 1] || data[i][COLS.PEOPLE.ORG_ID - 1]) continue;
+    matches.push({ row: i + 2, data: data[i] });
+  }
+  if (matches.length === 1) return { person: matches[0], ambiguous: false };
+  if (matches.length > 1) return { person: null, ambiguous: true };
+  return { person: null, ambiguous: false };
+}
+
+function attachOrgToPersonRow(person, org) {
+  if (!person || !org) return person;
+  var sheet = getSheet('People');
+  if (!sheet) return person;
+  var personId = person.data[COLS.PEOPLE.ID - 1];
+  var oldOrgName = person.data[COLS.PEOPLE.ORG - 1];
+  var oldOrgId = person.data[COLS.PEOPLE.ORG_ID - 1];
+  if (oldOrgId || oldOrgName) return person;
+  sheet.getRange(person.row, COLS.PEOPLE.ORG).setValue(org.name);
+  sheet.getRange(person.row, COLS.PEOPLE.ORG_ID).setValue(org.id);
+  clearNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[no-org]');
+  propagatePersonOrganisationChange(personId, org.name, org.id, oldOrgName, oldOrgId);
+  return getPersonRowById(personId);
+}
+
 function resolveInteractionPersonSelection(selection) {
   var sheet = getSheet('People');
   if (!sheet || sheet.getLastRow() < 2 || !selection) return { person: null, ambiguous: false };
@@ -4417,15 +4472,17 @@ function resolveInteractionPersonSelection(selection) {
   var labelMatch = raw.match(/^(.*)\s+\(([^()]+)\)$/);
   var wantedName = labelMatch ? labelMatch[1] : raw;
   var wantedOrg = labelMatch ? labelMatch[2] : '';
+  var wantsBlankOrg = labelMatch && normalizeKeyPart(wantedOrg) === normalizeKeyPart(interactionNoOrgLabel());
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
   var exact = [];
   var fuzzy = [];
   for (var i = 0; i < data.length; i++) {
     var nm = String(data[i][COLS.PEOPLE.NAME - 1] || '');
     var org = String(data[i][COLS.PEOPLE.ORG - 1] || '');
-    if (wantedOrg && normalizeKeyPart(org) !== normalizeKeyPart(wantedOrg)) continue;
+    if (wantsBlankOrg && org) continue;
+    if (wantedOrg && !wantsBlankOrg && normalizeKeyPart(org) !== normalizeKeyPart(wantedOrg)) continue;
     if (normalizeKeyPart(nm) === normalizeKeyPart(wantedName)) exact.push({ row: i + 2, data: data[i] });
-    else if (!wantedOrg && similarity(wantedName, nm) >= 0.85) fuzzy.push({ row: i + 2, data: data[i] });
+    else if (!labelMatch && similarity(wantedName, nm) >= 0.85) fuzzy.push({ row: i + 2, data: data[i] });
   }
   if (exact.length === 1) return { person: exact[0], ambiguous: false };
   if (exact.length > 1) return { person: null, ambiguous: true };
@@ -4442,12 +4499,17 @@ function refreshInteractionPersonDropdown() {
   if (pSheet.getLastRow() < 2) { iSheet.getRange(2, COLS.INTERACTIONS.PERSON, maxRow, 1).clearDataValidations(); return; }
   var data = pSheet.getRange(2, 1, pSheet.getLastRow() - 1, HEADERS.People.length).getValues();
   var nameCounts = {};
-  data.forEach(function (r) { var nm = String(r[COLS.PEOPLE.NAME - 1] || '').trim(); if (nm) nameCounts[nm] = (nameCounts[nm] || 0) + 1; });
+  data.forEach(function (r) {
+    var nm = String(r[COLS.PEOPLE.NAME - 1] || '').trim();
+    var key = normalizeKeyPart(nm);
+    if (key) nameCounts[key] = (nameCounts[key] || 0) + 1;
+  });
   var labels = data.map(function (r) {
     var nm = String(r[COLS.PEOPLE.NAME - 1] || '').trim();
     var org = String(r[COLS.PEOPLE.ORG - 1] || '').trim();
+    var key = normalizeKeyPart(nm);
     if (!nm) return '';
-    return (nameCounts[nm] > 1 && org) ? nm + ' (' + org + ')' : nm;
+    return nameCounts[key] > 1 ? nm + ' (' + (org || interactionNoOrgLabel()) + ')' : nm;
   }).filter(function (l) { return !!l; });
   setDropdown(iSheet.getRange(2, COLS.INTERACTIONS.PERSON, maxRow, 1), labels);
 }
@@ -4462,16 +4524,21 @@ function routeInteractionStatusForPerson(sheet, row, statusValue) {
     return false;
   }
   if (status === 'Scheduled') {
-    if (!dateValue) appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[missing-date] Add conversation date to create prep task.');
+    if (!dateValue) {
+      appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[missing-date] Add conversation date to create prep task.');
+      return false;
+    }
+    clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[missing-date]');
     routePersonConversationScheduled(personId, dateValue);
     return true;
   }
   if (status === 'Completed') {
+    clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[outcome-before-completed]');
     movePersonStage(personId, 'Conversation completed', { realDate: dateValue || today(), skipInteractionLog: true });
     return true;
   }
   if (status === 'Cancelled') {
-    setOpenTodosForTarget('Person', personId, 'Cancelled', 'Conversation cancelled', ['Conversation prep']);
+    routePersonConversationCancelled(personId);
     return true;
   }
   return false;
@@ -4484,15 +4551,22 @@ function onEditInteractions(sheet, row, col, newVal) {
       var person = resolved.person;
       sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).setValue(person.data[COLS.PEOPLE.ID - 1]);
       sheet.getRange(row, COLS.INTERACTIONS.ORG).setValue(person.data[COLS.PEOPLE.ORG - 1] || '');
-      if (!sheet.getRange(row, COLS.INTERACTIONS.DATE).getValue()) sheet.getRange(row, COLS.INTERACTIONS.DATE).setValue(today());
       if (!sheet.getRange(row, COLS.INTERACTIONS.ID).getValue()) sheet.getRange(row, COLS.INTERACTIONS.ID).setValue(nextId(sheet, COLS.INTERACTIONS.ID, 'INT'));
-      if (!sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue()) sheet.getRange(row, COLS.INTERACTIONS.STATUS).setValue('Completed');
+      clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[person-ambiguous]');
+      clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[person-not-found]');
       linkInteractionPersonCell(row);
       syncPeopleHelperColumns();
     } else if (resolved.ambiguous) {
-      appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] Ambiguous person name - pick the dropdown entry with organisation or fill Person ID.');
+      sheet.getRange(row, COLS.INTERACTIONS.PERSON).clearContent();
+      sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).clearContent();
+      sheet.getRange(row, COLS.INTERACTIONS.ORG).clearContent();
+      appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[person-ambiguous] More than one matching person - pick the entry with organisation or fill Person ID.');
       SpreadsheetApp.getActiveSpreadsheet().toast('More than one matching person. Pick the entry with organisation or fill Person ID.', 'The Planner', 5);
     } else {
+      sheet.getRange(row, COLS.INTERACTIONS.PERSON).clearContent();
+      sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).clearContent();
+      sheet.getRange(row, COLS.INTERACTIONS.ORG).clearContent();
+      appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[person-not-found] Person "' + newVal + '" not found in People. Add them there first, then re-pick.');
       SpreadsheetApp.getActiveSpreadsheet().toast('Person "' + newVal + '" not found in People. Add them there first, then re-pick.', 'The Planner', 5);
     }
     return;
@@ -4520,7 +4594,10 @@ function onEditInteractions(sheet, row, col, newVal) {
   }
   if (col !== COLS.INTERACTIONS.OUTCOME || !newVal) return;
   if (String(newVal) === 'System log') return;
-  if (!sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue()) sheet.getRange(row, COLS.INTERACTIONS.STATUS).setValue('Completed');
+  if (String(sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue() || '') !== 'Completed') {
+    appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[outcome-before-completed] Set Interaction status to Completed before choosing Outcome.');
+    return;
+  }
   var personId = sheet.getRange(row, COLS.INTERACTIONS.PERSON_ID).getValue();
   var personName = sheet.getRange(row, COLS.INTERACTIONS.PERSON).getValue();
   var org = sheet.getRange(row, COLS.INTERACTIONS.ORG).getValue();
@@ -4530,7 +4607,8 @@ function onEditInteractions(sheet, row, col, newVal) {
     appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] \u26a0 Outcome set but Person not identified — cascade skipped');
     return;
   }
-  if (String(sheet.getRange(row, COLS.INTERACTIONS.STATUS).getValue() || '') === 'Completed') routeInteractionStatusForPerson(sheet, row, 'Completed');
+  clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[outcome-before-completed]');
+  routeInteractionStatusForPerson(sheet, row, 'Completed');
   if (outcome === 'Follow-up needed') {
     appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, org, 'Contact follow-up', 'Not started', addDays(today(), 3), '15 min', notes || '', 'Auto-triggered');
   } else if (outcome === 'Opportunity created') {
@@ -4542,6 +4620,8 @@ function onEditInteractions(sheet, row, col, newVal) {
   } else if (outcome === 'Dead end') {
     closePerson(personId, 'Conversation outcome: dead end.');
   } else if (outcome === 'Neutral') {
+    setPersonKeepWarm(personId);
+  } else if (outcome === 'Useful') {
     setPersonKeepWarm(personId);
   }
   refreshDerivedPlanningSurfaces();
@@ -7416,7 +7496,7 @@ function captureConfig(captureType) {
       title: 'Add/update conversation',
       fields: [{ k: 'person', l: 'Person', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
       { k: 'status', l: 'Interaction status', t: 'select', o: DROPDOWNS.INTERACTION_STATUS, defaultValue: 'Completed' },
-      { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true }]
+      { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true, showIf: { k: 'status', v: 'Completed' } }]
     },
     'Add/update interview': {
       title: 'Add/update interview',
@@ -7840,6 +7920,9 @@ function processCapturePayload(captureType, fields) {
 function processConversationCapture(fields) {
   fields = fields || {};
   if (!fields.person) return failResult("I need the person's name.", 'person', 'MISSING_PERSON');
+  var requestedStatus = fields.status || 'Completed';
+  if (requestedStatus === 'Scheduled' && !fields.date) return failResult('Add a date before scheduling a conversation.', 'date', 'MISSING_CONVERSATION_DATE');
+  if (fields.outcome && requestedStatus !== 'Completed') return failResult('Set Interaction status to Completed before choosing an outcome.', 'status', 'OUTCOME_REQUIRES_COMPLETED');
   var org = fields.org ? createNameOnlyOrg(fields.org, { status: 'Mapped', stub: true }) : null;
   var selection = fields.org ? fields.person + ' (' + (org ? org.name : fields.org) + ')' : fields.person;
   var resolved = resolveInteractionPersonSelection(selection);
@@ -7847,15 +7930,21 @@ function processConversationCapture(fields) {
   var person = resolved.person;
   var createdPerson = false;
   if (!person) {
-    var newPersonId = writePersonRow(fields.person, org, '');
-    person = getPersonRowById(newPersonId);
-    createdPerson = true;
+    var blankOrgMatch = org ? findSingleBlankOrgPersonByExactName(fields.person) : { person: null, ambiguous: false };
+    if (blankOrgMatch.ambiguous) return failResult('More than one no-organisation person has that name. Choose the exact person from Conversations first.', 'person', 'AMBIGUOUS_PERSON');
+    if (blankOrgMatch.person) {
+      person = attachOrgToPersonRow(blankOrgMatch.person, org);
+    } else {
+      var newPersonId = writePersonRow(fields.person, org, '');
+      person = getPersonRowById(newPersonId);
+      createdPerson = true;
+    }
   }
   if (!person) return failResult('I could not resolve that person.', 'person', 'PERSON_NOT_FOUND');
   var personId = person.data[COLS.PEOPLE.ID - 1];
   var personName = person.data[COLS.PEOPLE.NAME - 1];
   var personOrg = person.data[COLS.PEOPLE.ORG - 1] || (org ? org.name : fields.org || '');
-  var status = fields.status || 'Completed';
+  var status = requestedStatus;
   if (status !== 'Cancelled') promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], status === 'Scheduled' ? 'Conversation scheduled' : 'Conversation completed');
   appendInteraction(personId, personName, personOrg, fields.date || '', 'Other', fields.notes || '', '', status);
   var interactionSheet = getSheet('Conversations');
