@@ -2471,6 +2471,26 @@ function appendTodoOnceForWorkflow(task, objType, objId, org, workflow, status, 
 // underlying object moves to a terminal state (Closed, Archived, etc.)
 // so stale tasks don't linger. workflowAllowList, if given, restricts
 // which workflows get touched.
+function updateOpenTodoDueForTargetWorkflow(objType, objId, workflow, dueDate) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !objId || !workflow) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== String(objType)) continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
+    if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
+    var st = String(data[i][COLS.TODO.STATUS - 1]);
+    if (st !== 'Not started' && st !== 'In progress') continue;
+    var r = i + 2;
+    sheet.getRange(r, COLS.TODO.DUE_DATE).setValue(dueDate || '');
+    sheet.getRange(r, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(workflow, dueDate, objId, objType));
+    sheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
+    count++;
+  }
+  return count;
+}
+
 function setOpenTodosForTarget(objType, objId, status, reason, workflowAllowList) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !objId) return 0;
@@ -4258,11 +4278,41 @@ function onEditPeople(sheet, row, col, newVal, e) {
     requestHomeRefresh();
     return;
   }
+  if (col === COLS.PEOPLE.OUTREACH_DATE && newVal) {
+    var outreachPersonId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
+    sheet.getRange(row, COLS.PEOPLE.ID).setValue(outreachPersonId);
+    if (sheet.getRange(row, COLS.PEOPLE.ORG).getValue()) inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    var outreachStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
+    var outreachDate = parseDateOr(newVal);
+    sheet.getRange(row, COLS.PEOPLE.OUTREACH_DATE).setValue(outreachDate);
+    if (outreachStage === 'Closed') {
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[outreach-date-ignored] Person is Closed; outreach follow-up was not reopened.');
+      return;
+    }
+    if (outreachStage === 'Outreach sent') {
+      var recalculatedFollowUp = addDays(outreachDate, 6);
+      sheet.getRange(row, COLS.PEOPLE.FOLLOW_UP_DATE).setValue(recalculatedFollowUp);
+      updateOpenTodoDueForTargetWorkflow('Person', outreachPersonId, 'Contact follow-up', recalculatedFollowUp);
+      if (String(sheet.getRange(row, COLS.PEOPLE.FOLLOW_UP_SENT).getValue() || '') !== 'Yes') sheet.getRange(row, COLS.PEOPLE.FOLLOW_UP_SENT).setValue('No');
+    } else if (['Identified', 'To outreach', 'Outreach drafted'].indexOf(outreachStage) !== -1) {
+      movePersonStage(outreachPersonId, 'Outreach sent', { realDate: outreachDate, source: 'manual-outreach-date' });
+    }
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
+    return;
+  }
   if (col === COLS.PEOPLE.CONVERSATION_DATE && newVal) {
     var convPersonId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
     sheet.getRange(row, COLS.PEOPLE.ID).setValue(convPersonId);
     if (sheet.getRange(row, COLS.PEOPLE.ORG).getValue()) inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
-    routePersonConversationScheduled(convPersonId, newVal);
+    var conversationStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
+    if (conversationStage === 'Conversation completed' || conversationStage === 'Closed') {
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[conversation-date-not-routed] Edit Conversations for completed/closed conversation history.');
+      refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
+      return;
+    }
+    upsertScheduledInteractionForPerson(convPersonId, newVal);
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
     return;
@@ -4307,6 +4357,32 @@ function appendInteraction(personId, personName, org, dateValue, typeValue, note
   sheet.appendRow(row);
   linkInteractionPersonCell(sheet.getLastRow());
   syncPeopleHelperColumns();
+  return id;
+}
+
+function upsertScheduledInteractionForPerson(personId, dateValue) {
+  migrateInteractionsStatusSchema();
+  var sheet = getSheet('Conversations');
+  var person = getPersonRowById(personId);
+  if (!sheet || !person || !dateValue) return '';
+  var date = parseDateOr(dateValue);
+  if (sheet.getLastRow() > 1) {
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Interactions.length).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][COLS.INTERACTIONS.PERSON_ID - 1]) !== String(personId)) continue;
+      if (String(data[i][COLS.INTERACTIONS.STATUS - 1]) !== 'Scheduled') continue;
+      var r = i + 2;
+      sheet.getRange(r, COLS.INTERACTIONS.DATE).setValue(date);
+      if (!sheet.getRange(r, COLS.INTERACTIONS.TYPE).getValue()) sheet.getRange(r, COLS.INTERACTIONS.TYPE).setValue('Other');
+      clearNoteFlag(sheet, r, COLS.INTERACTIONS.NOTES, '[missing-date]');
+      linkInteractionPersonCell(r);
+      routeInteractionStatusForPerson(sheet, r, 'Scheduled');
+      syncPeopleHelperColumns();
+      return String(data[i][COLS.INTERACTIONS.ID - 1] || '');
+    }
+  }
+  var id = appendInteraction(personId, person.name, person.org, date, 'Other', 'Scheduled from People conversation date.', '', 'Scheduled');
+  routeInteractionStatusForPerson(sheet, sheet.getLastRow(), 'Scheduled');
   return id;
 }
 
@@ -4607,15 +4683,20 @@ function onEditInteractions(sheet, row, col, newVal) {
     appendNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[flags] \u26a0 Outcome set but Person not identified — cascade skipped');
     return;
   }
+  var interactionId = sheet.getRange(row, COLS.INTERACTIONS.ID).getValue();
+  if (!interactionId) {
+    interactionId = nextId(sheet, COLS.INTERACTIONS.ID, 'INT');
+    sheet.getRange(row, COLS.INTERACTIONS.ID).setValue(interactionId);
+  }
   clearNoteFlag(sheet, row, COLS.INTERACTIONS.NOTES, '[outcome-before-completed]');
   routeInteractionStatusForPerson(sheet, row, 'Completed');
   if (outcome === 'Follow-up needed') {
     appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, org, 'Contact follow-up', 'Not started', addDays(today(), 3), '15 min', notes || '', 'Auto-triggered');
   } else if (outcome === 'Opportunity created') {
-    appendPendingDecision('INTERACTION_OPP:' + sheet.getRange(row, COLS.INTERACTIONS.ID).getValue() + ':Job', 'Opportunity mentioned by ' + personName,
+    appendPendingDecision('INTERACTION_OPP:' + interactionId + ':Job', 'Opportunity mentioned by ' + personName,
       'Add/update job from conversation with ' + personName, 'Person', personId, 'Org job scan', notes || '');
   } else if (outcome === 'Referral given') {
-    appendPendingDecision('INTERACTION_REFERRAL:' + sheet.getRange(row, COLS.INTERACTIONS.ID).getValue() + ':Referral search', 'Referral mentioned by ' + personName,
+    appendPendingDecision('INTERACTION_REFERRAL:' + interactionId + ':Referral search', 'Referral mentioned by ' + personName,
       'Act on referral from ' + personName, 'Person', personId, 'Referral search', notes || '');
   } else if (outcome === 'Dead end') {
     closePerson(personId, 'Conversation outcome: dead end.');
@@ -4623,6 +4704,8 @@ function onEditInteractions(sheet, row, col, newVal) {
     setPersonKeepWarm(personId);
   } else if (outcome === 'Useful') {
     setPersonKeepWarm(personId);
+    appendPendingDecision('INTERACTION_USEFUL:' + interactionId + ':Contact follow-up', 'Useful conversation with ' + personName,
+      'Follow up with ' + personName, 'Person', personId, 'Contact follow-up', notes || '');
   }
   refreshDerivedPlanningSurfaces();
   syncPeopleHelperColumns();
@@ -6665,7 +6748,8 @@ function collectUpcomingItems(limit) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT).getValues();
     pData.forEach(function (p) {
       var d = p[COLS.PEOPLE.CONVERSATION_DATE - 1];
-      if (d && new Date(d) >= t) {
+      var stage = normalizePersonStage(p[COLS.PEOPLE.STAGE - 1]);
+      if (stage === 'Conversation scheduled' && d && new Date(d) >= t) {
         items.push({ type: 'Conversation', date: new Date(d), label: p[COLS.PEOPLE.NAME - 1] || '' });
       }
     });
@@ -8793,7 +8877,7 @@ function materializeDueTasks() {
       if (!personId || !personName) continue;
       if (closed) continue;
       if (!keepWarm && !closed && replyReceived !== 'Yes' && stage === 'Outreach sent' && followUpDate && new Date(followUpDate) < todayDate && followUpSent === 'No') {
-        if (appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
+        if (appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', followUpDate, '15 min', '', 'Auto-triggered')) created++;
       }
       if (keepWarm && followUpDate && new Date(followUpDate) < todayDate) {
         if (appendTodoOnceForWorkflow('Keep-warm check-in with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', followUpDate, '15 min', '', 'Auto-triggered')) created++;
