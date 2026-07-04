@@ -2620,6 +2620,27 @@ function repairOrgTaxonomyLinks() {
     var sub = data[i][COLS.ORGS.SUBSECTOR - 1];
     var sectorId = data[i][COLS.ORGS.SECTOR_ID - 1];
     var subId = data[i][COLS.ORGS.SUBSECTOR_ID - 1];
+    if (subId) {
+      var subBranch = getSectorBranchById(subId);
+      if (subBranch) {
+        sheet.getRange(row, COLS.ORGS.SECTOR_ID).setValue(subBranch.sectorId);
+        sheet.getRange(row, COLS.ORGS.SECTOR).setValue(subBranch.sector);
+        sheet.getRange(row, COLS.ORGS.SUBSECTOR_ID).setValue(subBranch.subsectorId);
+        sheet.getRange(row, COLS.ORGS.SUBSECTOR).setValue(subBranch.subsector);
+        clearOrgNeedsClassification(row, orgId);
+        continue;
+      }
+    }
+    if (sectorId) {
+      var sectorBranch = getSectorBranchById(sectorId);
+      if (sectorBranch && sectorBranch.isSectorOnly) {
+        sheet.getRange(row, COLS.ORGS.SECTOR).setValue(sectorBranch.sector);
+        if (sub && !subId) sheet.getRange(row, COLS.ORGS.SUBSECTOR).setValue('');
+        sheet.getRange(row, COLS.ORGS.SUBSECTOR_ID).setValue('');
+        clearOrgNeedsClassification(row, orgId);
+        continue;
+      }
+    }
     if (!sectorId || isNeedsClassificationLabel(sector)) {
       applyOrgTaxonomyLink(row, sector, sub);
     } else if (sector && (!sectorId || (sub && !subId))) {
@@ -2694,8 +2715,15 @@ function onEditOrgs(sheet, row, col, newVal, e) {
     var orgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
     var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
     if (String(newVal) === 'Active') {
+      ensureOrgClassificationState(row);
       fireOrgActiveCascade(orgId, orgName);
       renderTodayDecisionCards();
+      refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
+    }
+    if (String(newVal) === 'Mapped') {
+      ensureOrgClassificationState(row);
+      refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     }
     if (String(newVal) === 'Dormant') {
@@ -5880,6 +5908,7 @@ function processPeopleOnboarding(fields) {
 function processOrgOnboarding(fields) {
   var names = splitInputList(fields.orgNames);
   if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
+  if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
   var created = 0, reused = 0;
   names.forEach(function (name) {
@@ -6119,6 +6148,7 @@ function processCapturePayload(captureType, fields) {
   if (captureType === 'Find organisations') {
     var namesNew = splitInputList(fields.orgNames);
     if (!namesNew.length) return failResult('I need at least one organisation name.', 'orgNames', 'MISSING_ORG');
+    if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
     var createdFound = 0, reusedFound = 0;
     namesNew.forEach(function (name) {
       var hasTaxonomyInput = !!(fields.sector || fields.subsector);
