@@ -3657,6 +3657,11 @@ function hardResetTodaySheet(sheet) {
   try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
 }
 
+function clearTodayPlanHeadlineValidation(sheet) {
+  try { sheet.getRange('B3:I3').clearDataValidations(); } catch (err) { }
+  try { sheet.getRange('B3').clearDataValidations(); } catch (err2) { }
+}
+
 function bootstrapToday() {
   var sheet = ensureTodaySheet();
   hardResetTodaySheet(sheet);
@@ -3677,6 +3682,7 @@ function bootstrapToday() {
 
   // Row 3: plan-summary headline. populateTodayImpl replaces this
   // placeholder with the real counts once stagedTodaySelection has run.
+  clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3:I3').merge()
     .setValue('Plan not built yet - tick refresh below to build today\'s plan.')
     .setFontWeight('bold')
@@ -4114,6 +4120,7 @@ function populateTodayImpl() {
     ? 'Today’s plan is ready — ' + selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's') +
       ' · ' + selection.minutesUsed + ' min planned · ' + selection.bufferMin + ' min spare'
     : 'Today’s plan is ready — nothing committed yet.';
+  clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3').setValue(headline);
 
   renderTodayDecisionCards();
