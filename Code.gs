@@ -1027,6 +1027,53 @@ function inheritOrgFields(sheet, editedRow, nameCol, orgIdCol) {
   sheet.getRange(editedRow, orgIdCol).setValue(org.id);
 }
 
+function restoreOrClearEditedCell(sheet, row, col, e) {
+  if (e && Object.prototype.hasOwnProperty.call(e, 'oldValue')) sheet.getRange(row, col).setValue(e.oldValue);
+  else sheet.getRange(row, col).clearContent();
+}
+
+function jobRowHasStateBeyondOpportunity(sheet, row) {
+  var values = sheet.getRange(row, 1, 1, HEADERS.Jobs.length).getValues()[0];
+  var cols = [
+    COLS.JOBS.ID, COLS.JOBS.ORG, COLS.JOBS.ORG_ID, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE,
+    COLS.JOBS.APPLIED_DATE, COLS.JOBS.CONTACTS_IDS, COLS.JOBS.CONTACTS_DISPLAY,
+    COLS.JOBS.REVIEW_DATE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES
+  ];
+  for (var i = 0; i < cols.length; i++) {
+    if (String(values[cols[i] - 1] || '').trim()) return true;
+  }
+  return false;
+}
+
+function guardManualJobSystemIdEdit(sheet, row, col, e) {
+  if (col !== COLS.JOBS.ID && col !== COLS.JOBS.ORG_ID) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  var msg = col === COLS.JOBS.ID
+    ? 'Job ID is system-generated. Type the Opportunity first.'
+    : 'Org ID is filled from Organisation. Type Organisation instead.';
+  SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'The Planner', 5);
+  return true;
+}
+
+function guardBlankJobOpportunity(sheet, row, col, newVal, e) {
+  if (col !== COLS.JOBS.OPPORTUNITY || String(newVal || '').trim()) return false;
+  if (!jobRowHasStateBeyondOpportunity(sheet, row)) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[opportunity-required] Opportunity names the Job ID; close/park the job instead of blanking it.');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Opportunity is required for an existing Job row.', 'The Planner', 5);
+  return true;
+}
+
+function guardJobOpportunityBeforeOtherFields(sheet, row, col, newVal, e) {
+  if (col === COLS.JOBS.ID || col === COLS.JOBS.OPPORTUNITY) return false;
+  if (!String(newVal || '').trim()) return false;
+  if (String(sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue() || '').trim()) return false;
+  restoreOrClearEditedCell(sheet, row, col, e);
+  appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[missing-opportunity] Add Opportunity before filling the rest of this Job row.');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Add Opportunity before filling other Job fields.', 'The Planner', 5);
+  return true;
+}
+
 function checkOrgDuplicate(sheet, editedRow) {
   var newName = sheet.getRange(editedRow, COLS.ORGS.NAME).getValue();
   if (!newName) return;
@@ -3521,6 +3568,9 @@ function detectSectorOrphans() {
 }
 
 function onEditJobs(sheet, row, col, newVal, e) {
+  if (guardManualJobSystemIdEdit(sheet, row, col, e)) return;
+  if (guardBlankJobOpportunity(sheet, row, col, newVal, e)) return;
+  if (guardJobOpportunityBeforeOtherFields(sheet, row, col, newVal, e)) return;
   if (col === COLS.JOBS.OPPORTUNITY || col === COLS.JOBS.ORG) checkJobDuplicate(sheet, row);
   if (col === COLS.JOBS.ORG) {
     var oldJobOrgName = e && e.oldValue ? String(e.oldValue) : '';
@@ -3570,6 +3620,8 @@ function onEditJobs(sheet, row, col, newVal, e) {
     return;
   }
   if (col === COLS.JOBS.OPPORTUNITY && newVal) {
+    clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[missing-opportunity]');
+    clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[opportunity-required]');
     if (!sheet.getRange(row, COLS.JOBS.ID).getValue()) sheet.getRange(row, COLS.JOBS.ID).setValue(nextId(sheet, COLS.JOBS.ID, 'JOB'));
     var editedJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
     if (e && e.oldValue) propagateJobTitleRename(editedJobId, String(newVal), String(e.oldValue));
