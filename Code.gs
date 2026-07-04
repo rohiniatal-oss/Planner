@@ -1813,6 +1813,7 @@ function setJobStatus(jobId, status, opts) {
     if (String(ids[i][0]) === String(jobId)) {
       var row = i + 2;
       var old = sheet.getRange(row, COLS.JOBS.STATUS).getValue();
+      if (normalizeJobStatus(old) === normalized) return;
       sheet.getRange(row, COLS.JOBS.STATUS).setValue(normalized);
       fireJobStatusChanged(jobId, old, normalized, opts);
       return;
@@ -1941,6 +1942,7 @@ function movePersonStage(personId, stage, opts) {
   var sheet = getSheet('People');
   var normalized = normalizePersonStage(stage);
   var old = sheet.getRange(person.row, COLS.PEOPLE.STAGE).getValue();
+  if (normalizePersonStage(old) === normalized) return;
   sheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue(normalized);
   firePersonStageChanged(personId, old, normalized, opts);
 }
