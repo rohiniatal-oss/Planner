@@ -1154,7 +1154,7 @@ function onEditDecisions(sheet, row, col, newVal, e) {
   var wasAlreadyResolved = e && e.oldValue && ['Yes', 'No', 'Auto-dismissed'].indexOf(String(e.oldValue)) !== -1;
   var accepted = resolveDecision(sheet, row, decision);
   renderTodayDecisionCards();
-  refreshHome();
+  requestHomeRefresh();
   if (decision === 'Yes' && accepted && accepted.ok) populateToday();
   if (!wasAlreadyResolved) toastForDecisionOutcome(decision, accepted);
 }
@@ -3563,6 +3563,14 @@ function checkTriggerHealth() {
   return { ok: !missing.length, missing: missing };
 }
 
+function requestHomeRefresh() {
+  if (EDIT_BATCH_CONTEXT && EDIT_BATCH_CONTEXT.deferTaskRefresh) {
+    EDIT_BATCH_CONTEXT.needsHomeRefresh = true;
+    return;
+  }
+  refreshHome();
+}
+
 // Back-compat shims: older menu wiring / muscle memory called these names.
 // They now route through the unified engine.
 function installEditTrigger() {
@@ -3583,8 +3591,12 @@ function onEditTasks(sheet, row, col, newVal) {
     sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
   }
   if (col === COLS.TODO.TIME_EST) syncTodayEstMinForTodo(sheet, row);
-  if (col !== COLS.TODO.STATUS) return;
-  completeTodoRow(sheet, row, newVal, { source: 'tasks' });
+  if (col === COLS.TODO.STATUS) {
+    completeTodoRow(sheet, row, newVal, { source: 'tasks' });
+    requestHomeRefresh();
+    return;
+  }
+  if ([COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.COMMITMENT_CLASS].indexOf(col) !== -1) requestHomeRefresh();
 }
 
 // =============================================================
@@ -4433,6 +4445,7 @@ function onEditToday(sheet, row, col, newVal) {
   if (!todoId) return;
   if (status === 'Deferred') {
     deferTodoById(String(todoId), 3, 'today');
+    requestHomeRefresh();
     return;
   }
   if (status === 'Done' && !sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).getValue()) {
@@ -4440,6 +4453,7 @@ function onEditToday(sheet, row, col, newVal) {
   }
   completeTodo(String(todoId), status, { source: 'today' });
   updateTodayProgress(sheet);
+  requestHomeRefresh();
 }
 
 // -------------------------------------------------------------
