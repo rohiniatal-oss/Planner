@@ -105,7 +105,7 @@
 // =============================================================
 
 var COLS = {
-  SECTORS: { ID: 1, SECTOR: 2, SUBSECTOR: 3 },
+  SECTORS: { ID: 1, SECTOR: 2, SUBSECTOR: 3, STATUS: 4, NOTES: 5 },
 
   ORGS: {
     ID: 1, NAME: 2, SECTOR: 3, SUBSECTOR: 4, SUBSECTOR_ID: 5,
@@ -166,7 +166,7 @@ var COLS = {
 };
 
 var HEADERS = {
-  Sectors: ['Sub-sector ID', 'Sector', 'Sub-sector'],
+  Sectors: ['Sector ID', 'Sector', 'Sub-sector', 'Status', 'Notes'],
   Organisations: [
     'Org ID', 'Organisation', 'Sector', 'Sub-sector', 'Sub-sector ID',
     'Tier', 'Status', 'Known people (count)', 'Open opportunities (count)',
@@ -254,9 +254,11 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.6.3';
+var SCRIPT_VERSION = 'v7.7.1';
 
 var DROPDOWNS = {
+  SECTOR_STATUS: ['Open', 'Retired'],
+
   ORG_TIER: ['A', 'B', 'C'],
   ORG_STATUS: ['Mapped', 'Active', 'Dormant', 'Archived'],
 
@@ -1366,9 +1368,8 @@ function hasSubtasksFormula(row) {
 }
 
 // objType/objId -> source-tab display name + row, for the "Linked to"
-// HYPERLINK. Sector is a special case: a sector-only task's objId is the
-// literal sector NAME (no Sectors-tab ID exists until it becomes a
-// sub-sector row), so it's shown as plain text with no jump target.
+// HYPERLINK. Sector IDs may be SEC-* sector-only branches or SUB-* sub-
+// sector branches; legacy raw-name links are repaired by repairSectorTaskLinks.
 var LINKED_TO_MAP = {
   'Job': { sheet: 'Jobs', idCol: 1, nameCol: 2 },
   'Person': { sheet: 'People', idCol: 1, nameCol: 2 },
@@ -1388,6 +1389,7 @@ function resolveLinkedTo(objType, objId) {
       if (String(ids[i][0]) === String(objId)) {
         var row = i + 2;
         var name = String(sheet.getRange(row, spec.nameCol).getValue() || '');
+        if (objType === 'Sector' && String(objId).indexOf('SEC-') === 0) name = String(sheet.getRange(row, COLS.SECTORS.SECTOR).getValue() || '');
         return { text: name || spec.sheet, sheetName: spec.sheet, row: row };
       }
     }
@@ -1956,21 +1958,134 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
 // creation is Mapped, which is fully inert.
 // =============================================================
 
+function sectorSourceFlag(source) {
+  var map = {
+    onboarding: '[created-via-onboarding]',
+    home_update: '[created-via-home-update]',
+    organisation_link: '[created-via-org-link]',
+    manual_sheet_entry: '[created-via-manual-entry]',
+    repair_backfill: '[created-via-repair]'
+  };
+  return map[source] || '';
+}
+
+function normalizeSectorStatus(value) {
+  return String(value || '') === 'Retired' ? 'Retired' : 'Open';
+}
+
+function sectorBranchFromRow(rowNumber, row) {
+  return {
+    row: rowNumber,
+    id: String(row[COLS.SECTORS.ID - 1] || ''),
+    sector: String(row[COLS.SECTORS.SECTOR - 1] || ''),
+    subsector: String(row[COLS.SECTORS.SUBSECTOR - 1] || ''),
+    status: normalizeSectorStatus(row[COLS.SECTORS.STATUS - 1]),
+    created: false,
+    isSectorOnly: !String(row[COLS.SECTORS.SUBSECTOR - 1] || '')
+  };
+}
+
+function findSectorBranch(sector, subsector) {
+  var sheet = getSheet('Sectors');
+  if (!sheet || sheet.getLastRow() < 2 || !sector) return null;
+  var wantSector = normalizeKeyPart(sector);
+  var wantSub = normalizeKeyPart(subsector);
+  var wantSectorOnly = !wantSub;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+  var best = null, bestScore = 0;
+  for (var i = 0; i < data.length; i++) {
+    var rowSector = normalizeKeyPart(data[i][COLS.SECTORS.SECTOR - 1]);
+    var rowSub = normalizeKeyPart(data[i][COLS.SECTORS.SUBSECTOR - 1]);
+    if (!rowSector) continue;
+    if (wantSectorOnly && rowSub) continue;
+    if (!wantSectorOnly && !rowSub) continue;
+    var sectorScore = rowSector === wantSector ? 1 : similarity(wantSector, rowSector);
+    var subScore = wantSectorOnly ? 1 : (rowSub === wantSub ? 1 : similarity(wantSub, rowSub));
+    var score = Math.min(sectorScore, subScore);
+    if (score > bestScore) {
+      bestScore = score;
+      best = sectorBranchFromRow(i + 2, data[i]);
+    }
+  }
+  return bestScore >= 0.85 ? best : null;
+}
+
+function getSectorBranchById(sectorId) {
+  var sheet = getSheet('Sectors');
+  if (!sheet || sheet.getLastRow() < 2 || !sectorId) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.SECTORS.ID - 1]) === String(sectorId)) return sectorBranchFromRow(i + 2, data[i]);
+  }
+  return null;
+}
+
+function ensureSectorBranchId(sheet, branch) {
+  if (!sheet || !branch) return branch;
+  var expectedPrefix = branch.isSectorOnly ? 'SEC' : 'SUB';
+  if (String(branch.id || '').indexOf(expectedPrefix + '-') === 0) return branch;
+  var id = nextId(sheet, COLS.SECTORS.ID, expectedPrefix);
+  sheet.getRange(branch.row, COLS.SECTORS.ID).setValue(id);
+  branch.id = id;
+  return branch;
+}
+
+function upsertSectorBranch(opts) {
+  opts = opts || {};
+  var sector = String(opts.sector || '').trim().replace(/\s+/g, ' ');
+  var subsector = String(opts.subsector || '').trim().replace(/\s+/g, ' ');
+  if (!sector) return null;
+  var sheet = getSheet('Sectors');
+  if (!sheet) return null;
+  var isSectorOnly = !subsector;
+  var branch = findSectorBranch(sector, subsector);
+  var created = false;
+  if (!branch) {
+    var id = nextId(sheet, COLS.SECTORS.ID, isSectorOnly ? 'SEC' : 'SUB');
+    var rowValues = new Array(HEADERS.Sectors.length).fill('');
+    rowValues[COLS.SECTORS.ID - 1] = id;
+    rowValues[COLS.SECTORS.SECTOR - 1] = sector;
+    rowValues[COLS.SECTORS.SUBSECTOR - 1] = subsector;
+    rowValues[COLS.SECTORS.STATUS - 1] = 'Open';
+    rowValues[COLS.SECTORS.NOTES - 1] = '';
+    if (opts.preferredRow && opts.preferredRow > 1) {
+      sheet.getRange(opts.preferredRow, 1, 1, HEADERS.Sectors.length).setValues([rowValues]);
+      branch = sectorBranchFromRow(opts.preferredRow, rowValues);
+    } else {
+      sheet.appendRow(rowValues);
+      branch = sectorBranchFromRow(sheet.getLastRow(), rowValues);
+    }
+    created = true;
+  }
+  branch = ensureSectorBranchId(sheet, branch);
+  if (!sheet.getRange(branch.row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(branch.row, COLS.SECTORS.STATUS).setValue('Open');
+  if (!branch.sector) sheet.getRange(branch.row, COLS.SECTORS.SECTOR).setValue(sector);
+  if (!branch.isSectorOnly && !branch.subsector) sheet.getRange(branch.row, COLS.SECTORS.SUBSECTOR).setValue(subsector);
+  var sourceFlag = sectorSourceFlag(opts.source);
+  if (sourceFlag) appendNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, sourceFlag);
+  if (opts.notes) appendNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, opts.notes);
+  branch.created = created;
+  branch.isSectorOnly = isSectorOnly;
+  if (!isSectorOnly && opts.createExpansionDecision !== false) fireSubsectorAddedDecision(branch.sector || sector, branch.subsector || subsector, branch.id);
+  return branch;
+}
+
 function applyOrgTaxonomyLink(orgRow, sector, subsector) {
   var sheet = getSheet('Organisations');
   if (!sheet || !orgRow) return null;
   if (sector && !subsector) {
-    findOrCreateSectorOnly(sector);
-    sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sector);
+    var sectorOnly = upsertSectorBranch({ sector: sector, source: 'organisation_link', sourceObjectType: 'Organisation', createExpansionDecision: false });
+    if (sectorOnly) sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sectorOnly.sector);
+    sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue('');
     sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue('');
-    return null;
+    return sectorOnly;
   }
   if (!sector && subsector) {
     appendNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, '[taxonomy] Add Sector before Sub-sector can be linked');
     return null;
   }
   if (!sector || !subsector) return null;
-  var sub = findOrCreateSubsector(sector, subsector);
+  var sub = upsertSectorBranch({ sector: sector, subsector: subsector, source: 'organisation_link', sourceObjectType: 'Organisation', createExpansionDecision: true });
   if (!sub) return null;
   sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sub.sector);
   sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue(sub.subsector);
@@ -2049,6 +2164,7 @@ function fireOrgActiveCascade(orgId, orgName) {
 // --- Sectors: Stage 1 (sector-only) and Stage 2/3 (sub-sector) ---
 
 function findOrCreateSectorOnly(sector) {
+  return upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
   if (!sector) return null;
   var sheet = getSheet('Sectors');
   if (!sheet) return null;
@@ -2066,6 +2182,7 @@ function findOrCreateSectorOnly(sector) {
 }
 
 function findSubsectorRow(sector, subsector) {
+  return findSectorBranch(sector, subsector);
   var sheet = getSheet('Sectors');
   if (!sheet || sheet.getLastRow() < 2) return null;
   var s = normalizeKeyPart(sector), sub = normalizeKeyPart(subsector);
@@ -2082,6 +2199,11 @@ function findSubsectorRow(sector, subsector) {
 // task text + target so re-editing the same Sector row (or capturing
 // it again via onboarding) never creates a second copy.
 function fireSectorOnlyTask(sector) {
+  var branch = (typeof sector === 'object') ? sector : upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
+  if (!branch) return '';
+  var linkedTaskText = 'List 2-4 sub-sectors worth exploring for ' + branch.sector;
+  return appendTodoOnceForWorkflow(linkedTaskText, 'Sector', branch.id, '', 'Sector selection', 'Not started', '', '20 min',
+    'Sub-sectors should be narrow enough that a market map of 10-15 organisations is feasible.', 'Auto-triggered');
   var taskText = 'List 2-4 sub-sectors worth exploring for ' + sector;
   appendTodoOnceForWorkflow(taskText, 'Sector', sector, '', 'Sector selection', 'Not started', '', '20 min',
     'Sub-sectors should be narrow enough that a market map of 10-15 organisations is feasible.', 'Auto-triggered');
@@ -2093,6 +2215,7 @@ function fireSectorOnlyTask(sector) {
 // Decision is what creates the Market-map Task (see acceptPendingDecision
 // -> appendTodoWithSource, workflow 'Market mapping'); No creates nothing.
 function findOrCreateSubsector(sector, subsector) {
+  return upsertSectorBranch({ sector: sector, subsector: subsector, source: 'manual_sheet_entry', createExpansionDecision: true });
   if (!sector || !subsector) return null;
   var existing = findSubsectorRow(sector, subsector);
   if (existing) return existing;
@@ -2106,6 +2229,12 @@ function findOrCreateSubsector(sector, subsector) {
 }
 
 function fireSubsectorAddedDecision(sector, subsector, subsectorId) {
+  var expansionLabel = sector + ' - ' + subsector;
+  var expansionKey = 'EXPAND_SUBSECTOR:' + subsectorId;
+  if (findDecisionByKey(expansionKey)) return '';
+  return appendPendingDecision(expansionKey, 'Sub-sector added: ' + expansionLabel,
+    'Market map: ' + expansionLabel, 'Sector', subsectorId, 'Market mapping',
+    'Build a list of target organisations in this sub-sector?');
   var label = sector + ' — ' + subsector;
   appendPendingDecision('SUBSECTOR_MARKETMAP:' + subsectorId, 'Sub-sector added: ' + label,
     'Market map: ' + label, 'Sector', subsectorId, 'Market mapping',
@@ -2117,6 +2246,36 @@ function fireSubsectorAddedDecision(sector, subsector, subsectorId) {
 // findOrCreateSubsector) so manual entry and popup capture can never
 // drift apart.
 function onEditSectors(sheet, row, col, newVal) {
+  if (row <= 1) return;
+  if (col === COLS.SECTORS.STATUS) {
+    var normalizedSectorStatus = normalizeSectorStatus(newVal);
+    if (normalizedSectorStatus !== String(newVal || '')) sheet.getRange(row, COLS.SECTORS.STATUS).setValue(normalizedSectorStatus);
+    if (normalizedSectorStatus === 'Retired') retireSectorBranch(sheet.getRange(row, COLS.SECTORS.ID).getValue());
+    return;
+  }
+  if (col === COLS.SECTORS.SECTOR || col === COLS.SECTORS.SUBSECTOR) {
+    var sectorValue = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
+    var subsectorValue = sheet.getRange(row, COLS.SECTORS.SUBSECTOR).getValue();
+    if (!sectorValue && subsectorValue) { appendNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[taxonomy] Add Sector before Sub-sector'); return; }
+    if (!sectorValue) return;
+    var existingId = String(sheet.getRange(row, COLS.SECTORS.ID).getValue() || '');
+    if (existingId) {
+      if (!sheet.getRange(row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(row, COLS.SECTORS.STATUS).setValue('Open');
+      propagateSectorRenameToOrganisations(existingId);
+      if (!subsectorValue) fireSectorOnlyTask(getSectorBranchById(existingId));
+      else fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId);
+      return;
+    }
+    var branch = upsertSectorBranch({ sector: sectorValue, subsector: subsectorValue, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: !!subsectorValue });
+    if (!branch) return;
+    if (branch.row !== row) {
+      sheet.getRange(row, 1, 1, HEADERS.Sectors.length).clearContent();
+      SpreadsheetApp.getActiveSpreadsheet().toast('Merged duplicate Sectors entry into row ' + branch.row + '.', 'The Planner', 4);
+      return;
+    }
+    if (!subsectorValue) fireSectorOnlyTask(branch);
+    return;
+  }
   if (col === COLS.SECTORS.SECTOR && newVal) {
     var subCell = sheet.getRange(row, COLS.SECTORS.SUBSECTOR);
     if (!subCell.getValue()) fireSectorOnlyTask(newVal);
@@ -2149,6 +2308,118 @@ function onEditSectors(sheet, row, col, newVal) {
 // (already non-blank), behavior is unchanged from v7.0 — fires once,
 // immediately, with full context.
 // =============================================================
+
+function propagateSectorRenameToOrganisations(sectorId) {
+  var branch = getSectorBranchById(sectorId);
+  var orgSheet = getSheet('Organisations');
+  if (!branch || !orgSheet || orgSheet.getLastRow() < 2) return 0;
+  var data = orgSheet.getRange(2, 1, orgSheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.ORGS.SUBSECTOR_ID - 1]) !== String(sectorId)) continue;
+    var r = i + 2;
+    orgSheet.getRange(r, COLS.ORGS.SECTOR).setValue(branch.sector);
+    orgSheet.getRange(r, COLS.ORGS.SUBSECTOR).setValue(branch.subsector);
+    clearNoteFlag(orgSheet, r, COLS.ORGS.NOTES, '[orphaned-sector]');
+    count++;
+  }
+  return count;
+}
+
+function retireSectorBranch(sectorId) {
+  if (!sectorId) return 0;
+  var decisions = autoDismissPendingForTarget('Sector', sectorId, 'Sector branch retired');
+  var tasks = setOpenTodosForTarget('Sector', sectorId, 'Skipped', 'Sector branch retired');
+  populateToday();
+  refreshHome();
+  return decisions + tasks;
+}
+
+function sectorIdExistsMap() {
+  var sheet = getSheet('Sectors');
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var ids = sheet.getRange(2, COLS.SECTORS.ID, sheet.getLastRow() - 1, 1).getValues();
+  ids.forEach(function (r) { if (r[0]) out[String(r[0])] = true; });
+  return out;
+}
+
+function repairSectorTaskLinks() {
+  var taskSheet = getSheet('Tasks');
+  if (!taskSheet || taskSheet.getLastRow() < 2) return 0;
+  var repaired = 0;
+  var data = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Sector') continue;
+    var objId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
+    if (!objId || objId.indexOf('SEC-') === 0 || objId.indexOf('SUB-') === 0) continue;
+    var taskText = String(data[i][COLS.TODO.TASK - 1] || '');
+    var branch = null;
+    var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:â€”|-)\s*(.+)$/);
+    if (marketMapMatch) branch = upsertSectorBranch({ sector: marketMapMatch[1], subsector: marketMapMatch[2], source: 'repair_backfill', createExpansionDecision: false });
+    else branch = upsertSectorBranch({ sector: objId, source: 'repair_backfill', createExpansionDecision: false });
+    if (!branch || !branch.id) continue;
+    var row = i + 2;
+    taskSheet.getRange(row, COLS.TODO.OBJ_ID).setValue(branch.id);
+    appendNoteFlag(taskSheet, row, COLS.TODO.NOTES, '[sector-link-repaired] ' + objId + ' -> ' + branch.id);
+    repaired++;
+  }
+  return repaired;
+}
+
+function repairSectorRows() {
+  var sheet = getSheet('Sectors');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var repaired = 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var sector = String(data[i][COLS.SECTORS.SECTOR - 1] || '').trim();
+    if (!sector) continue;
+    var row = i + 2;
+    var subsector = String(data[i][COLS.SECTORS.SUBSECTOR - 1] || '').trim();
+    var id = String(data[i][COLS.SECTORS.ID - 1] || '');
+    var prefix = subsector ? 'SUB' : 'SEC';
+    if (id.indexOf(prefix + '-') !== 0) {
+      sheet.getRange(row, COLS.SECTORS.ID).setValue(nextId(sheet, COLS.SECTORS.ID, prefix));
+      appendNoteFlag(sheet, row, COLS.SECTORS.NOTES, '[created-via-repair]');
+      repaired++;
+    }
+    if (!sheet.getRange(row, COLS.SECTORS.STATUS).getValue()) {
+      sheet.getRange(row, COLS.SECTORS.STATUS).setValue('Open');
+      repaired++;
+    }
+  }
+  return repaired;
+}
+
+function detectSectorOrphans() {
+  var existing = sectorIdExistsMap();
+  var count = 0;
+  var orgSheet = getSheet('Organisations');
+  if (orgSheet && orgSheet.getLastRow() >= 2) {
+    var orgData = orgSheet.getRange(2, 1, orgSheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
+    for (var i = 0; i < orgData.length; i++) {
+      var subId = String(orgData[i][COLS.ORGS.SUBSECTOR_ID - 1] || '');
+      if (subId && !existing[subId]) {
+        appendNoteFlag(orgSheet, i + 2, COLS.ORGS.NOTES, '[orphaned-sector] Linked Sector/Sub-sector no longer exists');
+        count++;
+      }
+    }
+  }
+  var taskSheet = getSheet('Tasks');
+  if (taskSheet && taskSheet.getLastRow() >= 2) {
+    var taskData = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    for (var t = 0; t < taskData.length; t++) {
+      var taskSectorId = String(taskData[t][COLS.TODO.OBJ_ID - 1] || '');
+      var taskObjType = String(taskData[t][COLS.TODO.OBJ_TYPE - 1]);
+      if (taskObjType === 'Sector' && taskSectorId && (taskSectorId.indexOf('SEC-') === 0 || taskSectorId.indexOf('SUB-') === 0) && !existing[taskSectorId]) {
+        appendNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-sector] Linked Sector/Sub-sector no longer exists');
+        count++;
+      }
+    }
+  }
+  return count;
+}
 
 function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.OPPORTUNITY || col === COLS.JOBS.ORG) checkJobDuplicate(sheet, row);
@@ -2478,7 +2749,7 @@ function dispatchCellEdit(sheet, row, col, value, e) {
     if (row <= 1) return;
     switch (name) {
       case 'Organisations': onEditOrgs(sheet, row, col, value, e); break;
-      case 'Sectors': onEditSectors(sheet, row, col, value); break;
+      case 'Sectors': onEditSectors(sheet, row, col, value, e); break;
       case 'Jobs': onEditJobs(sheet, row, col, value, e); break;
       case 'People': onEditPeople(sheet, row, col, value, e); break;
       case 'Conversations': onEditInteractions(sheet, row, col, value); break;
@@ -3745,8 +4016,8 @@ function checkAutoCompletion(item) {
     if (matchesWorkflow || matchesLegacyText) matched.push(data[i]);
   }
   if (!matched.length) return false; // nothing created yet -> not started
-  // A completed checklist item means ALL matching onboarding-related tasks are Done.
-  return matched.every(function (row) { return String(row[COLS.TODO.STATUS - 1]) === 'Done'; });
+  // Terminal statuses all resolve setup: Done, Skipped, or Cancelled.
+  return matched.every(function (row) { return isTerminalTodoStatus(String(row[COLS.TODO.STATUS - 1])); });
 }
 
 function shouldShowSetupCard(profile) {
@@ -4154,15 +4425,16 @@ function processOnboardingCapture(goal, entryPoint, fields) {
 // Sector onboarding uses the exact same two functions as manual sheet
 // entry (fireSectorOnlyTask / findOrCreateSubsector) — this is what
 // keeps popup capture and direct typing behaviorally identical.
-function processSectorOnboarding(fields) {
+function processSectorOnboarding(fields, source) {
+  source = source || 'onboarding';
   var sectors = splitInputList(fields.sectorNames);
   if (!sectors.length) {
     fireSectorOnlyTask('your first sector');
     return { message: 'Added the sector-picking task to Today.' };
   }
   sectors.slice(0, 2).forEach(function (sector) {
-    findOrCreateSectorOnly(sector);
-    fireSectorOnlyTask(sector);
+    var branch = upsertSectorBranch({ sector: sector, source: source, createExpansionDecision: false });
+    fireSectorOnlyTask(branch);
   });
   return { message: 'Added ' + Math.min(sectors.length, 2) + ' sector(s) and the sub-sector task.' };
 }
@@ -4428,7 +4700,7 @@ function completeCaptureFromPopup(payload) {
 }
 
 function processCapturePayload(captureType, fields) {
-  if (captureType === 'Explore sectors') return processSectorOnboarding(fields).message;
+  if (captureType === 'Explore sectors') return processSectorOnboarding(fields, 'home_update').message;
   if (captureType === 'Find organisations') {
     var names = splitInputList(fields.orgNames);
     names.forEach(function (name) {
@@ -4484,6 +4756,7 @@ function processJobCapture(fields) {
 
 var HEADER_GUIDANCE = {
   'Sectors': {
+    'Sector ID': 'system', 'Status': 'Open / Retired', 'Notes': 'trace and repair flags',
     'Sub-sector ID': 'system', 'Sector': '1. Broad area — add sector-only rows first', 'Sub-sector': '2. Narrow hunting ground — raises a Decision to build an org list'
   },
   'Organisations': {
@@ -4561,7 +4834,7 @@ function applyAllRichTextHeaders() {
 }
 
 var MANUAL_COLUMNS = {
-  'Sectors': [COLS.SECTORS.SECTOR, COLS.SECTORS.SUBSECTOR],
+  'Sectors': [COLS.SECTORS.SECTOR, COLS.SECTORS.SUBSECTOR, COLS.SECTORS.STATUS, COLS.SECTORS.NOTES],
   'Organisations': [COLS.ORGS.NAME, COLS.ORGS.SECTOR, COLS.ORGS.SUBSECTOR, COLS.ORGS.TIER, COLS.ORGS.STATUS, COLS.ORGS.NOTES],
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
@@ -4572,7 +4845,7 @@ var MANUAL_COLUMNS = {
 };
 
 var COLUMN_WIDTHS = {
-  'Sectors': { 2: 190, 3: 260 },
+  'Sectors': { 2: 190, 3: 260, 4: 100, 5: 300 },
   'Organisations': { 2: 220, 3: 170, 4: 220, 6: 70, 7: 120, 8: 135, 9: 165, 12: 300 },
   'People': { 2: 190, 3: 200, 5: 170, 6: 150, 7: 175, 8: 125, 9: 120, 12: 135, 13: 300 },
   'Jobs': { 2: 260, 3: 200, 5: 145, 6: 120, 9: 220, 11: 130, 12: 170, 13: 320 },
@@ -4584,13 +4857,14 @@ var COLUMN_WIDTHS = {
 };
 
 var WRAP_COLUMNS = {
-  'Sectors': [COLS.SECTORS.SUBSECTOR], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES],
+  'Sectors': [COLS.SECTORS.SUBSECTOR, COLS.SECTORS.NOTES], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES], 'Interactions': [COLS.INTERACTIONS.NOTES],
   'To-do': [COLS.TODO.TASK, COLS.TODO.NOTES], 'Interview rounds': [COLS.ROUNDS.NOTES],
   "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES]
 };
 
 var STATUS_COLOR_MAP = {
+  'Sectors': { col: COLS.SECTORS.STATUS, colors: { 'Open': '#FFFFFF', 'Retired': '#F1F3F4' } },
   'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#F1F3F4' } },
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'Outreach sent': '#C2DBFF', 'Engaged': '#CEEAD6', 'Conversation scheduled': '#D7BCE8', 'Conversation completed': '#B6E3E0', 'Nurture': '#FEF7CD', 'Closed': '#F1F3F4' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Want to apply': '#C2DBFF', 'Applied': '#B6E3E0', 'Interviewing': '#D7BCE8', 'Offer': '#CEEAD6', 'Parked': '#FEF7CD', 'Closed': '#F1F3F4' } },
@@ -4828,6 +5102,9 @@ function applySheetDropdowns(canonicalName) {
   if (!sheet) return;
   var maxRow = Math.max(sheet.getMaxRows() - 1, 40);
   switch (canonicalName) {
+    case 'Sectors':
+      setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS);
+      break;
     case 'Organisations':
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER);
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS);
@@ -4873,7 +5150,7 @@ function applySheetDropdowns(canonicalName) {
 }
 
 function refreshAllDropdowns() {
-  ['Organisations', 'People', 'Jobs', 'Conversations', 'Tasks', 'Interviews', 'Today', 'Decisions'].forEach(applySheetDropdowns);
+  ['Sectors', 'Organisations', 'People', 'Jobs', 'Conversations', 'Tasks', 'Interviews', 'Today', 'Decisions'].forEach(applySheetDropdowns);
 }
 
 // =============================================================
@@ -4983,6 +5260,7 @@ function weeklyReviewImpl() {
   }
   checkOrgActiveEmpty();
   checkOrgOrphans();
+  detectSectorOrphans();
 
   colorCodeManualFields();
   applyColumnWidths();
@@ -5147,10 +5425,12 @@ function rowActionSearchOrgsForSubsector() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Sectors') { SpreadsheetApp.getUi().alert('Select a Sectors row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  var id = sheet.getRange(row, COLS.SECTORS.ID).getValue();
+  var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   var sub = sheet.getRange(row, COLS.SECTORS.SUBSECTOR).getValue();
-  if (!id || !sub) { SpreadsheetApp.getUi().alert('Select a row with a Sub-sector.'); return; }
-  appendTodoWithSource('Market map: ' + sheet.getRange(row, COLS.SECTORS.SECTOR).getValue() + ' — ' + sub, 'Sector', id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+  if (!sector || !sub) { SpreadsheetApp.getUi().alert('Select a row with a Sector and Sub-sector.'); return; }
+  var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+  if (!branch || !branch.id) return;
+  appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
 }
 
 function rowActionBreakDownSelectedSector() {
@@ -5159,7 +5439,8 @@ function rowActionBreakDownSelectedSector() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   if (!sector) return;
-  fireSectorOnlyTask(sector);
+  var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+  fireSectorOnlyTask(branch);
 }
 
 function rowActionAddInterviewRound() {
@@ -5474,7 +5755,10 @@ function repairAllTabs() {
   ensureDecisionsTab();
   applySheetDropdowns('Decisions');
 
+  repairSectorRows();
   repairOrgTaxonomyLinks();
+  repairSectorTaskLinks();
+  detectSectorOrphans();
   repairOrganisationsFormulas();
   refreshLinkedContactsDisplay();
   recalculateCommitmentClasses();
@@ -5512,6 +5796,9 @@ function dailyMaintenance() {
     backfillTaskHelperColumns();
     runQueueHygiene();
     materializeDueTasks();
+    repairSectorRows();
+    repairSectorTaskLinks();
+    detectSectorOrphans();
     checkDomainReadinessFlags();
     refreshInteractionPersonDropdown();
     populateToday();
