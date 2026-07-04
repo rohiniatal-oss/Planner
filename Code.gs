@@ -5572,6 +5572,45 @@ var HEADER_GUIDANCE = {
   }
 };
 
+function userFacingHeaderHint(canonicalName, name, hint) {
+  var h = String(hint || '');
+  var exact = {
+    'system': 'Filled automatically',
+    'formula': 'Updates automatically',
+    'auto': 'Filled automatically',
+    'auto from person': 'Filled from Person when known',
+    'backend date for response checks': 'Used for response checks',
+    'backend follow-up date': 'Next response check date',
+    'cascade type': 'Suggested next-step type'
+  };
+  if (exact[h]) h = exact[h];
+  h = h.replace(/\bbackend\b/g, 'Planner')
+    .replace(/\bcascade type\b/g, 'suggested next-step type')
+    .replace(/\bcascades?\b/g, 'follow-up routing')
+    .replace(/\bformula\b/g, 'updates automatically');
+
+  if (canonicalName === 'Tasks') {
+    if (name === 'Task') return 'Prefer Home/Today for daily work; edit here for repair';
+    if (name === 'Status') return 'Set Done/Skipped/Cancelled here only when repairing';
+    if (name === 'Due date') return 'Planner may set this; edit if the date is wrong';
+    if (name === 'Priority rank') return 'Lower number appears earlier';
+    if (name === 'Source') return 'Where the task came from';
+  }
+  if (canonicalName === 'Decisions') {
+    if (name === 'Decision') return 'Choose Yes or No';
+    if (name === 'Decided at') return 'Filled when decided';
+    if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
+  }
+  if (canonicalName === 'Interviews') {
+    if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
+    if (name === 'Domain readiness') return 'Sets prep depth';
+    if (name === 'Official outcome') return 'Waiting / Next round / Rejected / Offer / Parked';
+  }
+  if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
+  if (canonicalName === 'Organisations' && (name === 'Known people (count)' || name === 'Open opportunities (count)')) return 'Updates as linked rows are added';
+  return h;
+}
+
 function applyRichTextHeaders(canonicalName) {
   var headerKey = SHEET_TO_HEADER_KEY[canonicalName];
   var sheet = getSheet(canonicalName);
@@ -5581,7 +5620,7 @@ function applyRichTextHeaders(canonicalName) {
   var headerRow = (canonicalName === 'Today') ? TODAY_TABLE_HEADER_ROW : 1;
   for (var c = 0; c < headers.length; c++) {
     var name = headers[c];
-    var hint = guidance[name] || '';
+    var hint = userFacingHeaderHint(canonicalName, name, guidance[name] || '');
     var cell = sheet.getRange(headerRow, c + 1);
     cell.clearNote();
     if (hint) {
@@ -5609,7 +5648,7 @@ var MANUAL_COLUMNS = {
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
-  'To-do': [COLS.TODO.TASK, COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES],
+  'To-do': [COLS.TODO.STATUS, COLS.TODO.NOTES],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
 };
