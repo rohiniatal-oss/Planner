@@ -505,7 +505,7 @@ function nextId(sheet, col, prefix) {
 }
 
 function styleHeader(sheet, numCols) {
-  sheet.getRange(1, 1, 1, numCols).setBackground(HEADER_COLOR).setFontColor('#FFFFFF').setFontWeight('bold');
+  sheet.getRange(1, 1, 1, numCols).clearNote().setBackground(HEADER_COLOR).setFontColor('#FFFFFF').setFontWeight('bold');
 }
 
 function setDropdown(range, values, opts) {
@@ -4142,16 +4142,16 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
 
   try { sheet.getRange('A' + idRow + ':' + lastCol + actionRow).breakApart(); } catch (err) { /* not merged, ignore */ }
   sheet.getRange('A' + idRow + ':' + lastCol + actionRow).clearContent().clearNote().setBackground(null).setFontColor('#28251D').setFontWeight('normal').setWrap(false);
-  if (moreRow) sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).clearContent().clearNote();
+  if (moreRow) sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).clearContent().clearNote().setBackground(null);
 
   slots.forEach(function (slot) {
     sheet.getRange(slot.id).setValue('');
-    sheet.getRange(slot.text).setValue('').setBackground('#F1F3F4');
-    sheet.getRange(slot.action).setValue('').setBackground('#F1F3F4');
+    sheet.getRange(slot.text).setValue('').setBackground(null);
+    sheet.getRange(slot.action).setValue('').setBackground(null).clearDataValidations();
   });
 
   if (!pendingList.length) {
-    sheet.getRange(slots[0].text).setValue('✓ No pending decisions').setBackground('#F1F3F4').setFontColor('#437A22').setFontWeight('bold');
+    sheet.getRange(slots[0].text).setValue('✓ No pending decisions').setBackground(null).setFontColor('#437A22').setFontWeight('bold');
     return;
   }
 
@@ -5501,6 +5501,7 @@ function applyRichTextHeaders(canonicalName) {
     var name = headers[c];
     var hint = guidance[name] || '';
     var cell = sheet.getRange(headerRow, c + 1);
+    cell.clearNote();
     if (hint) {
       var fullText = name + '\n' + hint;
       cell.setRichTextValue(SpreadsheetApp.newRichTextValue().setText(fullText)
