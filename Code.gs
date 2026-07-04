@@ -4783,20 +4783,20 @@ var HEADER_GUIDANCE = {
     'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
   'People': {
-    'Person ID': 'system', 'Name': '1. Type name', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
-    'Role': 'optional', 'Relationship type': 'optional', 'Stage': 'real state of the relationship', 'Follow-up date': 'auto or manual',
+    'Person ID': 'system', 'Name': 'Type a contact name; Organisation unlocks outreach tasks', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
+    'Role': 'optional', 'Relationship type': 'optional',
+    'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed',
+    'Follow-up date': 'auto or manual',
     'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
-    'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system',
-    'Name': 'Type a contact name; Organisation unlocks outreach tasks',
-    'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed'
+    'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': '1. Job title', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
     'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
-    'Response received': 'Yes/No when known', 'Outcome': 'result or close reason', 'Notes': 'URL/source and prep notes',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
-    'Outcome': 'Entering an outcome marks Response received = Yes'
+    'Outcome': 'Entering an outcome marks Response received = Yes. Result or close reason.',
+    'Notes': 'URL/source and prep notes'
   },
   'Interactions': {
     'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'pick or type person', 'Organisation': 'auto from person',
@@ -5831,9 +5831,12 @@ function syncJobsPeopleHealthFlags() {
     for (var t = 0; t < tasks.length; t++) {
       var type = String(tasks[t][COLS.TODO.OBJ_TYPE - 1] || '');
       var id = String(tasks[t][COLS.TODO.OBJ_ID - 1] || '');
+      var isLinkedJobOrPerson = (type === 'Job' || type === 'Person') && !!id;
       if ((type === 'Job' && id && !jobIds[id]) || (type === 'Person' && id && !personIds[id])) {
         appendNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-link] Linked ' + type + ' no longer exists');
         count++;
+      } else if (isLinkedJobOrPerson) {
+        clearNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-link]');
       }
     }
   }
@@ -5844,9 +5847,12 @@ function syncJobsPeopleHealthFlags() {
     for (var d = 0; d < decisions.length; d++) {
       var dType = String(decisions[d][COLS.DECISIONS.TARGET_TYPE - 1] || '');
       var dId = String(decisions[d][COLS.DECISIONS.TARGET_ID - 1] || '');
+      var dIsLinkedJobOrPerson = (dType === 'Job' || dType === 'Person') && !!dId;
       if ((dType === 'Job' && dId && !dJobIds[dId]) || (dType === 'Person' && dId && !dPersonIds[dId])) {
         appendNoteFlag(decisionSheet, d + 2, COLS.DECISIONS.NOTES, '[orphaned-link] Linked ' + dType + ' no longer exists');
         count++;
+      } else if (dIsLinkedJobOrPerson) {
+        clearNoteFlag(decisionSheet, d + 2, COLS.DECISIONS.NOTES, '[orphaned-link]');
       }
     }
   }
