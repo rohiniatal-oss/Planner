@@ -1952,6 +1952,40 @@ function syncOpenJobDeadlineTaskDates(jobId, deadline) {
   return count;
 }
 
+function syncOpenJobResponseCheckDate(jobId, reviewDate) {
+  if (!jobId) return 0;
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(jobId)) continue;
+    if (String(data[i][COLS.TODO.WORKFLOW - 1] || '') !== 'Check application response') continue;
+    if (isTerminalTodoStatus(data[i][COLS.TODO.STATUS - 1])) continue;
+    sheet.getRange(i + 2, COLS.TODO.DUE_DATE).setValue(reviewDate || '');
+    count++;
+  }
+  if (count) recalcTodosLinkedToObject(String(jobId));
+  return count;
+}
+
+function updateJobSubmittedDates(jobId, submittedDate) {
+  var job = getJobRowById(jobId);
+  if (!job) return null;
+  var applied = parseDateOr(submittedDate);
+  var review = addDays(applied, 12);
+  var sheet = getSheet('Jobs');
+  sheet.getRange(job.row, COLS.JOBS.APPLIED_DATE).setValue(applied);
+  sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
+  syncOpenJobResponseCheckDate(jobId, review);
+  if (normalizeJobStatus(sheet.getRange(job.row, COLS.JOBS.STATUS).getValue()) === 'Submitted' && !sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) {
+    appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
+      'Check application response', 'Not started', review, '15 min', 'Submitted on ' + formatDateHuman(applied), 'Auto-triggered');
+  }
+  return { applied: applied, review: review };
+}
+
 function removeOpenDeadlineReminderTasks() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return 0;
@@ -2421,7 +2455,10 @@ function handleJobTodoCompletion(todo, options) {
     createFinalSubmitTaskIfApplicationReady(job);
     return;
   } else if (todo.workflow === 'Submit application') {
-    setJobStatus(todo.objId, 'Submitted', { source: 'todo-completion', realDate: today() });
+    var submittedDate = options.realDate ? parseDateOr(options.realDate) : today();
+    setJobStatus(todo.objId, 'Submitted', { source: options.source || 'todo-completion', realDate: submittedDate });
+    updateJobSubmittedDates(todo.objId, submittedDate);
+    if (!options.realDate) appendNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[submitted-date-defaulted] Applied date defaulted to today');
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
@@ -4526,7 +4563,7 @@ function dispatchCellEdit(sheet, row, col, value, e) {
       case 'People': onEditPeople(sheet, row, col, value, e); break;
       case 'Conversations': onEditInteractions(sheet, row, col, value); break;
       case 'Interviews': onEditRounds(sheet, row, col, value); break;
-      case 'Tasks': onEditTasks(sheet, row, col, value); break;
+      case 'Tasks': onEditTasks(sheet, row, col, value, e); break;
       case 'Today': onEditToday(sheet, row, col, value); break;
       case 'Decisions': onEditDecisions(sheet, row, col, value, e); break;
     }
@@ -4782,7 +4819,17 @@ function uninstallEditTrigger() {
   SpreadsheetApp.getActiveSpreadsheet().toast('Removed ' + removed + ' installable edit trigger(s). The simple onEdit(e) trigger still runs.', 'The Planner', 5);
 }
 
-function onEditTasks(sheet, row, col, newVal) {
+function onEditTasks(sheet, row, col, newVal, e) {
+  if (col === COLS.TODO.STATUS && String(newVal || '') === 'Done') {
+    var editedTodo = getTodoByRow(sheet, row);
+    if (editedTodo.workflow === 'Submit application' && editedTodo.objType === 'Job') {
+      var priorStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
+      sheet.getRange(row, COLS.TODO.STATUS).setValue(priorStatus);
+      sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
+      runSubmitApplicationPopup(editedTodo.id);
+      return;
+    }
+  }
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE || col === COLS.TODO.TIME_EST) sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE) {
     sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
@@ -5645,6 +5692,14 @@ function onEditToday(sheet, row, col, newVal) {
 
   var todoId = sheet.getRange(row, COLS.TODAY.TODO_ID).getValue();
   if (!todoId) return;
+  if (status === 'Done') {
+    var todo = getTodoById(String(todoId));
+    if (todo && todo.workflow === 'Submit application' && todo.objType === 'Job') {
+      sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
+      runSubmitApplicationPopup(String(todoId));
+      return;
+    }
+  }
   if (status === 'Deferred') {
     deferTodoById(String(todoId), 3, 'today');
     requestHomeRefresh();
@@ -6978,6 +7033,57 @@ function completeApplicationPlanFromPopup(payload) {
   }, { label: 'completeApplicationPlanFromPopup', timeoutMs: 30000 });
 }
 
+function buildSubmitApplicationHtml(todoId) {
+  var todo = getTodoById(todoId);
+  var job = todo ? getJobRowById(todo.objId) : null;
+  if (!todo || !job) return '<p>Application task not found.</p>';
+  var data = {
+    todoId: todo.id,
+    title: job.title,
+    org: job.org,
+    submittedDate: formatDateHuman(today())
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'input{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Application submitted</h2><p id="jobLine"></p>' +
+    '<label>Submitted date<input id="submittedDate" type="date"></label>' +
+    '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;document.getElementById("submittedDate").value=data.submittedDate;' +
+    'function save(){var date=document.getElementById("submittedDate").value,status=document.getElementById("status");if(!date){status.textContent="Submitted date is required.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks or Home.";}).completeSubmitApplicationFromPopup({todoId:data.todoId,submittedDate:date});}</script>';
+}
+
+function runSubmitApplicationPopup(todoId) {
+  var html = HtmlService.createHtmlOutput(buildSubmitApplicationHtml(todoId)).setWidth(460).setHeight(300).setTitle('Application submitted');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Application submitted');
+}
+
+function completeSubmitApplicationFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var todo = getTodoById(payload.todoId);
+      if (!todo) return failResult('I could not find that submit task.', '', 'TASK_NOT_FOUND');
+      if (todo.workflow !== 'Submit application' || todo.objType !== 'Job') return failResult('That task is not an application submit task.', '', 'NOT_SUBMIT_TASK');
+      var submittedDate = parseDateOr(payload.submittedDate);
+      completeTodo(todo.id, 'Done', { source: 'submit-popup', realDate: submittedDate });
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      return okResult('Application marked submitted for ' + formatDateHuman(submittedDate) + '.');
+    } catch (err) {
+      return popupExceptionResult('completeSubmitApplicationFromPopup', err);
+    }
+  }, { label: 'completeSubmitApplicationFromPopup', timeoutMs: 30000 });
+}
+
 function completeCaptureFromPopup(payload) {
   return withDocumentLock(function () {
     try {
@@ -7076,6 +7182,9 @@ function processJobCapture(fields) {
   var opts = { realDate: fields.appliedDate || '' };
   fireJobStatusChanged(jobId, previousStatus, status, opts);
   job = getJobRowById(jobId);
+  if (fields.appliedDate && status === 'Submitted') {
+    updateJobSubmittedDates(jobId, fields.appliedDate);
+  }
   if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
   if (fields.outcome) {
     var normalizedOutcome = normalizeJobOutcome(fields.outcome);
