@@ -909,19 +909,45 @@ function acceptPendingDecision(sheet, row) {
   return { ok: true, todoId: todoId, reused: false };
 }
 
-function onEditDecisions(sheet, row, col, newVal) {
+// Shared by onEditDecisions and handleDecisionAction: writes the chosen
+// action onto the Decisions row, runs the accept flow on Yes (which may
+// revert the row back to Pending on failure — see acceptPendingDecision),
+// and stamps Decided at for No/Auto-dismissed. Returns the accept result
+// (or null for No/Auto-dismissed) so callers can toast appropriately.
+function resolveDecision(decisionsSheet, row, action) {
+  decisionsSheet.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
+  var accepted = null;
+  if (action === 'Yes') accepted = acceptPendingDecision(decisionsSheet, row);
+  if (action === 'No' || action === 'Auto-dismissed') decisionsSheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  return accepted;
+}
+
+function toastForDecisionOutcome(action, accepted) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (action !== 'Yes') { ss.toast('Decision dismissed.', 'The Planner', 3); return; }
+  if (accepted && accepted.ok) {
+    ss.toast(accepted.reused ? 'Already linked to an existing task.' : 'Decision promoted to a Task.', 'The Planner', 3);
+  } else {
+    ss.toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
+  }
+}
+
+function onEditDecisions(sheet, row, col, newVal, e) {
   if (row <= 1 || col !== COLS.DECISIONS.DECISION) return;
   var decision = String(newVal || '');
   if (DROPDOWNS.DECISION.indexOf(decision) === -1) return;
-  var accepted = null;
-  if (decision === 'Yes') accepted = acceptPendingDecision(sheet, row);
-  if (decision === 'No' || decision === 'Auto-dismissed') sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  // The cell already holds the new value by the time onEdit fires, so the
+  // "already resolved" check other paths use (compare current vs Pending)
+  // can't apply here — check the previous value instead. A no-op re-edit
+  // (e.g. Yes -> Yes) still routes through resolveDecision, which is safe:
+  // acceptPendingDecision's own existingTodoId guard makes re-accepting
+  // idempotent rather than creating a second Task.
+  var wasAlreadyResolved = e && e.oldValue && ['Yes', 'No', 'Auto-dismissed'].indexOf(String(e.oldValue)) !== -1;
+  var accepted = resolveDecision(sheet, row, decision);
   renderTodayDecisionCards();
   refreshHome();
   if (decision === 'Yes' && accepted && accepted.ok) populateToday();
-  if (decision === 'Yes' && (!accepted || !accepted.ok)) {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
-  }
+  if (!wasAlreadyResolved) toastForDecisionOutcome(decision, accepted);
 }
 
 // System-only: when the underlying source state changes in a way that
@@ -2245,7 +2271,7 @@ function routeEditEvent(e, triggerMode) {
       case 'Interviews': onEditRounds(sheet, row, col, value); break;
       case 'Tasks': onEditTasks(sheet, row, col, value); break;
       case 'Today': onEditToday(sheet, row, col, value); break;
-      case 'Decisions': onEditDecisions(sheet, row, col, value); break;
+      case 'Decisions': onEditDecisions(sheet, row, col, value, e); break;
     }
   }, { label: 'edit:' + name + ' r' + row + 'c' + col });
 }
@@ -3123,17 +3149,10 @@ function handleDecisionAction(sheet, action, decisionId) {
     SpreadsheetApp.getActiveSpreadsheet().toast('That decision was already resolved. Home has been refreshed.', 'The Planner', 4);
     return;
   }
-  decisions.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
-  var accepted = null;
-  if (action === 'Yes') accepted = acceptPendingDecision(decisions, row);
-  if (action === 'No') decisions.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  var accepted = resolveDecision(decisions, row, action);
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
   if (action === 'Yes' && accepted && accepted.ok) populateToday();
-  if (action === 'Yes' && (!accepted || !accepted.ok)) {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
-    return;
-  }
-  SpreadsheetApp.getActiveSpreadsheet().toast(action === 'Yes' ? 'Decision promoted to a Task.' : 'Decision dismissed.', 'The Planner', 3);
+  toastForDecisionOutcome(action, accepted);
 }
 
 // -------------------------------------------------------------
