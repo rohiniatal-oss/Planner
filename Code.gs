@@ -266,6 +266,7 @@ var DROPDOWNS = {
   YES_NO: ['Yes', 'No'],
 
   JOB_STATUS: ['Want to apply', 'Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'],
+  JOB_OUTCOME: ['No response yet', 'Interview invite', 'Rejected', 'Offer', 'Parked'],
 
   INTERACTION_TYPE: ['Intro call', 'Coffee', 'LinkedIn message', 'Email', 'Phone', 'Interview', 'Referral', 'Auto-log', 'Other'],
   INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
@@ -565,6 +566,30 @@ function normalizeJobStatus(value) {
     'To pursue': 'Want to apply', 'Application ready': 'Want to apply'
   };
   return legacyMap[v] || (DROPDOWNS.JOB_STATUS.indexOf(v) !== -1 ? v : '');
+}
+
+function normalizeJobOutcome(value) {
+  var v = String(value || '').trim();
+  var legacyMap = {
+    '': '',
+    'No response': 'No response yet',
+    'Waiting': 'No response yet',
+    'Interview': 'Interview invite',
+    'Interviewing': 'Interview invite',
+    'Next round': 'Interview invite',
+    'Closed': 'Rejected',
+    'Reject': 'Rejected'
+  };
+  return legacyMap[v] !== undefined ? legacyMap[v] : (DROPDOWNS.JOB_OUTCOME.indexOf(v) !== -1 ? v : '');
+}
+
+function jobStatusForOutcome(outcome) {
+  outcome = normalizeJobOutcome(outcome);
+  if (outcome === 'Interview invite') return 'Interviewing';
+  if (outcome === 'Rejected') return 'Closed';
+  if (outcome === 'Offer') return 'Offer';
+  if (outcome === 'Parked') return 'Parked';
+  return '';
 }
 
 function normalizePersonStage(value) {
@@ -1975,7 +2000,7 @@ function createJobResponseOutcomeDecision(jobId, reason) {
   if (['Applied', 'Interviewing', 'Offer'].indexOf(status) === -1) return '';
   return appendPendingDecision('JOB_RESPONSE_OUTCOME:' + jobId, reason || 'Job response received: ' + job.title,
     'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', jobId, 'Admin',
-    'Choose the real outcome on Jobs: no response yet / interview / rejected / offer / parked.');
+    'Choose the real outcome on Jobs: no response yet / interview invite / rejected / offer / parked.');
 }
 
 function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
@@ -2657,10 +2682,19 @@ function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.OUTCOME && newVal) {
     var outcomeJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(outcomeJobId);
-    if (!sheet.getRange(row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(row, COLS.JOBS.RESPONSE).setValue('Yes');
-    createJobResponseOutcomeDecision(outcomeJobId, 'Outcome entered for ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue());
+    var normalizedOutcome = normalizeJobOutcome(newVal);
+    if (!normalizedOutcome) {
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[invalid-value] Job Outcome "' + newVal + '" rejected');
+      return;
+    }
+    if (normalizedOutcome !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
+    sheet.getRange(row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
+    var outcomeStatus = jobStatusForOutcome(normalizedOutcome);
+    if (outcomeStatus) setJobStatus(outcomeJobId, outcomeStatus, { source: 'job-outcome' });
+    else refreshDerivedPlanningSurfaces();
+    autoDismissPendingForTarget('Job', outcomeJobId, 'Job outcome recorded');
     renderTodayDecisionCards();
-    refreshHome();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.JOBS.STATUS) {
@@ -5497,7 +5531,7 @@ function todayUpdateTypeToCapture(updateType) {
 }
 
 function captureConfig(captureType) {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, domain = DROPDOWNS.DOMAIN_READINESS, jobStatuses = DROPDOWNS.JOB_STATUS;
+  var roundTypes = DROPDOWNS.ROUND_TYPE, domain = DROPDOWNS.DOMAIN_READINESS, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME;
   var config = {
     'Explore sectors': { title: 'Explore sectors', fields: [{ k: 'sectorNames', l: 'Sector(s) to explore', t: 'textarea' }] },
     'Find organisations': {
@@ -5524,7 +5558,7 @@ function captureConfig(captureType) {
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'], blank: true, req: true },
       { k: 'appliedDate', l: 'Applied date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfSet: 'status' },
-      { k: 'outcome', l: 'Outcome / latest update', t: 'text', showIf: { k: 'response', v: 'Yes' } }]
+      { k: 'outcome', l: 'Outcome / latest update', t: 'select', o: jobOutcomes, blank: true, showIf: { k: 'response', v: 'Yes' } }]
     },
     'Add/update person': {
       title: 'Add/update person',
@@ -5682,10 +5716,15 @@ function processJobCapture(fields) {
   job = getJobRowById(jobId);
   if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
   if (fields.outcome) {
-    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(fields.outcome);
-    if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+    var normalizedOutcome = normalizeJobOutcome(fields.outcome);
+    if (!normalizedOutcome) return failResult('Pick a valid job outcome.', 'outcome', 'INVALID_OUTCOME');
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
+    var outcomeStatus = jobStatusForOutcome(normalizedOutcome);
+    if (outcomeStatus) setJobStatus(jobId, outcomeStatus, { source: 'capture-outcome' });
+    autoDismissPendingForTarget('Job', jobId, 'Job outcome recorded');
   }
-  if (fields.response === 'Yes' || fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
+  if (fields.response === 'Yes' && !fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
   return okResult((existingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
 // =============================================================
@@ -5716,7 +5755,7 @@ var HEADER_GUIDANCE = {
     'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
-    'Outcome': 'Entering an outcome marks Response received = Yes. Result or close reason.',
+    'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
     'Notes': 'URL/source and prep notes'
   },
   'Interactions': {
@@ -6172,6 +6211,7 @@ function applySheetDropdowns(canonicalName) {
     case 'Jobs':
       setDropdown(sheet.getRange(2, COLS.JOBS.STATUS, maxRow, 1), DROPDOWNS.JOB_STATUS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.JOBS.RESPONSE, maxRow, 1), DROPDOWNS.YES_NO);
+      setDropdown(sheet.getRange(2, COLS.JOBS.OUTCOME, maxRow, 1), DROPDOWNS.JOB_OUTCOME, { allowInvalid: false });
       break;
     case 'Conversations':
       setDropdown(sheet.getRange(2, COLS.INTERACTIONS.TYPE, maxRow, 1), DROPDOWNS.INTERACTION_TYPE);
