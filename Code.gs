@@ -29,7 +29,7 @@
  * If you add Today behavior, edit those — never append a second copy.
  *
  * v7.3 also hardens runtime robustness:
- *   - Concurrency: every mutating path runs behind withDocumentLock().
+ *   - Concurrency: mutating edit, popup, scheduled, menu, and row-action paths use withDocumentLock() where practical.
  *   - Performance: getOrgById/getJobRowById/getPersonRowById/getRoundById
  *     do a single bulk getValues() instead of per-field reads.
  *   - Triggers: all trigger wiring flows through ONE idempotent,
@@ -243,10 +243,10 @@ var LEGACY_TAB_NAMES = {
   'Decisions': ['Pending decisions', 'Pending Decisions', 'Suggestions']
 };
 
-var CANONICAL_TAB_ORDER = ['Home', 'Today', 'Decisions', 'Tasks', 'Sectors', 'Organisations', 'Jobs', 'People', 'Conversations', 'Interviews', 'Guide'];
+var CANONICAL_TAB_ORDER = ['Home', 'Today', 'Decisions', 'Tasks', 'Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations', 'Guide'];
 var ZONE_WORK_TABS = ['Home', 'Today', 'Decisions', 'Tasks'];
-var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Conversations'];
-var ZONE_REF_TABS = ['Interviews', 'Guide'];
+var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations'];
+var ZONE_REF_TABS = ['Guide'];
 var ZONE_WORK_COLOR = '#1B474D';
 var ZONE_DATA_COLOR = '#964219';
 var ZONE_REF_COLOR = '#7A7974';
@@ -359,10 +359,16 @@ function coerceResult(result, fallbackMessage) {
   return okResult(result || fallbackMessage || 'Saved.');
 }
 
-// v7.3.1: Serialises every mutating path behind a single document lock so
+function popupExceptionResult(context, err) {
+  Logger.log(context + ': ' + (err && err.stack ? err.stack : err));
+  return failResult('Something went wrong while saving. Run Maintenance > Repair all tabs, then try again.', '', 'SERVER_ERROR');
+}
+
+// v7.3.1: Serialises covered mutating paths behind a single document lock so
 // two overlapping edits (or an edit landing while dailyMaintenance runs)
-// can't double-create tasks or collide on nextId() / appendRow(). Runs fn
-// while holding the lock and always releases it, even on error.
+// are much less likely to double-create tasks or collide on nextId() /
+// appendRow(). Runs fn while holding the lock and always releases it, even
+// on error.
 //
 // IMPORTANT (v7.3.1 fix): if the lock can't be acquired within the
 // timeout, fn is STILL RUN (unguarded) rather than silently skipped. In a
@@ -691,6 +697,31 @@ function applyOrganisationStatusFromCapture(org, status, tier) {
     autoDismissPendingForTarget('Organisation', org.id, 'Organisation archived');
     setOpenTodosForTarget('Organisation', org.id, 'Cancelled', 'Organisation archived');
   }
+}
+
+// Auto-promotion is deliberately narrower than a manual Active edit: it
+// keeps Org priority honest when live linked work appears, without creating
+// the two broad "find people / scan jobs" Active decisions.
+function promoteMappedOrgToActive(orgId, reason) {
+  var org = getOrgById(orgId);
+  if (!org || String(org.status) !== 'Mapped') return false;
+  var sheet = getSheet('Organisations');
+  if (!sheet) return false;
+  sheet.getRange(org.row, COLS.ORGS.STATUS).setValue('Active');
+  sheet.getRange(org.row, COLS.ORGS.LAST_CHECKED).setValue(today());
+  appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[auto-active] ' + (reason || 'Live linked work exists'));
+  return true;
+}
+
+function promoteOrgForLiveJob(orgId, status) {
+  if (['Want to apply', 'Applied', 'Interviewing', 'Offer'].indexOf(normalizeJobStatus(status)) === -1) return false;
+  return promoteMappedOrgToActive(orgId, 'Live job/application evidence');
+}
+
+function promoteOrgForLivePerson(orgId, stage) {
+  var normalized = normalizePersonStage(stage);
+  if (['Outreach sent', 'Engaged', 'Conversation scheduled', 'Conversation completed', 'Nurture'].indexOf(normalized) === -1) return false;
+  return promoteMappedOrgToActive(orgId, 'Live relationship evidence');
 }
 
 function inheritOrgFields(sheet, editedRow, nameCol, orgIdCol) {
@@ -2538,6 +2569,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.JOBS.ID).setValue(jId);
       var jStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
       sheet.getRange(row, COLS.JOBS.STATUS).setValue(jStatus);
+      promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), jStatus);
       fireJobStatusChanged(jId, '', jStatus, { source: 'manual-org-followup' });
     }
     return;
@@ -2548,6 +2580,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     var org = sheet.getRange(row, COLS.JOBS.ORG).getValue();
     if (org) {
       inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
+      promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.STATUS).getValue());
       fireJobStatusChanged(sheet.getRange(row, COLS.JOBS.ID).getValue(), '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
     } else {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
@@ -2586,6 +2619,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
+    promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), status);
     fireJobStatusChanged(id, e && e.oldValue, status, { source: 'manual' });
     syncJobsPeopleHealthFlags();
   }
@@ -2602,6 +2636,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.PEOPLE.ID).setValue(pId);
       var pStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue() || 'Identified');
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(pStage);
+      promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), pStage);
       firePersonStageChanged(pId, '', pStage, { source: 'manual-org-followup' });
     }
     return;
@@ -2613,6 +2648,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     var orgName = sheet.getRange(row, COLS.PEOPLE.ORG).getValue();
     if (orgName) {
       inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+      promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
       firePersonStageChanged(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), '', 'Identified', { source: 'manual' });
     } else {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation to activate outreach task (leave blank and use the Tasks menu if there is none).');
@@ -2625,6 +2661,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Engaged');
     var pid = sheet.getRange(row, COLS.PEOPLE.ID).getValue();
     var oldStage = sheet.getRange(row, COLS.PEOPLE.STAGE).getValue();
     sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Engaged');
@@ -2639,6 +2676,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), 'Conversation scheduled');
     var currentStage = normalizePersonStage(sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
     if (currentStage !== 'Conversation completed') {
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Conversation scheduled');
@@ -2660,6 +2698,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       return;
     }
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
+    promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), stage);
     firePersonStageChanged(personId, e && e.oldValue, stage, { source: 'manual' });
   }
 }
@@ -2959,6 +2998,7 @@ function scheduleInterviewRound(roundId, dateValue) {
   sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).setValue(interviewDate);
   sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Scheduled');
   var roundType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
+  setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview scheduled', ['Interview scheduling']);
   if (!sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
     sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(interviewDate, REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
   }
@@ -3073,6 +3113,8 @@ function onEditRounds(sheet, row, col, newVal) {
       appendInteraction('', '', orgDisplay, today(), 'Auto-log', 'Interview completed: round ' + (roundNum || '?') + ' - ' + jobDisplay, 'System log');
     }
     if (String(newVal) === 'Reschedule') {
+      sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).setValue('');
+      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue('');
       appendTodoOnceForWorkflow('Reschedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Find a new time, then update Interview date.', 'Auto-triggered');
     }
     if (String(newVal) === 'Cancelled') {
@@ -4332,30 +4374,32 @@ function pullSelectedTaskIntoToday() {
   var task = String(active.getRange(row, COLS.TODO.TASK).getValue() || '');
   if (!todoId || !task) { SpreadsheetApp.getUi().alert('That row does not have a Task ID and task.'); return; }
 
-  var todaySheet = getSheet('Today');
-  if (!todaySheet) { bootstrapToday(); todaySheet = getSheet('Today'); }
-  for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
-    if (String(todaySheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
-      var notes = String(todaySheet.getRange(r, COLS.TODAY.NOTES).getValue() || '');
-      if (notes.indexOf('[pulled]') === -1) todaySheet.getRange(r, COLS.TODAY.NOTES).setValue('[pulled] ' + notes);
-      ss.setActiveSheet(todaySheet);
-      SpreadsheetApp.getActiveSpreadsheet().toast('Task is already on Today.', 'The Planner', 3);
-      return;
+  withDocumentLock(function () {
+    var todaySheet = getSheet('Today');
+    if (!todaySheet) { bootstrapToday(); todaySheet = getSheet('Today'); }
+    for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+      if (String(todaySheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
+        var notes = String(todaySheet.getRange(r, COLS.TODAY.NOTES).getValue() || '');
+        if (notes.indexOf('[pulled]') === -1) todaySheet.getRange(r, COLS.TODAY.NOTES).setValue('[pulled] ' + notes);
+        ss.setActiveSheet(todaySheet);
+        SpreadsheetApp.getActiveSpreadsheet().toast('Task is already on Today.', 'The Planner', 3);
+        return;
+      }
     }
-  }
-  var targetRow = -1;
-  for (var empty = TODAY_TABLE_FIRST_ROW; empty <= TODAY_TABLE_LAST_ROW; empty++) {
-    if (!todaySheet.getRange(empty, COLS.TODAY.TASK).getValue()) { targetRow = empty; break; }
-  }
-  if (targetRow === -1) { SpreadsheetApp.getUi().alert('Today is full. Clear or defer something first.'); return; }
-  var est = parseTimeEst(String(active.getRange(row, COLS.TODO.TIME_EST).getValue() || '30 min')) || 30;
-  writeTodayRow(todaySheet, targetRow, targetRow - 10, {
-    todoId: todoId, task: task, estMin: est,
-    effort: String(active.getRange(row, COLS.TODO.EFFORT_TYPE).getValue() || ''),
-    reason: 'manually pulled from Tasks', tags: '[pulled]', userNote: ''
-  }, 'Commit');
-  ss.setActiveSheet(todaySheet);
-  SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
+    var targetRow = -1;
+    for (var empty = TODAY_TABLE_FIRST_ROW; empty <= TODAY_TABLE_LAST_ROW; empty++) {
+      if (!todaySheet.getRange(empty, COLS.TODAY.TASK).getValue()) { targetRow = empty; break; }
+    }
+    if (targetRow === -1) { SpreadsheetApp.getUi().alert('Today is full. Clear or defer something first.'); return; }
+    var est = parseTimeEst(String(active.getRange(row, COLS.TODO.TIME_EST).getValue() || '30 min')) || 30;
+    writeTodayRow(todaySheet, targetRow, targetRow - 10, {
+      todoId: todoId, task: task, estMin: est,
+      effort: String(active.getRange(row, COLS.TODO.EFFORT_TYPE).getValue() || ''),
+      reason: 'manually pulled from Tasks', tags: '[pulled]', userNote: ''
+    }, 'Commit');
+    ss.setActiveSheet(todaySheet);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
+  }, { label: 'pullSelectedTaskIntoToday' });
 }
 
 function lockTodayRow() {
@@ -4363,10 +4407,12 @@ function lockTodayRow() {
   if (sheet.getName() !== 'Today') { SpreadsheetApp.getUi().alert('Select a row on Today first.'); return; }
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) { SpreadsheetApp.getUi().alert('Pick a task row.'); return; }
-  var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
-  if (notes.indexOf('[locked]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[locked] ' + notes);
-  sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('bold');
-  SpreadsheetApp.getActiveSpreadsheet().toast('Row locked — stays in place on the next refresh.', 'The Planner', 3);
+  withDocumentLock(function () {
+    var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
+    if (notes.indexOf('[locked]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[locked] ' + notes);
+    sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('bold');
+    SpreadsheetApp.getActiveSpreadsheet().toast('Row locked — stays in place on the next refresh.', 'The Planner', 3);
+  }, { label: 'lockTodayRow' });
 }
 
 function unlockTodayRow() {
@@ -4374,10 +4420,12 @@ function unlockTodayRow() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
-  var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '').replace(/\[locked\]\s*/g, '').trim();
-  sheet.getRange(row, COLS.TODAY.NOTES).setValue(notes);
-  sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('normal');
-  SpreadsheetApp.getActiveSpreadsheet().toast('Row unlocked.', 'The Planner', 3);
+  withDocumentLock(function () {
+    var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '').replace(/\[locked\]\s*/g, '').trim();
+    sheet.getRange(row, COLS.TODAY.NOTES).setValue(notes);
+    sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('normal');
+    SpreadsheetApp.getActiveSpreadsheet().toast('Row unlocked.', 'The Planner', 3);
+  }, { label: 'unlockTodayRow' });
 }
 
 function swapTodayRows(sheet, a, b) {
@@ -4391,8 +4439,10 @@ function moveTodayRowUp() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row <= TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
-  swapTodayRows(sheet, row, row - 1);
-  sheet.setActiveRange(sheet.getRange(row - 1, COLS.TODAY.TASK));
+  withDocumentLock(function () {
+    swapTodayRows(sheet, row, row - 1);
+    sheet.setActiveRange(sheet.getRange(row - 1, COLS.TODAY.TASK));
+  }, { label: 'moveTodayRowUp' });
 }
 
 function moveTodayRowDown() {
@@ -4400,8 +4450,10 @@ function moveTodayRowDown() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row >= TODAY_TABLE_LAST_ROW) return;
-  swapTodayRows(sheet, row, row + 1);
-  sheet.setActiveRange(sheet.getRange(row + 1, COLS.TODAY.TASK));
+  withDocumentLock(function () {
+    swapTodayRows(sheet, row, row + 1);
+    sheet.setActiveRange(sheet.getRange(row + 1, COLS.TODAY.TASK));
+  }, { label: 'moveTodayRowDown' });
 }
 
 function topUpToday() {
@@ -4412,10 +4464,12 @@ function topUpToday() {
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var mins = parseInt(resp.getResponseText().trim(), 10);
   if (isNaN(mins) || mins <= 0) { ui.alert('Enter a positive number.'); return; }
-  var current = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10) || 0;
-  sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(current + mins);
-  populateToday();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + mins + ' minutes to today.', 'The Planner', 4);
+  withDocumentLock(function () {
+    var current = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10) || 0;
+    sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(current + mins);
+    populateToday();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + mins + ' minutes to today.', 'The Planner', 4);
+  }, { label: 'topUpToday' });
 }
 
 function endOfDayReconcile() {
@@ -4726,13 +4780,13 @@ function refreshHome() {
   hardResetHomeSheet(sheet);
   sheet.setTabColor(ZONE_WORK_COLOR);
 
-  sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor('#1B474D');
+  sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor(HEADER_COLOR);
   var editReady = false;
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
   if (!editReady) {
     sheet.getRange(3, 2, 1, 7).merge()
-      .setValue('Setup required: Home actions are inactive until triggers are installed. Use The Planner > Triggers & setup > Set up / verify triggers.')
-      .setFontWeight('bold').setFontColor('#964219').setBackground('#FCE8E6').setWrap(true);
+      .setValue('⚠ One-time setup needed: open The Planner → Triggers & setup → Set up / verify triggers, or nothing on this page will respond.')
+      .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
   }
 
   // --- Onboarding card (§1.1) ---
@@ -4771,8 +4825,8 @@ function refreshHome() {
   var guideSheetForHome = getSheet('Guide');
   if (guideSheetForHome) {
     sheet.getRange(HOME_WELCOME_ROW, 7)
-      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Open Guide")')
-      .setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
+      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","New here? Read the Guide ▸")')
+      .setFontSize(9).setFontColor(HEADER_COLOR).setFontWeight('bold');
   }
 
   // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
@@ -4785,7 +4839,7 @@ function refreshHome() {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
   } else {
-    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground('#FCE8E6').setFontColor('#964219').setFontWeight('bold');
+    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground(MANUAL_COLOR).setFontColor(HEADER_COLOR).setFontWeight('bold');
   }
 
   // --- Today's plan hero (§1.4) — replaces the raw open-task count ---
@@ -4961,10 +5015,10 @@ function buildSetupHtml() {
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', domainReadiness=' + JSON.stringify(domain) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ';' +
     'var forms={' +
     ' sectors:{title:"Add your first sector(s)",fields:[{k:"sectorNames",l:"Sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
-    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true}]},' +
+    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
-    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"outreachDate",l:"When did you reach out?",t:"date"},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date"},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
+    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector, if known",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -4981,20 +5035,23 @@ function buildSetupHtml() {
     ' var c=document.getElementById("q2_options");c.innerHTML="";' +
     ' opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});' +
     ' showStep(2);}' +
+    'function fieldVisible(field,form){if(field.showIf)return form.elements[field.showIf.k]&&form.elements[field.showIf.k].value===field.showIf.v;if(field.showIfAny)return field.showIfAny.some(function(rule){return form.elements[rule.k]&&form.elements[rule.k].value===rule.v;});if(field.showIfSet)return !!(form.elements[field.showIfSet]&&form.elements[field.showIfSet].value);return true;}' +
+    'function updateConditional(form,cfg){(cfg.fields||[]).forEach(function(field,idx){var label=form.children[idx];if(label)label.style.display=fieldVisible(field,form)?"block":"none";});}' +
+    'function visibleFields(form,cfg){var fields={};Array.prototype.forEach.call(form.elements,function(el){if(!el.name)return;var idx=(cfg.fields||[]).map(function(f){return f.k;}).indexOf(el.name),field=cfg.fields[idx];if(!field||fieldVisible(field,form))fields[el.name]=el.value;});return fields;}' +
     'function renderForm(ep){var cfg=forms[ep];document.getElementById("q3title").innerHTML="<strong>3 of 3</strong> "+cfg.title;var f=document.getElementById("captureForm");f.innerHTML="";' +
     ' cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l+(field.req?" *":"");var input;' +
     '  if(field.t==="textarea"){input=document.createElement("textarea");}' +
     '  else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     '  else{input=document.createElement("input");input.type=field.t||"text";}' +
-    '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
+    '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});Array.prototype.forEach.call(f.elements,function(el){el.onchange=function(){updateConditional(f,cfg);};});updateConditional(f,cfg);' +
     ' showStep(3);}' +
-    'function submitSetup(){var fields={},form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]};Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' if(existingRows>0&&goal!=="skipped"&&entryPoint!=="skip"&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
+    'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
+    ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
-    ' .withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
-    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
+    ' .withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
+    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetConfirmed:resetConfirmed});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -5091,6 +5148,7 @@ function processApplicationOnboarding(fields) {
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   if (!fields.jobTitle) return failResult('I need at least a job title to capture an application.', 'jobTitle', 'MISSING_JOB_TITLE');
   var jobId = writeJobRow(fields.jobTitle, org, 'Applied');
+  promoteOrgForLiveJob(org && org.id, 'Applied');
   fireJobStatusChanged(jobId, '', 'Applied', { realDate: fields.appliedDate || today() });
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
   return okResult('Captured the application and created the response-check follow-up.');
@@ -5101,6 +5159,7 @@ function processJobOnboarding(fields) {
   if (!fields.org) return failResult('I need the organisation name to capture a job.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var jobId = writeJobRow(fields.jobTitle, org, 'Want to apply');
+  promoteOrgForLiveJob(org && org.id, 'Want to apply');
   if (fields.deadline) getSheet('Jobs').getRange(getJobRowById(jobId).row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
   fireJobStatusChanged(jobId, '', 'Want to apply', {});
@@ -5112,10 +5171,18 @@ function processInterviewOnboarding(fields) {
   if (!fields.org) return failResult('I need the organisation name to capture an interview.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var jobId = writeJobRow(fields.jobTitle, org, 'Interviewing');
+  promoteOrgForLiveJob(org && org.id, 'Interviewing');
+  var roundNum = fields.roundNumber || '1';
   fireJobStatusChanged(jobId, '', 'Interviewing', {
     forceRound: true,
-    roundDetails: { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
+    roundDetails: { roundNum: roundNum, roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
   });
+  var round = findRoundByJobRound(jobId, roundNum);
+  if (round && (fields.status || fields.officialOutcome)) {
+    var sheet = getSheet('Interviews');
+    if (fields.status && DROPDOWNS.ROUND_STATUS.indexOf(fields.status) !== -1) sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue(fields.status);
+    if (fields.officialOutcome && DROPDOWNS.OFFICIAL_OUTCOME.indexOf(fields.officialOutcome) !== -1) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(fields.officialOutcome);
+  }
   return okResult('Captured the interview and created the prep path.');
 }
 
@@ -5137,6 +5204,7 @@ function processPeopleOnboarding(fields) {
     else stage = 'Engaged';
   }
   var personId = writePersonRow(fields.name, org, fields.role || '');
+  promoteOrgForLivePerson(org && org.id, stage);
   if (fields.relType && DROPDOWNS.PERSON_REL_TYPE.indexOf(fields.relType) !== -1) {
     var pRow = getPersonRowById(personId);
     if (pRow) getSheet('People').getRange(pRow.row, COLS.PEOPLE.REL_TYPE).setValue(fields.relType);
@@ -5214,32 +5282,44 @@ function writePersonRow(name, org, role) {
 // Called from the popup. Wipes existing data (unless skipped), captures
 // the new facts, rebuilds the checklist, and refreshes Today/Home.
 function completeSetupFromPopup(payload) {
+  payload = payload || {};
+  var goal = payload.goal || 'skipped';
+  var entryPoint = payload.entryPoint || 'skip';
+  var fields = payload.fields || {};
+  var validation = validateOnboardingPayload(goal, entryPoint, fields);
+  if (!validation.ok) return validation;
+  var shouldReset = goal !== 'skipped' && entryPoint !== 'skip';
+  if (shouldReset && plannerDataRowCount() > 0 && payload.resetConfirmed !== true) {
+    var resp = SpreadsheetApp.getUi().alert(
+      'Clear existing planner data?',
+      'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Continue?',
+      SpreadsheetApp.getUi().ButtonSet.YES_NO);
+    if (resp !== SpreadsheetApp.getUi().Button.YES) return failResult('Setup cancelled. Existing planner data was not changed.', '', 'SETUP_RESET_CANCELLED');
+  }
   return withDocumentLock(function () {
-    payload = payload || {};
-    var goal = payload.goal || 'skipped';
-    var entryPoint = payload.entryPoint || 'skip';
-    var fields = payload.fields || {};
-    var validation = validateOnboardingPayload(goal, entryPoint, fields);
-    if (!validation.ok) return validation;
-    if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
+    try {
+      if (shouldReset) resetPlannerDataForOnboarding();
 
-    var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
-    if (!result.ok) return result;
-    var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
-    saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
+      var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
+      if (!result.ok) return result;
+      var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
+      saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
 
-    populateToday();
-    refreshHome();
-    colorCodeManualFields();
-    applyStatusColorCoding();
-    applyColumnLayout();
-    applyColumnWidths();
+      populateToday();
+      refreshHome();
+      colorCodeManualFields();
+      applyStatusColorCoding();
+      applyColumnLayout();
+      applyColumnWidths();
 
-    var todaySheet = getSheet('Today');
-    if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
-    var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
-    result.message = (result.message || 'Onboarding saved.') + suffix;
-    return result;
+      var todaySheet = getSheet('Today');
+      if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
+      var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
+      result.message = (result.message || 'Onboarding saved.') + suffix;
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeSetupFromPopup', err);
+    }
   }, { label: 'completeSetupFromPopup', timeoutMs: 30000 });
 }
 
@@ -5281,7 +5361,7 @@ function captureConfig(captureType) {
       title: 'Add/update job',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' }, { k: 'deadline', l: 'Deadline, if any', t: 'date' },
-      { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date' }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
+      { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
       { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes, blank: true, showIf: { k: 'status', v: 'Interviewing' } },
       { k: 'interviewDate', l: 'Interview date, if known', t: 'date', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain, blank: true, showIf: { k: 'status', v: 'Interviewing' } }]
     },
@@ -5289,8 +5369,8 @@ function captureConfig(captureType) {
       title: 'Application update',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'], blank: true, req: true },
-      { k: 'appliedDate', l: 'Applied date, if missing', t: 'date' }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'] },
-      { k: 'outcome', l: 'Outcome / latest update', t: 'text' }]
+      { k: 'appliedDate', l: 'Applied date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfSet: 'status' },
+      { k: 'outcome', l: 'Outcome / latest update', t: 'text', showIf: { k: 'response', v: 'Yes' } }]
     },
     'Add/update person': {
       title: 'Add/update person',
@@ -5298,7 +5378,7 @@ function captureConfig(captureType) {
       { k: 'relType', l: 'Relationship type', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
       { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
       { k: 'outreachDate', l: 'When did you reach out?', t: 'date', showIf: { k: 'reachedOut', v: 'Yes' } },
-      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
+      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Engaged / arranging next step', 'Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
       { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date', showIfAny: [{ k: 'whereNow', v: 'Conversation scheduled' }, { k: 'whereNow', v: 'Already spoke' }] }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
     },
     'Add/update conversation': {
@@ -5310,8 +5390,9 @@ function captureConfig(captureType) {
       title: 'Add/update interview',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes, blank: true },
-      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain, blank: true },
-      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME, blank: true }]
+      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'status', l: 'Round status', t: 'select', o: DROPDOWNS.ROUND_STATUS, defaultValue: 'Scheduled', showIfSet: 'interviewDate' },
+      { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain, blank: true, showIfSet: 'interviewDate' },
+      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME, blank: true, showIf: { k: 'status', v: 'Completed' } }]
     },
     'Task completed / blocked': { title: 'Task completed / blocked', fields: [{ k: 'taskNotes', l: 'What changed?', t: 'textarea', p: 'If a task is done, tick it Done on Today instead. Use this for a blocker or a new follow-up.', req: true }] }
   };
@@ -5337,13 +5418,14 @@ function buildCaptureHtml(captureType) {
     'else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     'else{input=document.createElement("input");input.type=field.t||"text";}' +
     'input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
-    'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx],show=true;if(field.showIf){show=f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;}if(field.showIfAny){show=field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});}label.style.display=show?"block":"none";});}' +
+    'function fieldVisible(field){if(field.showIf)return f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;if(field.showIfAny)return field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});if(field.showIfSet)return !!(f.elements[field.showIfSet]&&f.elements[field.showIfSet].value);return true;}' +
+    'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx];label.style.display=fieldVisible(field)?"block":"none";});}' +
     'Array.prototype.forEach.call(f.elements,function(el){el.onchange=updateConditional;});updateConditional();' +
-    'function submitCapture(){var fields={},form=document.getElementById("form"),status=document.getElementById("status");Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i],label=f.children[i],visible=!label||label.style.display!=="none";if(visible&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    'function submitCapture(){var fields={},form=document.getElementById("form"),status=document.getElementById("status");Array.prototype.forEach.call(form.elements,function(el){if(!el.name)return;var idx=cfg.fields.map(function(field){return field.k;}).indexOf(el.name),field=cfg.fields[idx];if(!field||fieldVisible(field))fields[el.name]=el.value;});' +
+    'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
     '.completeCaptureFromPopup({captureType:cfg.captureType,fields:fields});}</script>';
 }
 
@@ -5355,15 +5437,19 @@ function runCapturePopup(captureType) {
 
 function completeCaptureFromPopup(payload) {
   return withDocumentLock(function () {
-    payload = payload || {};
-    var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
-    if (!result.ok) return result;
-    populateToday();
-    refreshHome();
-    renderTodayDecisionCards();
-    colorCodeManualFields();
-    SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated - Tasks and Today refreshed.', 'The Planner', 4);
-    return result;
+    try {
+      payload = payload || {};
+      var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
+      if (!result.ok) return result;
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      colorCodeManualFields();
+      SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated - Tasks and Today refreshed.', 'The Planner', 4);
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeCaptureFromPopup', err);
+    }
   }, { label: 'completeCaptureFromPopup', timeoutMs: 30000 });
 }
 function processCapturePayload(captureType, fields) {
@@ -5412,6 +5498,7 @@ function processConversationCapture(fields) {
   var personId = person.data[COLS.PEOPLE.ID - 1];
   var personName = person.data[COLS.PEOPLE.NAME - 1];
   var personOrg = person.data[COLS.PEOPLE.ORG - 1] || (org ? org.name : fields.org || '');
+  promoteOrgForLivePerson(org ? org.id : person.data[COLS.PEOPLE.ORG_ID - 1], 'Conversation completed');
   appendInteraction(personId, personName, personOrg, fields.date || today(), 'Other', fields.notes || '', '');
   if (fields.outcome) {
     var sheet = getSheet('Conversations');
@@ -5430,6 +5517,7 @@ function processJobCapture(fields) {
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var existingJob = findJobByTitleOrg(fields.jobTitle, org ? org.name : '');
   var jobId = writeJobRow(fields.jobTitle, org, status);
+  promoteOrgForLiveJob(org && org.id, status);
   var job = getJobRowById(jobId);
   var sheet = getSheet('Jobs');
   if (fields.deadline) sheet.getRange(job.row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
@@ -5504,6 +5592,45 @@ var HEADER_GUIDANCE = {
   }
 };
 
+function userFacingHeaderHint(canonicalName, name, hint) {
+  var h = String(hint || '');
+  var exact = {
+    'system': 'Filled automatically',
+    'formula': 'Updates automatically',
+    'auto': 'Filled automatically',
+    'auto from person': 'Filled from Person when known',
+    'backend date for response checks': 'Used for response checks',
+    'backend follow-up date': 'Next response check date',
+    'cascade type': 'Suggested next-step type'
+  };
+  if (exact[h]) h = exact[h];
+  h = h.replace(/\bbackend\b/g, 'Planner')
+    .replace(/\bcascade type\b/g, 'suggested next-step type')
+    .replace(/\bcascades?\b/g, 'follow-up routing')
+    .replace(/\bformula\b/g, 'updates automatically');
+
+  if (canonicalName === 'Tasks') {
+    if (name === 'Task') return 'Prefer Home/Today for daily work; edit here for repair';
+    if (name === 'Status') return 'Set Done/Skipped/Cancelled here only when repairing';
+    if (name === 'Due date') return 'Planner may set this; edit if the date is wrong';
+    if (name === 'Priority rank') return 'Lower number appears earlier';
+    if (name === 'Source') return 'Where the task came from';
+  }
+  if (canonicalName === 'Decisions') {
+    if (name === 'Decision') return 'Choose Yes or No';
+    if (name === 'Decided at') return 'Filled when decided';
+    if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
+  }
+  if (canonicalName === 'Interviews') {
+    if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
+    if (name === 'Domain readiness') return 'Sets prep depth';
+    if (name === 'Official outcome') return 'Waiting / Next round / Rejected / Offer / Parked';
+  }
+  if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
+  if (canonicalName === 'Organisations' && (name === 'Known people (count)' || name === 'Open opportunities (count)')) return 'Updates as linked rows are added';
+  return h;
+}
+
 function applyRichTextHeaders(canonicalName) {
   var headerKey = SHEET_TO_HEADER_KEY[canonicalName];
   var sheet = getSheet(canonicalName);
@@ -5513,7 +5640,7 @@ function applyRichTextHeaders(canonicalName) {
   var headerRow = (canonicalName === 'Today') ? TODAY_TABLE_HEADER_ROW : 1;
   for (var c = 0; c < headers.length; c++) {
     var name = headers[c];
-    var hint = guidance[name] || '';
+    var hint = userFacingHeaderHint(canonicalName, name, guidance[name] || '');
     var cell = sheet.getRange(headerRow, c + 1);
     cell.clearNote();
     if (hint) {
@@ -5541,7 +5668,7 @@ var MANUAL_COLUMNS = {
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
-  'To-do': [COLS.TODO.TASK, COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES],
+  'To-do': [COLS.TODO.STATUS, COLS.TODO.NOTES],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
 };
@@ -5996,10 +6123,17 @@ function materializeDueTasks() {
 function weeklyReview() {
   // v7.3: guarded — writes stale-nurture flags, so keep it off the daily
   // trigger's toes.
-  return withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000, failOpen: false });
+  var summary = withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000, failOpen: false });
+  if (summary && summary.message) {
+    SpreadsheetApp.getActiveSpreadsheet().toast(summary.message, 'The Planner', 8);
+  } else {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Weekly review skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  }
+  return summary;
 }
 
 function weeklyReviewImpl() {
+  var summary = { staleNurture: 0, activeEmpty: 0, orgOrphans: 0, sectorOrphans: 0 };
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NOTES).getValues();
@@ -6013,19 +6147,23 @@ function weeklyReviewImpl() {
           var hasFollowUp = openTodoExistsForTargetWorkflow('Person', pId, 'Contact follow-up');
           appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES,
             hasFollowUp ? '[weekly-review] Nurture overdue; follow-up task already open.' : '[weekly-review] Nurture overdue; no follow-up task found.');
+          summary.staleNurture++;
         }
       }
     }
   }
-  checkOrgActiveEmpty();
-  checkOrgOrphans();
-  detectSectorOrphans();
+  summary.activeEmpty = checkOrgActiveEmpty();
+  summary.orgOrphans = checkOrgOrphans();
+  summary.sectorOrphans = detectSectorOrphans();
 
   colorCodeManualFields();
   applyColumnWidths();
   refreshAllDropdowns();
   checkTriggerHealth();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
+  summary.message = 'Weekly review: ' + summary.staleNurture + ' stale nurture, ' + summary.activeEmpty + ' empty Active orgs, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
+  try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
+  return summary;
 }
 
 // v7.6.3 §4.6: an Organisation marked Active is a deliberate choice to
@@ -6034,7 +6172,8 @@ function weeklyReviewImpl() {
 // this, and never apply it to Mapped (inert by design).
 function checkOrgActiveEmpty() {
   var sheet = getSheet('Organisations');
-  if (!sheet || sheet.getLastRow() < 2) return;
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var count = 0;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NOTES).getValues();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
@@ -6043,10 +6182,12 @@ function checkOrgActiveEmpty() {
     var openOpps = Number(data[i][COLS.ORGS.OPEN_OPPS - 1]) || 0;
     if (status === 'Active' && knownPeople === 0 && openOpps === 0) {
       appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people or open opportunities yet');
+      count++;
     } else {
       clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
     }
   }
+  return count;
 }
 
 // v7.6.3 §4.3: manual row deletion never fires onEdit, so People/Jobs/
@@ -6055,7 +6196,8 @@ function checkOrgActiveEmpty() {
 // deletes or relinks the child row.
 function checkOrgOrphans() {
   var orgSheet = getSheet('Organisations');
-  if (!orgSheet) return;
+  if (!orgSheet) return 0;
+  var count = 0;
   var validOrgIds = {};
   if (orgSheet.getLastRow() > 1) {
     orgSheet.getRange(2, COLS.ORGS.ID, orgSheet.getLastRow() - 1, 1).getValues().forEach(function (r) {
@@ -6073,6 +6215,7 @@ function checkOrgOrphans() {
       var orgId = data[i][orgIdCol - 1];
       if (orgId && !validOrgIds[String(orgId)]) {
         appendNoteFlag(sheet, row, notesCol, '[orphaned-org] ⚠ Linked Organisation no longer exists');
+        count++;
       } else {
         clearNoteFlag(sheet, row, notesCol, '[orphaned-org]');
       }
@@ -6083,6 +6226,7 @@ function checkOrgOrphans() {
   sweep(getSheet('Jobs'), COLS.JOBS.ORG_ID, COLS.JOBS.NOTES);
   sweep(getSheet('Tasks'), COLS.TODO.OBJ_ID, COLS.TODO.NOTES, COLS.TODO.OBJ_TYPE, 'Organisation');
   sweep(getSheet('Decisions'), COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.NOTES, COLS.DECISIONS.TARGET_TYPE, 'Organisation');
+  return count;
 }
 
 // =============================================================
@@ -6134,6 +6278,7 @@ function addNewJob() {
   withDocumentLock(function () {
     var org = createNameOnlyOrg(orgName, { status: 'Mapped', stub: true });
     var jobId = writeJobRow(title, org, 'Want to apply');
+    promoteOrgForLiveJob(org && org.id, 'Want to apply');
     fireJobStatusChanged(jobId, '', 'Want to apply', {});
   }, { label: 'addNewJob' });
   ui.alert('Added', 'Job "' + title + '" added with Status = Want to apply.', ui.ButtonSet.OK);
@@ -6154,6 +6299,7 @@ function addNewInteraction() {
   var notesResp = ui.prompt('Key notes', 'What was said/decided?', ui.ButtonSet.OK_CANCEL);
   var notes = notesResp.getSelectedButton() === ui.Button.OK ? notesResp.getResponseText().trim() : '';
   withDocumentLock(function () {
+    promoteOrgForLivePerson(person.data[COLS.PEOPLE.ORG_ID - 1], 'Conversation completed');
     appendInteraction(person.data[COLS.PEOPLE.ID - 1], person.data[COLS.PEOPLE.NAME - 1], person.data[COLS.PEOPLE.ORG - 1], today(), 'Other', notes, '');
   }, { label: 'addNewInteraction' });
   ui.alert('Logged', 'Conversation with ' + person.data[COLS.PEOPLE.NAME - 1] + ' logged.', ui.ButtonSet.OK);
@@ -6179,28 +6325,36 @@ function rowActionFindPeopleAtSelectedOrg() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Organisations') { SpreadsheetApp.getUi().alert('Select an Organisation row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'People sourcing', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'People sourcing', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionFindPeopleAtSelectedOrg' });
 }
 
 function rowActionScanJobsAtSelectedOrg() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Organisations') { SpreadsheetApp.getUi().alert('Select an Organisation row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Scan jobs at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Org job scan', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Scan jobs at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Org job scan', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionScanJobsAtSelectedOrg' });
 }
 
 function rowActionPrepSelectedJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+  }, { label: 'rowActionPrepSelectedJob' });
 }
 
 function rowActionReferralSearchSelectedJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionReferralSearchSelectedJob' });
 }
 
 function rowActionSearchOrgsForSubsector() {
@@ -6210,9 +6364,11 @@ function rowActionSearchOrgsForSubsector() {
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   var sub = sheet.getRange(row, COLS.SECTORS.SUBSECTOR).getValue();
   if (!sector || !sub) { SpreadsheetApp.getUi().alert('Select a row with a Sector and Sub-sector.'); return; }
-  var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
-  if (!branch || !branch.id) return;
-  appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+  withDocumentLock(function () {
+    var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+    if (!branch || !branch.id) return;
+    appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+  }, { label: 'rowActionSearchOrgsForSubsector' });
 }
 
 function rowActionBreakDownSelectedSector() {
@@ -6221,15 +6377,19 @@ function rowActionBreakDownSelectedSector() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   if (!sector) return;
-  var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
-  fireSectorOnlyTask(branch);
+  withDocumentLock(function () {
+    var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+    fireSectorOnlyTask(branch);
+  }, { label: 'rowActionBreakDownSelectedSector' });
 }
 
 function rowActionAddInterviewRound() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+  withDocumentLock(function () {
+    createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+  }, { label: 'rowActionAddInterviewRound' });
 }
 
 // v7.4 §4.2 — Multi-day Phase 2: break a Multi-day Task into real
@@ -6277,7 +6437,7 @@ function buildBreakdownHtml(todoId, taskTitle) {
     'if(!subtasks.length){document.getElementById("status").textContent="Add at least one sub-task.";return;}' +
     'document.getElementById("status").textContent="Creating sub-tasks...";' +
     'google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not create sub-tasks. Run Maintenance > Repair all tabs, then try again.";})' +
     '.completeBreakdownFromPopup(cfg.todoId,subtasks);}</script>';
 }
 
@@ -6295,6 +6455,12 @@ function retireBrokenDownParent(parentTodoId, childCount) {
 }
 
 function completeBreakdownFromPopup(parentTodoId, subtasks) {
+  return withDocumentLock(function () {
+    return completeBreakdownFromPopupImpl(parentTodoId, subtasks);
+  }, { label: 'completeBreakdownFromPopup' });
+}
+
+function completeBreakdownFromPopupImpl(parentTodoId, subtasks) {
   var parent = getTodoById(parentTodoId);
   if (!parent) return 'Parent task not found.';
   var createdIds = [];
@@ -6341,9 +6507,11 @@ function linkContactToJob() {
   if (ambiguous.length) ui.alert('Ambiguous contact(s)', ambiguous.join(', ') + ' matched more than one person at ' + (jobOrg || 'this organisation') + '. Link manually from People first.', ui.ButtonSet.OK);
   if (notFound.length) ui.alert('Some names not found', notFound.join(', '), ui.ButtonSet.OK);
   if (!newIds.length) return;
-  var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
-  sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(existing ? existing + ', ' + newIds.join(', ') : newIds.join(', '));
-  refreshLinkedContactsDisplay();
+  withDocumentLock(function () {
+    var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
+    sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(existing ? existing + ', ' + newIds.join(', ') : newIds.join(', '));
+    refreshLinkedContactsDisplay();
+  }, { label: 'linkContactToJob' });
 }
 
 function refreshLinkedContactsDisplay() {
@@ -6372,15 +6540,19 @@ function logInteractionForRow() {
   var personId = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ID).getValue() : '';
   var person = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.NAME).getValue() : '';
   var org = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ORG).getValue() : sheet.getRange(row, COLS.JOBS.ORG).getValue();
-  appendInteraction(personId, person, org, today(), 'Other', notes, 'Useful');
+  withDocumentLock(function () {
+    appendInteraction(personId, person, org, today(), 'Other', notes, 'Useful');
+  }, { label: 'logInteractionForRow' });
 }
 
 function softCloseRow() {
   var sheet = SpreadsheetApp.getActiveSheet();
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  if (sheet.getName() === 'People') movePersonStage(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed', {});
-  else if (sheet.getName() === 'Jobs') setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
-  else SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.');
+  if (sheet.getName() !== 'People' && sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.'); return; }
+  withDocumentLock(function () {
+    if (sheet.getName() === 'People') movePersonStage(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed', {});
+    else setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
+  }, { label: 'softCloseRow' });
 }
 
 // v7.6 §5: prompts for a reason, appends [blocked] <reason> to Notes. No
@@ -6395,8 +6567,10 @@ function rowActionMarkTaskBlocked() {
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var reason = resp.getResponseText().trim();
   if (!reason) { ui.alert('Enter a reason.'); return; }
-  appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
-  refreshHome();
+  withDocumentLock(function () {
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
+    refreshHome();
+  }, { label: 'rowActionMarkTaskBlocked' });
 }
 
 // v7.6 §5: Tasks has no Deferred status of its own (DROPDOWNS.TODO_STATUS
@@ -6409,19 +6583,21 @@ function rowActionDeferSelectedTask() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  var newDue = addDays(today(), 3);
-  sheet.getRange(row, COLS.TODO.DUE_DATE).setValue(newDue);
-  sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
-  sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
-    String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
-    String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
-  sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
-  // v7.6.1: if this task is currently sitting on Today's Commit list, it
-  // would otherwise keep showing stale info until some unrelated refresh.
-  syncTodayRowForTodo(row, 'Not started');
-  populateToday();
-  refreshHome();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
+  withDocumentLock(function () {
+    var newDue = addDays(today(), 3);
+    sheet.getRange(row, COLS.TODO.DUE_DATE).setValue(newDue);
+    sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
+    sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
+      String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
+      String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
+    sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+    // v7.6.1: if this task is currently sitting on Today's Commit list, it
+    // would otherwise keep showing stale info until some unrelated refresh.
+    syncTodayRowForTodo(row, 'Not started');
+    populateToday();
+    refreshHome();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
+  }, { label: 'rowActionDeferSelectedTask' });
 }
 
 // =============================================================
@@ -6443,68 +6619,74 @@ function rewriteGuide() {
   sheet.setColumnWidth(1, 30); sheet.setColumnWidth(2, 220); sheet.setColumnWidth(3, 560);
   sheet.setHiddenGridlines(true);
   var r = 2;
-  sheet.getRange(r, 2).setValue('The Planner — Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
+  sheet.getRange(r, 2).setValue('The Planner - Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
 
-  r = writeH2(sheet, r, 'Operating rhythm');
-  r = writeKV(sheet, r, 'Welcome → Resolve → Capture → Plan → Execute → Monitor', 'Home is where the day starts and Pending Decisions get resolved; Today is purely the execution surface.');
+  r = writeH2(sheet, r, 'Start here (once)');
+  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Triggers & setup > Set up / verify triggers. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
+  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Triggers & setup > Set up / redo onboarding. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
+  r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
+  r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
   r++;
 
-  r = writeH2(sheet, r, 'The flow');
-  r = writeKV(sheet, r, 'Add/update popup', 'Writes the real source tab (Sectors/Organisations/Jobs/People/Conversations/Interviews). Lives on Home now.');
-  r = writeKV(sheet, r, 'Cascades', 'Create Pending Decisions where judgment is genuinely needed. Creating or classifying an Organisation never floods job/people-search work on its own.');
-  r = writeKV(sheet, r, 'Yes on a Decision', 'Creates a Task.');
-  r = writeKV(sheet, r, 'Today', 'Pulls Tasks through a staged priority order. Pending Decisions and Add/update now live on Home.');
-  r = writeKV(sheet, r, 'Completing a Task', 'On Today or Tasks — always routes through the same completion engine, which updates source tabs and can create the next Task or Decision.');
+  r = writeH2(sheet, r, 'Your daily 10 minutes');
+  r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task. No dismisses it.');
+  r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
+  r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
+  r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Done, Deferred, Skipped, or Pull in an option directly from Today.');
+  r = writeKV(sheet, r, '5. End the day', 'Use Today > End-of-day reconcile when you want to carry, defer, or skip unfinished work.');
   r++;
 
-  r = writeH2(sheet, r, 'Onboarding');
-  r = writeKV(sheet, r, 'Set up / redo onboarding', 'A popup captures your starting facts. Redoing onboarding asks for confirmation before it clears existing planner data, then rebuilds from what you enter. You never have to navigate a backend tab manually.');
-  r = writeKV(sheet, r, 'Sectors — 3 stages', '1. Sector-only row → direct task to list 2-4 sub-sectors. 2. Sub-sector row → a Decision asking whether to build an organisation list there. 3. Yes → a Market-map task; No → nothing further.');
-  r = writeKV(sheet, r, 'Direct sheet entry', 'Typing a Job title or Person name before Organisation defers the cascade (flagged [pending-org] in Notes) until Organisation is filled in on that row — it then fires automatically with full context.');
+  r = writeH2(sheet, r, 'How adding things works');
+  r = writeKV(sheet, r, 'Use Home first', 'The Add/update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
+  r = writeKV(sheet, r, 'You can still type in tabs', 'If you type directly into Jobs or People, fill Organisation too. Without an Organisation, the row is saved but the follow-up work waits until the Organisation is filled.');
+  r = writeKV(sheet, r, 'Cream and grey cells', 'Cream cells are yours to edit. Grey cells are filled in and kept up to date by the planner.');
+  r = writeKV(sheet, r, 'Organisation links', 'Type an organisation name on a Job or Person. The planner finds or creates the Organisation and fills the ID behind the scenes.');
   r++;
 
-  r = writeH2(sheet, r, "Today's priority order");
-  r = writeKV(sheet, r, 'Staged, not scored', '1 manually pulled-in tasks · 2 tasks already in progress/touched today · 3 fixed work · 4 blocking work · 5 due/overdue keep-alive work · 6 active pursuit matching your focus · 7 at most one pipeline-building task · 8 active pursuit outside your focus, if capacity remains · 9 near-misses go to Options · 10 everything else stays in Tasks, out of sight but not gone. A kept time buffer applies throughout.');
-  r = writeKV(sheet, r, 'Tier and Energy', 'Organisation Tier breaks ties within a stage — it never changes which stage a task lands in. Low energy sinks Deep-effort work to the bottom of Active pursuit and Pipeline, but never excludes it.');
-  r = writeKV(sheet, r, 'Notes on Today', 'Anything you type into a Today row\u2019s Notes cell is kept across refreshes. The system\u2019s "Why" explanation now lives in the cell\u2019s note (hover to see it) rather than the value.');
-  r = writeKV(sheet, r, 'Today vs Tasks status', 'Today shows "Planned" for work selected for execution. The same state is stored on Tasks as "Not started"; the completion engine maps between them explicitly.');
-  r = writeKV(sheet, r, 'Multi-day tasks', 'Excluded from Today until broken down. A stale one is flagged in the "Needs breakdown" section — use Row actions → Break down (on Tasks) to split it into real sub-tasks.');
+  r = writeH2(sheet, r, 'What each tab is for');
+  r = writeKV(sheet, r, 'Home', 'Start here. Capture updates, resolve Pending Decisions, see what needs attention.');
+  r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
+  r = writeKV(sheet, r, 'Decisions', 'Judgment queue. Yes creates a task; No dismisses it.');
+  r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
+  r = writeKV(sheet, r, 'Sectors / Organisations / Jobs / People', 'The main source tabs. Home popups write here for you.');
+  r = writeKV(sheet, r, 'Conversations / Interviews', 'Mostly filled from updates and task completions. Edit when you need to correct details.');
   r++;
 
-  r = writeH2(sheet, r, 'Pending Decisions');
-  r = writeKV(sheet, r, 'States', 'Pending / Yes / No / Auto-dismissed. There is no "Later" — a suggestion either becomes a Task or is dismissed. Auto-dismissed is system-only, when the underlying state changes.');
+  r = writeH2(sheet, r, 'How Today decides');
+  r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, one pipeline-building task, then useful options.');
+  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer. Work that does not fit remains in Tasks or appears as an Option.');
+  r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
+  r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
+  r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you break them into smaller tasks from Tasks > Row actions > Break down.');
   r++;
 
-  r = writeH2(sheet, r, 'Tasks tab');
-  r = writeKV(sheet, r, 'Commitment class', 'Fixed / Blocking / Keep-alive / Active pursuit / Pipeline-building / Backlog, in priority order — visible now, colour-coded. Sort by Priority rank (1=Fixed…6=Backlog) for a real priority order; sorting Commitment class alone is alphabetical, not priority.');
-  r = writeKV(sheet, r, 'Linked to', 'Jumps to the source row (Job/Person/Organisation/Interview round/Sector). Blank when a task has no linked object (e.g. Admin).');
-  r = writeKV(sheet, r, 'On Today right now / Has sub-tasks', 'Both auto-computed — no manual upkeep.');
-  r = writeKV(sheet, r, 'Row actions', 'Break down (Multi-day only) · Mark blocked (prompts for a reason) · Defer 3 days (pushes the due date and recalculates Commitment class — Tasks has no Deferred status of its own, unlike Today).');
-  r = writeKV(sheet, r, 'Row highlighting', 'Terminal rows (Done/Skipped/Cancelled) dim. Any row carrying a health flag — missing estimate, missing linked object, missing due date on a date-sensitive workflow, already-broken-down parent still open, or manually blocked — highlights instead.');
-  r = writeKV(sheet, r, 'Moving a status backward', 'Every automatic cascade only ever moves forward or ends at a Decision/terminal status — nothing loops on its own. Manually moving a source object backward (e.g. a Job from Interviewing back to Applied) re-runs that forward cascade again, including re-creating a task whose original copy is already Done. This is a known, accepted boundary, not a bug: guarding against backward moves would also block legitimate corrections. Forward-only usage is fully deduplicated; deliberately reversing a status re-does the cascade from that point on.');
+  r = writeH2(sheet, r, 'The status labels');
+  r = writeKV(sheet, r, 'Jobs', 'Want to apply > Applied > Interviewing > Offer / Parked / Closed.');
+  r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
+  r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
+  r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Rejected / Offer / Parked.');
+  r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed.');
   r++;
 
-  r = writeH2(sheet, r, 'Jobs statuses');
-  r = writeKV(sheet, r, 'Six states', 'Want to apply → Applied → Interviewing → Offer / Parked / Closed.');
+  r = writeH2(sheet, r, 'Good to know');
+  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show all columns when you need to inspect them.');
+  r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
+  r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
+  r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for Break down, Mark blocked, and Defer. Today has row actions for pulling, locking, moving, and topping up the day.');
+  r = writeKV(sheet, r, 'Colour cues', 'Colours help scanning, but the actual status text is always the source of truth.');
   r++;
-
-  r = writeH2(sheet, r, 'People stages');
-  r = writeKV(sheet, r, 'Seven states', 'Identified → Outreach sent → Engaged → Conversation scheduled → Conversation completed → Nurture / Closed.');
-  r++;
-
-  r = writeH2(sheet, r, 'Column visibility');
-  sheet.getRange(r, 2).setValue('Every tab shows what you type into leftmost. IDs, backend dates, and system-managed columns are hidden by default. Menu → "Show all columns" reveals them for a research pass.').setFontSize(10).setWrap(true); r += 2;
 
   r = writeH2(sheet, r, 'If something breaks');
-  r = writeKV(sheet, r, 'Menu missing', 'Extensions → Apps Script → run onOpen. Reload.');
+  r = writeKV(sheet, r, 'Menu missing', 'Extensions > Apps Script > run onOpen. Reload the sheet.');
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Triggers & setup > Set up / verify triggers (one-time, grants full authorization for modal dialogs).');
-  r = writeKV(sheet, r, 'Home not refreshing', 'Menu → Refresh Home, or tick the refresh checkbox on Home.');
-  r = writeKV(sheet, r, 'Today looks stale', 'Menu → Today → Populate Today.');
-  r = writeKV(sheet, r, 'Formatting looks off', 'Menu → Maintenance → Repair all tabs.');
+  r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
+  r = writeKV(sheet, r, 'Today looks stale', 'Use The Planner > Today > Populate Today.');
+  r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
+  r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
   r++;
 
   sheet.getRange(r, 2).setValue('Version').setFontSize(12).setFontWeight('bold').setFontColor('#7A7974'); r++;
-  sheet.getRange(r, 2).setValue('Code.gs ' + SCRIPT_VERSION + ' · Google Sheet only · No external dependencies').setFontSize(10).setFontColor('#7A7974').setFontStyle('italic');
+  sheet.getRange(r, 2).setValue('Code.gs ' + SCRIPT_VERSION + ' - Google Sheet only - No external dependencies').setFontSize(10).setFontColor('#7A7974').setFontStyle('italic');
 }
 
 // =============================================================
@@ -6632,6 +6814,12 @@ function ensureCanonicalSheet(name) {
 // is created, so a v6.x workbook's existing tabs are renamed in place
 // (data preserved) rather than shadowed by new empty canonical tabs.
 function repairAllTabs() {
+  var result = withDocumentLock(repairAllTabsImpl, { label: 'repairAllTabs', timeoutMs: 30000, failOpen: false });
+  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Repair skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  return result;
+}
+
+function repairAllTabsImpl() {
   migrateLegacyTabs();
 
   CANONICAL_TAB_ORDER.forEach(function (name) {
@@ -6678,6 +6866,7 @@ function repairAllTabs() {
   // silently stay missing after a Maintenance run. Idempotent + silent.
   ensureTriggersInstalled({ silent: true });
   SpreadsheetApp.getActiveSpreadsheet().toast('All tabs repaired + triggers verified (' + SCRIPT_VERSION + ').', 'The Planner', 4);
+  return true;
 }
 
 function dailyMaintenance() {
@@ -6707,6 +6896,12 @@ function dailyMaintenance() {
 }
 
 function fullRefresh() {
+  var result = withDocumentLock(fullRefreshImpl, { label: 'fullRefresh', timeoutMs: 30000, failOpen: false });
+  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Refresh skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  return result;
+}
+
+function fullRefreshImpl() {
   // v7.3: also force a trigger check on every full refresh.
   ensureTriggersInstalled({ silent: true });
   dailyMaintenance();
@@ -6719,6 +6914,7 @@ function fullRefresh() {
   refreshAllDropdowns();
   refreshHome();
   renderTodayDecisionCards();
+  return true;
 }
 
 // Back-compat: force-reinstall the time triggers only (leaves the edit
