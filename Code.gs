@@ -3733,8 +3733,8 @@ function bootstrapToday() {
 //   4. Pull blocking work
 //   5. Pull due / overdue keep-alive work
 //   6. Add active-pursuit work matching focus
-//   7. Add at most one pipeline-building task, if capacity remains
-//   8. Keep a time buffer — don't fill every last minute
+//   7. Guarantee one pipeline-building task, then add more if capacity remains
+//   8. Keep a time buffer, but fill usable spare capacity with any task that fits
 //   9. Put near-misses in Options
 //  10. Everything else stays hidden in Tasks
 //
@@ -4027,10 +4027,13 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       else { var pv2 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, near miss on capacity', tags: pv2.tags, userNote: pv2.userNote }); }
     });
 
-  // Stage 7 — at most ONE pipeline-building task. This is deliberately
+  // Stage 7 — guarantee one pipeline-building task, then use spare
+  // capacity for more pipeline-building work. The first one is deliberately
   // not capacity-gated: a daily plan should keep the top of the funnel
   // moving even when no-deadline pipeline work would otherwise lose to
-  // louder active-pursuit tasks.
+  // louder active-pursuit tasks. Additional pipeline tasks are capacity-
+  // gated, so open time fills with useful no-deadline work without
+  // flooding the day.
   // §2.2: Tier now comes before age (was pure FIFO) — same comparator as
   // Active pursuit, so a newly-important Tier-A item no longer waits
   // behind an older Tier-C one. §5: Low energy still sinks Deep-effort.
@@ -4039,7 +4042,9 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   if (pipelineCandidates.length) {
     var chosen = pipelineCandidates[0];
     addCommit(chosen, 'pipeline-building — keeping the top of the funnel moving');
-    pipelineCandidates.slice(1).forEach(function (p) { usedIds[p.todoId] = true; }); // stays hidden in Tasks — Stage 10
+    pipelineCandidates.slice(1).forEach(function (p) {
+      if (minutesUsed + p.estMin <= capacity) addCommit(p, 'pipeline-building — spare capacity available');
+    });
   }
 
   // Stage 8 — Focus fallback (§2.4): if capacity remains, pull Active
@@ -4063,6 +4068,16 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     .sort(compareForStage(energyLow))
     .forEach(function (p) {
       if (minutesUsed + p.estMin <= capacity) { usedIds[p.todoId] = true; addCommit(p, 'backlog — filling spare capacity'); }
+    });
+
+  // Stage 8.75 — final fit pass. If any open task still fits inside the
+  // usable capacity, include it rather than leaving time idle. This keeps
+  // the buffer intact while avoiding the frustrating "there was room, why
+  // didn't it pull something?" failure mode.
+  pool.filter(function (p) { return !usedIds[p.todoId]; })
+    .sort(compareForStage(energyLow))
+    .forEach(function (p) {
+      if (minutesUsed + p.estMin <= capacity) addCommit(p, 'spare capacity — fits today');
     });
 
   // Stage 9 — remaining near-misses (including Backlog that missed on
@@ -6720,7 +6735,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'How Today decides');
-  r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, one pipeline-building task, then useful options.');
+  r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, pipeline-building work, then anything else that fits.');
   r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer. Work that does not fit remains in Tasks or appears as an Option.');
   r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
   r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
