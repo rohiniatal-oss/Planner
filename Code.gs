@@ -2362,15 +2362,21 @@ function onEditOrgs(sheet, row, col, newVal, e) {
   if (col === COLS.ORGS.STATUS) {
     var orgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
     var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
-    if (String(newVal) === 'Active') fireOrgActiveCascade(orgId, orgName);
+    if (String(newVal) === 'Active') {
+      fireOrgActiveCascade(orgId, orgName);
+      renderTodayDecisionCards();
+      requestHomeRefresh();
+    }
     if (String(newVal) === 'Dormant') {
       sheet.getRange(row, COLS.ORGS.NEXT_CHECK).setValue(addDays(today(), 42));
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation marked Dormant');
       setOpenTodosForTarget('Organisation', orgId, 'Skipped', 'Organisation parked/dormant');
+      refreshDerivedPlanningSurfaces();
     }
     if (String(newVal) === 'Archived') {
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation archived');
       setOpenTodosForTarget('Organisation', orgId, 'Cancelled', 'Organisation archived');
+      refreshDerivedPlanningSurfaces();
     }
   }
 }
@@ -2437,8 +2443,12 @@ function onEditSectors(sheet, row, col, newVal) {
     if (existingId) {
       if (!sheet.getRange(row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(row, COLS.SECTORS.STATUS).setValue('Open');
       propagateSectorRenameToOrganisations(existingId);
-      if (!subsectorValue) fireSectorOnlyTask(getSectorBranchById(existingId));
-      else fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId);
+      if (!subsectorValue) {
+        if (fireSectorOnlyTask(getSectorBranchById(existingId))) refreshDerivedPlanningSurfaces();
+      } else if (fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId)) {
+        renderTodayDecisionCards();
+        requestHomeRefresh();
+      }
       return;
     }
     var branch = upsertSectorBranch({ sector: sectorValue, subsector: subsectorValue, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: !!subsectorValue });
@@ -2448,7 +2458,12 @@ function onEditSectors(sheet, row, col, newVal) {
       SpreadsheetApp.getActiveSpreadsheet().toast('Merged duplicate Sectors entry into row ' + branch.row + '.', 'The Planner', 4);
       return;
     }
-    if (!subsectorValue) fireSectorOnlyTask(branch);
+    if (!subsectorValue) {
+      if (fireSectorOnlyTask(branch)) refreshDerivedPlanningSurfaces();
+    } else {
+      renderTodayDecisionCards();
+      requestHomeRefresh();
+    }
     return;
   }
 }
@@ -2604,6 +2619,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.JOBS.STATUS).setValue(jStatus);
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), jStatus);
       fireJobStatusChanged(jId, '', jStatus, { source: 'manual-org-followup' });
+      refreshDerivedPlanningSurfaces();
     }
     return;
   }
@@ -2615,12 +2631,18 @@ function onEditJobs(sheet, row, col, newVal, e) {
       inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.STATUS).getValue());
       fireJobStatusChanged(sheet.getRange(row, COLS.JOBS.ID).getValue(), '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
+      refreshDerivedPlanningSurfaces();
     } else {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
     }
     return;
   }
-  if (col === COLS.JOBS.DEADLINE) { recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue())); syncJobsPeopleHealthFlags(); return; }
+  if (col === COLS.JOBS.DEADLINE) {
+    recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue()));
+    syncJobsPeopleHealthFlags();
+    refreshDerivedPlanningSurfaces();
+    return;
+  }
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'Yes') {
     var responseJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(responseJobId);
@@ -2655,6 +2677,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), status);
     fireJobStatusChanged(id, e && e.oldValue, status, { source: 'manual' });
     syncJobsPeopleHealthFlags();
+    refreshDerivedPlanningSurfaces();
   }
 }
 
@@ -2671,6 +2694,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(pStage);
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), pStage);
       firePersonStageChanged(pId, '', pStage, { source: 'manual-org-followup' });
+      refreshDerivedPlanningSurfaces();
     }
     return;
   }
@@ -2683,6 +2707,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
       promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), sheet.getRange(row, COLS.PEOPLE.STAGE).getValue());
       firePersonStageChanged(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), '', 'Identified', { source: 'manual' });
+      refreshDerivedPlanningSurfaces();
     } else {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation to activate outreach task (leave blank and use the Tasks menu if there is none).');
     }
@@ -2699,6 +2724,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     var oldStage = sheet.getRange(row, COLS.PEOPLE.STAGE).getValue();
     sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Engaged');
     firePersonStageChanged(pid, oldStage, 'Engaged', { source: 'manual' });
+    refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.PEOPLE.CONVERSATION_DATE && newVal) {
@@ -2714,6 +2740,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     if (currentStage !== 'Conversation completed') {
       sheet.getRange(row, COLS.PEOPLE.STAGE).setValue('Conversation scheduled');
       firePersonStageChanged(convPersonId, currentStage, 'Conversation scheduled', { source: 'manual-date', realDate: newVal });
+      refreshDerivedPlanningSurfaces();
     }
     return;
   }
@@ -2733,6 +2760,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     inheritOrgFields(sheet, row, COLS.PEOPLE.ORG, COLS.PEOPLE.ORG_ID);
     promoteOrgForLivePerson(sheet.getRange(row, COLS.PEOPLE.ORG_ID).getValue(), stage);
     firePersonStageChanged(personId, e && e.oldValue, stage, { source: 'manual' });
+    refreshDerivedPlanningSurfaces();
   }
 }
 
@@ -2884,6 +2912,7 @@ function onEditInteractions(sheet, row, col, newVal) {
   } else if (outcome === 'Neutral') {
     movePersonStage(personId, 'Nurture', { source: 'interaction' });
   }
+  refreshDerivedPlanningSurfaces();
 }
 
 // =============================================================
@@ -3113,6 +3142,7 @@ function onEditRounds(sheet, row, col, newVal) {
 
   if (col === COLS.ROUNDS.INTERVIEW_DATE && newVal) {
     scheduleInterviewRound(roundId, newVal);
+    refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.ROUNDS.ROUND_TYPE && newVal) {
@@ -3121,10 +3151,12 @@ function onEditRounds(sheet, row, col, newVal) {
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDateForType), REPLY_DAYS_BY_ROUND_TYPE[String(newVal)] || 7));
     }
     if (sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).getValue()) createInterviewPrepTasks(roundId);
+    refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.ROUNDS.DOMAIN_READINESS && String(sheet.getRange(row, COLS.ROUNDS.STATUS).getValue()) === 'Scheduled') {
     createInterviewPrepTasks(roundId);
+    refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.ROUNDS.OFFICIAL_OUTCOME) {
@@ -3137,6 +3169,7 @@ function onEditRounds(sheet, row, col, newVal) {
     if (String(newVal) === 'Offer') setJobStatus(jobId, 'Offer', { source: 'round-outcome' });
     if (String(newVal) === 'Parked') setJobStatus(jobId, 'Parked', { source: 'round-outcome' });
     if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
+    refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.ROUNDS.STATUS) {
@@ -3160,6 +3193,7 @@ function onEditRounds(sheet, row, col, newVal) {
       // terminal-state cascade (Organisation/Job/Person/Sector).
       autoDismissPendingForTarget('Interview round', roundId, 'Interview round cancelled');
     }
+    refreshDerivedPlanningSurfaces();
   }
 }
 
@@ -3581,6 +3615,10 @@ function requestHomeRefresh() {
     return;
   }
   refreshHome();
+}
+
+function refreshDerivedPlanningSurfaces() {
+  populateToday();
 }
 
 // Back-compat shims: older menu wiring / muscle memory called these names.
@@ -6736,7 +6774,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here (once)');
   r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Triggers & setup > Set up / verify triggers. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
-  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Triggers & setup > Set up / redo onboarding. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
+  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Set up / redo onboarding. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
   r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
   r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
   r++;
@@ -6746,7 +6784,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Done, Deferred, Skipped, or Pull in an option directly from Today.');
-  r = writeKV(sheet, r, '5. End the day', 'Use Today > End-of-day reconcile when you want to carry, defer, or skip unfinished work.');
+  r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, or skip unfinished work.');
   r++;
 
   r = writeH2(sheet, r, 'How adding things works');
@@ -6767,7 +6805,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'How Today decides');
   r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, pipeline-building work, then anything else that fits.');
-  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer. Work that does not fit remains in Tasks or appears as an Option.');
+  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days. On short days, work is only committed if it fits the time you entered; near-misses appear as Options.');
   r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
   r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
   r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you break them into smaller tasks from Tasks > Row actions > Break down.');
