@@ -683,13 +683,14 @@ function getOrgById(orgId) {
   return null;
 }
 
-// These formulas intentionally hardcode People/Jobs column letters (D and
-// E). They are safe only under the project convention that new columns
-// are appended, never inserted before existing Org ID / Status columns.
 function applyOrgRowFormulas(sheet, row) {
-  sheet.getRange(row, COLS.ORGS.KNOWN_PEOPLE).setFormula('=COUNTIF(People!D:D,A' + row + ')');
+  var orgIdRef = columnToLetter(COLS.ORGS.ID) + row;
+  var peopleOrgIdCol = columnToLetter(COLS.PEOPLE.ORG_ID);
+  var jobsOrgIdCol = columnToLetter(COLS.JOBS.ORG_ID);
+  var jobsStatusCol = columnToLetter(COLS.JOBS.STATUS);
+  sheet.getRange(row, COLS.ORGS.KNOWN_PEOPLE).setFormula('=COUNTIF(People!' + peopleOrgIdCol + ':' + peopleOrgIdCol + ',' + orgIdRef + ')');
   sheet.getRange(row, COLS.ORGS.OPEN_OPPS).setFormula(
-    '=COUNTIFS(Jobs!D:D,A' + row + ',Jobs!E:E,"<>Closed",Jobs!E:E,"<>Parked")');
+    '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Parked")');
 }
 
 // Creates a name-only Organisation row (no cascade fired) — used when a
@@ -1711,15 +1712,20 @@ function appendTodoWithSource(task, objType, objId, org, workflow, status, dueDa
 // =============================================================
 
 function priorityRankFormula(row) {
-  return '=SWITCH($N' + row + ',"Fixed",1,"Blocking",2,"Keep-alive",3,"Active pursuit",4,"Pipeline-building",5,"Backlog",6,99)';
+  var commitmentClassCol = columnToLetter(COLS.TODO.COMMITMENT_CLASS);
+  return '=SWITCH($' + commitmentClassCol + row + ',"Fixed",1,"Blocking",2,"Keep-alive",3,"Active pursuit",4,"Pipeline-building",5,"Backlog",6,99)';
 }
 
 function onTodayFormula(row) {
-  return '=IF(COUNTIF(Today!$C$' + TODAY_TABLE_FIRST_ROW + ':$C$' + TODAY_TABLE_LAST_ROW + ',$A' + row + ')>0,"Yes","No")';
+  var todayTodoIdCol = columnToLetter(COLS.TODAY.TODO_ID);
+  var taskIdCol = columnToLetter(COLS.TODO.ID);
+  return '=IF(COUNTIF(Today!$' + todayTodoIdCol + '$' + TODAY_TABLE_FIRST_ROW + ':$' + todayTodoIdCol + '$' + TODAY_TABLE_LAST_ROW + ',$' + taskIdCol + row + ')>0,"Yes","No")';
 }
 
 function hasSubtasksFormula(row) {
-  return '=IF(COUNTIF($K$2:$K,$A' + row + ')>0,"Yes","No")';
+  var parentIdCol = columnToLetter(COLS.TODO.PARENT_ID);
+  var taskIdCol = columnToLetter(COLS.TODO.ID);
+  return '=IF(COUNTIF($' + parentIdCol + '$2:$' + parentIdCol + ',$' + taskIdCol + row + ')>0,"Yes","No")';
 }
 
 // objType/objId -> source-tab display name + row, for the "Linked to"
