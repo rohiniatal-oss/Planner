@@ -433,6 +433,27 @@ function recordMaintenanceError(label, message) {
   }
 }
 
+// Tracks when Today's plan was last (re)built, independent of the B2
+// display cell — B2 is a live =TODAY() formula so the visible date is
+// always current even when nothing has (re)generated the plan; the
+// staleness checks (collectPreviousTodayState, todayPlanCounts,
+// checkMorningCarryForward) need the actual last-build date instead.
+function getTodayPlanBuiltDate() {
+  var raw = maintenanceProps().getProperty('todayPlanBuiltDate');
+  if (!raw) return null;
+  // Split manually rather than `new Date(raw)` — a bare 'yyyy-MM-dd'
+  // string parses as UTC midnight, which drifts a calendar day off
+  // today()'s local-midnight construction in non-UTC timezones.
+  var parts = raw.split('-');
+  if (parts.length !== 3) return null;
+  var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function setTodayPlanBuiltDate(d) {
+  maintenanceProps().setProperty('todayPlanBuiltDate', Utilities.formatDate(d, plannerTimeZone(), 'yyyy-MM-dd'));
+}
+
 function readMaintenanceHealth() {
   var props = maintenanceProps();
   var now = new Date();
@@ -3637,10 +3658,12 @@ function bootstrapToday() {
   var guideSheetForToday = getSheet('Guide');
   if (guideSheetForToday) sheet.getRange('A3').setFormula('=HYPERLINK("#gid=' + guideSheetForToday.getSheetId() + '","Guide")').setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
 
-  // Row 2: friendly plan-built date. Stays a real Date value (formatted,
-  // not stringified) so collectPreviousTodayState's same-day check still
-  // works unchanged — only the display format changes.
-  sheet.getRange('B2:I2').merge().setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
+  // Row 2: live current-date display, decoupled from the plan itself —
+  // it's a =TODAY() formula so it's always correct regardless of when
+  // the plan was last (re)generated. The plan's own staleness tracking
+  // lives in the todayPlanBuiltDate document property instead (see
+  // getTodayPlanBuiltDate/setTodayPlanBuiltDate).
+  sheet.getRange('B2:I2').merge().setFormula('=TODAY()').setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
 
   // Row 3: plan-summary headline — populateTodayImpl fills in the real
   // counts once stagedTodaySelection has run; this just lays out the cell.
@@ -3738,11 +3761,8 @@ function composeTodayNotes(tags, userNote) {
 
 function collectPreviousTodayState(sheet) {
   var state = { sameDay: false, ordered: [], byTodoId: {} };
-  var existingDate = sheet.getRange('B2').getValue();
-  if (existingDate) {
-    var d = new Date(existingDate); d.setHours(0, 0, 0, 0);
-    state.sameDay = d.getTime() === today().getTime();
-  }
+  var builtDate = getTodayPlanBuiltDate();
+  if (builtDate) state.sameDay = builtDate.getTime() === today().getTime();
   if (!state.sameDay) return state;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = String(sheet.getRange(r, COLS.TODAY.TASK).getValue() || '');
@@ -4046,7 +4066,7 @@ function populateTodayImpl() {
 
   var selection = stagedTodaySelection(previousState, availableMinutes, focus, energy);
 
-  sheet.getRange('B2').setValue(today());
+  setTodayPlanBuiltDate(today());
   sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent();
 
   var row = TODAY_TABLE_FIRST_ROW;
@@ -4542,10 +4562,9 @@ function endOfDayReconcile() {
 function checkMorningCarryForward() {
   var sheet = getSheet('Today');
   if (!sheet) return;
-  var b2 = sheet.getRange('B2').getValue();
-  if (!b2) return;
-  var lastDate = new Date(b2); lastDate.setHours(0, 0, 0, 0);
-  if (lastDate.getTime() === today().getTime()) return;
+  var builtDate = getTodayPlanBuiltDate();
+  if (!builtDate) return;
+  if (builtDate.getTime() === today().getTime()) return;
   var unfinished = 0;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
@@ -4711,17 +4730,18 @@ function hardResetHomeSheet(sheet) {
   try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
 }
 
-// v7.4: Today's-plan hero counts — built only if Today's date (B2) is
-// today; a row counts as Commit unless its Slot cell starts with 'O'
-// (Option rows are written as 'O1', 'O2', ... by writeTodayRow).
+// v7.4: Today's-plan hero counts — built only if the plan was actually
+// (re)generated today (todayPlanBuiltDate), not just because the B2
+// display happens to show today's date; a row counts as Commit unless
+// its Slot cell starts with 'O' (Option rows are written as 'O1', 'O2',
+// ... by writeTodayRow).
 function todayPlanCounts() {
   var result = { built: false, commit: 0, minutes: 0, options: 0 };
   var sheet = getSheet('Today');
   if (!sheet) return result;
-  var planDate = sheet.getRange('B2').getValue();
-  if (!planDate) return result;
-  var d = new Date(planDate); d.setHours(0, 0, 0, 0);
-  result.built = d.getTime() === today().getTime();
+  var builtDate = getTodayPlanBuiltDate();
+  if (!builtDate) return result;
+  result.built = builtDate.getTime() === today().getTime();
   if (!result.built) return result;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
