@@ -5956,9 +5956,7 @@ function weeklyReviewImpl() {
           var hasFollowUp = openTodoExistsForTargetWorkflow('Person', pId, 'Contact follow-up');
           appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES,
             hasFollowUp ? '[weekly-review] Nurture overdue; follow-up task already open.' : '[weekly-review] Nurture overdue; no follow-up task found.');
-          continue;
         }
-        if (daysOver >= 14) appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES, '[weekly-review] \u26a0 Stale nurture — overdue ' + daysOver + ' days');
       }
     }
   }
