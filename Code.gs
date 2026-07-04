@@ -736,6 +736,13 @@ function scheduleOrgReviewById(orgId, opts) {
   scheduleOrgReviewForRow(sheet, org.row, org.status, opts || {});
 }
 
+function clearOrgRoutingFlags(sheet, row) {
+  if (!sheet || !row) return;
+  clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[review-routed]');
+  clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[dormant-live]');
+  clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
+}
+
 function syncOrgReviewSchedules() {
   var sheet = getSheet('Organisations');
   if (!sheet || sheet.getLastRow() < 2) return 0;
@@ -898,6 +905,10 @@ function applyOrganisationStatusFromCapture(org, status, tier) {
   var normalized = normalizeOrgStatus(status);
   if (tier) sheet.getRange(org.row, COLS.ORGS.TIER).setValue(normalizeTier(tier));
   sheet.getRange(org.row, COLS.ORGS.STATUS).setValue(normalized);
+  clearNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[review-routed]');
+  if (normalized !== 'Dormant') clearNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[dormant-live]');
+  if (normalized !== 'Active') clearNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[active-empty]');
+  if (normalized === 'Archived') clearOrgRoutingFlags(sheet, org.row);
   scheduleOrgReviewForRow(sheet, org.row, normalized, { stampLastChecked: true });
   if (normalized === 'Active') {
     fireOrgActiveCascade(org.id, org.name);
@@ -919,6 +930,7 @@ function promoteMappedOrgToActive(orgId, reason) {
   var sheet = getSheet('Organisations');
   if (!sheet) return false;
   sheet.getRange(org.row, COLS.ORGS.STATUS).setValue('Active');
+  clearOrgRoutingFlags(sheet, org.row);
   scheduleOrgReviewForRow(sheet, org.row, 'Active', { stampLastChecked: true });
   appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[auto-active] ' + (reason || 'Live linked work exists'));
   return true;
@@ -2155,6 +2167,7 @@ function handleOrganisationTodoCompletion(todo, options) {
   if (!org) return;
   var sheet = getSheet('Organisations');
   scheduleOrgReviewForRow(sheet, org.row, org.status, { stampLastChecked: true });
+  if (todo.workflow === 'Org research') clearOrgRoutingFlags(sheet, org.row);
   if (todo.workflow === ORG_CLASSIFICATION_WORKFLOW) {
     if (!org.sectorId || isNeedsClassificationLabel(org.sector)) {
       markOrgNeedsClassification(org.row, org.id, org.name, 'Classification task was completed before a real Sector was set');
@@ -2852,6 +2865,10 @@ function onEditOrgs(sheet, row, col, newVal, e) {
     var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
     var status = normalizeOrgStatus(newVal);
     if (status !== String(newVal || '')) sheet.getRange(row, COLS.ORGS.STATUS).setValue(status);
+    clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[review-routed]');
+    if (status !== 'Dormant') clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[dormant-live]');
+    if (status !== 'Active') clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
+    if (status === 'Archived') clearOrgRoutingFlags(sheet, row);
     scheduleOrgReviewForRow(sheet, row, status, { stampLastChecked: true });
     if (status === 'Active') {
       ensureOrgClassificationState(row);
@@ -6396,11 +6413,11 @@ var HEADER_GUIDANCE = {
     'Notes': 'Review flags and context.'
   },
   'Organisations': {
-    'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
-    'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
-    'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
-    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant pauses org-level suggestions; Archived retires',
-    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'hidden system trigger; Active +14, Dormant +42', 'Notes': 'context, links, review/classification flags'
+    'Org ID': 'system', 'Organisation': 'Type the organisation name; Home > Add update is preferred',
+    'Sector ID': 'system link to Sectors.Sector ID', 'Sector': 'Choose a real Sector; blank becomes Needs classification',
+    'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; choose only after Sector',
+    'Tier': 'A/B/C priority; defaults to B', 'Status': 'Mapped = known; Active suggests people/jobs; Dormant pauses org suggestions; Archived retires',
+    'Known people (count)': 'automatic count from People', 'Open opportunities (count)': 'automatic count from open Jobs', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'hidden system trigger; Active +14, Dormant +42', 'Notes': 'your context plus bracketed system flags'
   },
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
@@ -7161,7 +7178,7 @@ function weeklyReviewImpl() {
   populateToday();
   refreshHome();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
-  summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' review task(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleNurture + ' stale nurture, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
+  summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' org review route(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleNurture + ' stale nurture, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
   try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
   return summary;
 }
@@ -7229,9 +7246,9 @@ function checkOrgActiveEmpty() {
         appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people/open opportunities; pursuit route already open');
         result.alreadyRouted++;
       } else {
-        var taskId = appendTodoOnceForWorkflow('Review active org with no pipeline: ' + orgName, 'Organisation', orgId, orgName, 'Org research', 'Not started', '', '30 min', 'Decide whether to find people, scan jobs, park, or archive.', 'Auto-triggered');
-        appendNoteFlag(sheet, row, COLS.ORGS.NOTES, taskId ? '[active-empty] Active but no people/open opportunities; review task created' : '[active-empty] Active but no people/open opportunities; review route already open');
-        if (taskId) result.tasksCreated++;
+        var routeId = appendOrgReviewDecision(orgId, orgName, status);
+        appendNoteFlag(sheet, row, COLS.ORGS.NOTES, routeId ? '[active-empty] Active but no people/open opportunities; review decision queued' : '[active-empty] Active but no people/open opportunities; review route already open');
+        if (routeId) result.tasksCreated++;
         else result.alreadyRouted++;
       }
     } else {
