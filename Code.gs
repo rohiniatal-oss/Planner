@@ -1083,6 +1083,62 @@ function propagateJobTitleRename(jobId, newTitle, oldTitle) {
   }
 }
 
+function propagateJobOrganisationChange(jobId, newOrgName, newOrgId, oldOrgName, oldOrgId) {
+  if (!jobId || !newOrgName) return;
+  var roundsSheet = getSheet('Interviews');
+  var tasksSheet = getSheet('Tasks');
+  var decisionsSheet = getSheet('Decisions');
+  var roundIds = collectRoundIdsForJob(jobId);
+
+  if (roundsSheet && roundsSheet.getLastRow() > 1) {
+    var roundData = roundsSheet.getRange(2, 1, roundsSheet.getLastRow() - 1, COLS.ROUNDS.JOB_ID).getValues();
+    roundData.forEach(function (row, i) {
+      if (String(row[COLS.ROUNDS.JOB_ID - 1]) === String(jobId)) roundsSheet.getRange(i + 2, COLS.ROUNDS.ORG_DISPLAY).setValue(newOrgName);
+    });
+  }
+
+  if (tasksSheet && tasksSheet.getLastRow() > 1) {
+    var taskData = tasksSheet.getRange(2, 1, tasksSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    taskData.forEach(function (row, i) {
+      var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+      var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+      var linkedJob = objType === 'Job' && objId === String(jobId);
+      var linkedRound = objType === 'Interview round' && roundIds[objId];
+      if (!(linkedJob || linkedRound)) return;
+      var r = i + 2;
+      if (!isTerminalTodoStatus(row[COLS.TODO.STATUS - 1])) {
+        tasksSheet.getRange(r, COLS.TODO.ORG).setValue(newOrgName);
+        var updatedTask = replaceDisplayText(row[COLS.TODO.TASK - 1], oldOrgName, newOrgName);
+        if (updatedTask !== row[COLS.TODO.TASK - 1]) tasksSheet.getRange(r, COLS.TODO.TASK).setValue(updatedTask);
+      }
+      writeLinkedTo(tasksSheet, r, objType, objId);
+    });
+  }
+
+  if (decisionsSheet && decisionsSheet.getLastRow() > 1) {
+    var decisionData = decisionsSheet.getRange(2, 1, decisionsSheet.getLastRow() - 1, COLS.DECISIONS.DECISION).getValues();
+    decisionData.forEach(function (row, i) {
+      var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+      var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+      var decisionKey = String(row[COLS.DECISIONS.KEY - 1] || '');
+      var linkedJob = targetType === 'Job' && targetId === String(jobId);
+      var linkedRound = targetType === 'Interview round' && roundIds[targetId];
+      var linkedJobReferralDecision = decisionKey === 'JOB_WANT:' + jobId + ':Referral search';
+      if (!(linkedJob || linkedRound || linkedJobReferralDecision)) return;
+      if (String(row[COLS.DECISIONS.DECISION - 1]) !== 'Pending') return;
+      var r = i + 2;
+      var trigger = replaceDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldOrgName, newOrgName);
+      var task = replaceDisplayText(row[COLS.DECISIONS.TASK - 1], oldOrgName, newOrgName);
+      if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
+      if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
+      if (linkedJobReferralDecision && newOrgId) {
+        decisionsSheet.getRange(r, COLS.DECISIONS.TARGET_ID).setValue(newOrgId);
+        if (targetType !== 'Organisation') decisionsSheet.getRange(r, COLS.DECISIONS.TARGET_TYPE).setValue('Organisation');
+      }
+    });
+  }
+}
+
 function collectIdsForOrg(sheet, idCol, orgIdCol, orgId) {
   var out = {};
   if (!sheet || sheet.getLastRow() < 2 || !orgId) return out;
@@ -3411,7 +3467,19 @@ function detectSectorOrphans() {
 function onEditJobs(sheet, row, col, newVal, e) {
   if (col === COLS.JOBS.OPPORTUNITY || col === COLS.JOBS.ORG) checkJobDuplicate(sheet, row);
   if (col === COLS.JOBS.ORG) {
+    var oldJobOrgName = e && e.oldValue ? String(e.oldValue) : '';
+    var oldJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
+    var relinkJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
+    var relinkJobStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
+    var newJobOrgName = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '');
+    var newJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
+    if (relinkJobId && newJobOrgName && ((oldJobOrgName && oldJobOrgName !== newJobOrgName) || (oldJobOrgId && oldJobOrgId !== newJobOrgId))) {
+      propagateJobOrganisationChange(relinkJobId, newJobOrgName, newJobOrgId, oldJobOrgName, oldJobOrgId);
+      promoteOrgForLiveJob(newJobOrgId, relinkJobStatus);
+      refreshDerivedPlanningSurfaces();
+      requestHomeRefresh();
+    }
     var jNotes = String(sheet.getRange(row, COLS.JOBS.NOTES).getValue() || '');
     if (jNotes.indexOf('[pending-org]') !== -1) {
       clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org]');
