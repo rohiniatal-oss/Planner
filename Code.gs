@@ -4780,13 +4780,13 @@ function refreshHome() {
   hardResetHomeSheet(sheet);
   sheet.setTabColor(ZONE_WORK_COLOR);
 
-  sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor('#1B474D');
+  sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor(HEADER_COLOR);
   var editReady = false;
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
   if (!editReady) {
     sheet.getRange(3, 2, 1, 7).merge()
-      .setValue('Setup required: Home actions are inactive until triggers are installed. Use The Planner > Triggers & setup > Set up / verify triggers.')
-      .setFontWeight('bold').setFontColor('#964219').setBackground('#FCE8E6').setWrap(true);
+      .setValue('⚠ One-time setup needed: open The Planner → Triggers & setup → Set up / verify triggers, or nothing on this page will respond.')
+      .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
   }
 
   // --- Onboarding card (§1.1) ---
@@ -4825,8 +4825,8 @@ function refreshHome() {
   var guideSheetForHome = getSheet('Guide');
   if (guideSheetForHome) {
     sheet.getRange(HOME_WELCOME_ROW, 7)
-      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Open Guide")')
-      .setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
+      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","New here? Read the Guide ▸")')
+      .setFontSize(9).setFontColor(HEADER_COLOR).setFontWeight('bold');
   }
 
   // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
@@ -4839,7 +4839,7 @@ function refreshHome() {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
   } else {
-    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground('#FCE8E6').setFontColor('#964219').setFontWeight('bold');
+    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground(MANUAL_COLOR).setFontColor(HEADER_COLOR).setFontWeight('bold');
   }
 
   // --- Today's plan hero (§1.4) — replaces the raw open-task count ---
@@ -5272,15 +5272,23 @@ function writePersonRow(name, org, role) {
 // Called from the popup. Wipes existing data (unless skipped), captures
 // the new facts, rebuilds the checklist, and refreshes Today/Home.
 function completeSetupFromPopup(payload) {
+  payload = payload || {};
+  var goal = payload.goal || 'skipped';
+  var entryPoint = payload.entryPoint || 'skip';
+  var fields = payload.fields || {};
+  var validation = validateOnboardingPayload(goal, entryPoint, fields);
+  if (!validation.ok) return validation;
+  var shouldReset = goal !== 'skipped' && entryPoint !== 'skip';
+  if (shouldReset && plannerDataRowCount() > 0) {
+    var resp = SpreadsheetApp.getUi().alert(
+      'Clear existing planner data?',
+      'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Continue?',
+      SpreadsheetApp.getUi().ButtonSet.YES_NO);
+    if (resp !== SpreadsheetApp.getUi().Button.YES) return failResult('Setup cancelled. Existing planner data was not changed.', '', 'SETUP_RESET_CANCELLED');
+  }
   return withDocumentLock(function () {
     try {
-      payload = payload || {};
-      var goal = payload.goal || 'skipped';
-      var entryPoint = payload.entryPoint || 'skip';
-      var fields = payload.fields || {};
-      var validation = validateOnboardingPayload(goal, entryPoint, fields);
-      if (!validation.ok) return validation;
-      if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
+      if (shouldReset) resetPlannerDataForOnboarding();
 
       var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
       if (!result.ok) return result;
