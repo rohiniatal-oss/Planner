@@ -686,11 +686,12 @@ function getOrgById(orgId) {
 function applyOrgRowFormulas(sheet, row) {
   var orgIdRef = columnToLetter(COLS.ORGS.ID) + row;
   var peopleOrgIdCol = columnToLetter(COLS.PEOPLE.ORG_ID);
+  var jobsOpportunityCol = columnToLetter(COLS.JOBS.OPPORTUNITY);
   var jobsOrgIdCol = columnToLetter(COLS.JOBS.ORG_ID);
   var jobsStatusCol = columnToLetter(COLS.JOBS.STATUS);
   sheet.getRange(row, COLS.ORGS.KNOWN_PEOPLE).setFormula('=COUNTIF(People!' + peopleOrgIdCol + ':' + peopleOrgIdCol + ',' + orgIdRef + ')');
   sheet.getRange(row, COLS.ORGS.OPEN_OPPS).setFormula(
-    '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Parked")');
+    '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsOpportunityCol + ':' + jobsOpportunityCol + ',"<>",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Parked")');
 }
 
 // Creates a name-only Organisation row (no cascade fired) — used when a
@@ -7063,9 +7064,10 @@ function orgOpenOpportunityCountMap() {
   if (!sheet || sheet.getLastRow() < 2) return out;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.JOBS.STATUS).getValues();
   data.forEach(function (r) {
+    var opportunity = String(r[COLS.JOBS.OPPORTUNITY - 1] || '');
     var orgId = String(r[COLS.JOBS.ORG_ID - 1] || '');
     var status = normalizeJobStatus(r[COLS.JOBS.STATUS - 1]);
-    if (orgId && status !== 'Closed' && status !== 'Parked') out[orgId] = (out[orgId] || 0) + 1;
+    if (opportunity && orgId && status !== 'Closed' && status !== 'Parked') out[orgId] = (out[orgId] || 0) + 1;
   });
   return out;
 }
