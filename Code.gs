@@ -254,6 +254,9 @@ var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
 var SCRIPT_VERSION = 'v7.7.4';
+var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
+var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
+var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -273,7 +276,7 @@ var DROPDOWNS = {
 
   TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'None'],
   TODO_WORKFLOW: [
-    'Sector selection', 'Market mapping', 'Org research',
+    'Sector selection', 'Market mapping', 'Organisation classification', 'Org research',
     'Job board scan', 'Org job scan', 'People sourcing',
     'Outreach', 'Send outreach', 'Contact follow-up',
     'Reply and arrange conversation', 'Conversation prep',
@@ -717,6 +720,7 @@ function createNameOnlyOrg(orgName, opts) {
         appendNoteFlag(orgSheetForTrace, existing.row, COLS.ORGS.NOTES, '[review-name] Possible canonical-name typo');
       }
     }
+    if (!opts.deferClassification) ensureOrgClassificationState(existing.row);
     return { id: existing.data[COLS.ORGS.ID - 1], row: existing.row, name: canonicalName, existing: true };
   }
   var sheet = getSheet('Organisations');
@@ -734,8 +738,68 @@ function createNameOnlyOrg(orgName, opts) {
   sheet.appendRow(row);
   var newRow = sheet.getLastRow();
   applyOrgRowFormulas(sheet, newRow);
+  if (!opts.deferClassification) markOrgNeedsClassification(newRow, id, orgName);
   if (status === 'Active') fireOrgActiveCascade(id, orgName);
   return { id: id, row: newRow, name: orgName, existing: false };
+}
+
+function isNeedsClassificationLabel(value) {
+  return normalizeKeyPart(value) === normalizeKeyPart(ORG_NEEDS_CLASSIFICATION_LABEL);
+}
+
+function ensureOrgClassificationTask(orgId, orgName, orgRow) {
+  if (!orgId || !orgName) return '';
+  var orgSheet = getSheet('Organisations');
+  if (orgSheet && orgRow) {
+    var status = String(orgSheet.getRange(orgRow, COLS.ORGS.STATUS).getValue() || '');
+    if (status === 'Dormant' || status === 'Archived') return '';
+  }
+  return appendTodoOnceForWorkflow(
+    'Classify organisation: ' + orgName,
+    'Organisation',
+    orgId,
+    orgName,
+    ORG_CLASSIFICATION_WORKFLOW,
+    'Not started',
+    '',
+    '15 min',
+    'Choose a real Sector/Sub-sector on the Organisations row.',
+    'Auto-triggered'
+  );
+}
+
+function markOrgNeedsClassification(orgRow, orgId, orgName, detail) {
+  var sheet = getSheet('Organisations');
+  if (!sheet || !orgRow) return;
+  orgId = orgId || sheet.getRange(orgRow, COLS.ORGS.ID).getValue();
+  orgName = orgName || sheet.getRange(orgRow, COLS.ORGS.NAME).getValue();
+  sheet.getRange(orgRow, COLS.ORGS.SECTOR_ID).setValue('');
+  sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(ORG_NEEDS_CLASSIFICATION_LABEL);
+  sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue('');
+  sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue('');
+  appendNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, ORG_NEEDS_CLASSIFICATION_FLAG + ' Choose a real Sector/Sub-sector');
+  if (detail) appendNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, '[taxonomy] ' + detail);
+  ensureOrgClassificationTask(orgId, orgName, orgRow);
+}
+
+function clearOrgNeedsClassification(orgRow, orgId) {
+  var sheet = getSheet('Organisations');
+  if (!sheet || !orgRow) return;
+  orgId = orgId || sheet.getRange(orgRow, COLS.ORGS.ID).getValue();
+  clearNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, ORG_NEEDS_CLASSIFICATION_FLAG);
+  clearNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, '[taxonomy]');
+  if (orgId) setOpenTodosForTarget('Organisation', orgId, 'Done', 'Organisation classified', [ORG_CLASSIFICATION_WORKFLOW]);
+}
+
+function ensureOrgClassificationState(orgRow) {
+  var sheet = getSheet('Organisations');
+  if (!sheet || !orgRow) return;
+  var orgId = sheet.getRange(orgRow, COLS.ORGS.ID).getValue();
+  var orgName = sheet.getRange(orgRow, COLS.ORGS.NAME).getValue();
+  if (!orgId || !orgName) return;
+  var sectorId = String(sheet.getRange(orgRow, COLS.ORGS.SECTOR_ID).getValue() || '');
+  var sector = String(sheet.getRange(orgRow, COLS.ORGS.SECTOR).getValue() || '');
+  if (!sectorId || isNeedsClassificationLabel(sector)) markOrgNeedsClassification(orgRow, orgId, orgName);
 }
 
 function applyOrganisationStatusFromCapture(org, status, tier) {
@@ -1197,6 +1261,7 @@ function defaultTimeForWorkflow(workflow) {
     case 'Submit application':
     case 'Interview follow-up':
     case 'Check application response':
+    case ORG_CLASSIFICATION_WORKFLOW:
     case 'Admin': return '15 min';
     default: return '30 min';
   }
@@ -1393,6 +1458,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
       return 'Active pursuit';
     case 'Sector selection':
     case 'Market mapping':
+    case ORG_CLASSIFICATION_WORKFLOW:
     case 'Org research':
     case 'People sourcing':
     case 'Org job scan':
@@ -1406,7 +1472,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 function deriveEffortType(workflow) {
   var deep = ['Application preparation', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
   var medium = ['People sourcing', 'Org job scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
-  var shallow = ['Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
+  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
   if (shallow.indexOf(workflow) !== -1) return 'Shallow';
@@ -1958,7 +2024,13 @@ function handleOrganisationTodoCompletion(todo, options) {
   if (!org) return;
   var sheet = getSheet('Organisations');
   sheet.getRange(org.row, COLS.ORGS.LAST_CHECKED).setValue(today());
-  if (todo.workflow === 'People sourcing' || todo.workflow === 'Referral search') {
+  if (todo.workflow === ORG_CLASSIFICATION_WORKFLOW) {
+    if (!org.sectorId || isNeedsClassificationLabel(org.sector)) {
+      markOrgNeedsClassification(org.row, org.id, org.name, 'Classification task was completed before a real Sector was set');
+    } else {
+      clearOrgNeedsClassification(org.row, org.id);
+    }
+  } else if (todo.workflow === 'People sourcing' || todo.workflow === 'Referral search') {
     appendPendingDecision('ORG_PEOPLE_FOUND:' + todo.id, 'People sourcing completed: ' + org.name,
       'Add/update people found at ' + org.name, 'Organisation', todo.objId, 'People sourcing', todo.notes || '');
   } else if (todo.workflow === 'Org job scan' || todo.workflow === 'Job board scan') {
@@ -1991,6 +2063,10 @@ function handleSkipCascade(todoSheet, row) {
   var objType = String(todoSheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue());
   var objId = String(todoSheet.getRange(row, COLS.TODO.OBJ_ID).getValue());
   switch (workflow) {
+    case ORG_CLASSIFICATION_WORKFLOW:
+      var classOrg = getOrgById(objId);
+      if (classOrg && (!classOrg.sectorId || isNeedsClassificationLabel(classOrg.sector))) markOrgNeedsClassification(classOrg.row, classOrg.id, classOrg.name, 'Classification task skipped before a real Sector was set');
+      break;
     case 'Org research':
       var org = getSheet('Organisations');
       if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '\u26a0 Research skipped — decide activation');
@@ -2030,6 +2106,10 @@ function handleCancelCascade(todoSheet, row) {
   var objId = String(todoSheet.getRange(row, COLS.TODO.OBJ_ID).getValue());
   if (!objId || isSourceObjectTerminal(objType, objId)) return; // parent already answers this — don't add noise
   switch (String(todoSheet.getRange(row, COLS.TODO.WORKFLOW).getValue())) {
+    case ORG_CLASSIFICATION_WORKFLOW:
+      var classOrg = getOrgById(objId);
+      if (classOrg && (!classOrg.sectorId || isNeedsClassificationLabel(classOrg.sector))) markOrgNeedsClassification(classOrg.row, classOrg.id, classOrg.name, 'Classification task cancelled before a real Sector was set');
+      break;
     case 'Org research':
       var org = getSheet('Organisations'); if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '⚠ Task cancelled — decide activation'); break;
     case 'Application preparation': case 'Submit application':
@@ -2491,17 +2571,30 @@ function upsertSectorBranch(opts) {
 function applyOrgTaxonomyLink(orgRow, sector, subsector) {
   var sheet = getSheet('Organisations');
   if (!sheet || !orgRow) return null;
+  sector = String(sector || '').trim().replace(/\s+/g, ' ');
+  subsector = String(subsector || '').trim().replace(/\s+/g, ' ');
+  var orgId = sheet.getRange(orgRow, COLS.ORGS.ID).getValue();
+  var orgName = sheet.getRange(orgRow, COLS.ORGS.NAME).getValue();
+  if (isNeedsClassificationLabel(sector)) {
+    markOrgNeedsClassification(orgRow, orgId, orgName, subsector ? 'Choose Sector before Sub-sector can be linked' : '');
+    return null;
+  }
+  if (!sector && !subsector) {
+    markOrgNeedsClassification(orgRow, orgId, orgName);
+    return null;
+  }
+  if (!sector && subsector) {
+    markOrgNeedsClassification(orgRow, orgId, orgName, 'Choose Sector before Sub-sector can be linked');
+    return null;
+  }
   if (sector && !subsector) {
     var sectorOnly = upsertSectorBranch({ sector: sector, source: 'organisation_link', sourceObjectType: 'Organisation', createExpansionDecision: false });
     if (sectorOnly) sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sectorOnly.sector);
     sheet.getRange(orgRow, COLS.ORGS.SECTOR_ID).setValue(sectorOnly ? sectorOnly.sectorId : '');
     sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue('');
     sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue('');
+    if (sectorOnly) clearOrgNeedsClassification(orgRow, orgId);
     return sectorOnly;
-  }
-  if (!sector && subsector) {
-    appendNoteFlag(sheet, orgRow, COLS.ORGS.NOTES, '[taxonomy] Add Sector before Sub-sector can be linked');
-    return null;
   }
   if (!sector || !subsector) return null;
   var sub = upsertSectorBranch({ sector: sector, subsector: subsector, source: 'organisation_link', sourceObjectType: 'Organisation', createExpansionDecision: true });
@@ -2510,6 +2603,7 @@ function applyOrgTaxonomyLink(orgRow, sector, subsector) {
   sheet.getRange(orgRow, COLS.ORGS.SECTOR).setValue(sub.sector);
   sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR_ID).setValue(sub.id);
   sheet.getRange(orgRow, COLS.ORGS.SUBSECTOR).setValue(sub.subsector);
+  clearOrgNeedsClassification(orgRow, orgId);
   return sub;
 }
 
@@ -2519,11 +2613,18 @@ function repairOrgTaxonomyLinks() {
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Organisations.length).getValues();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
+    var orgId = data[i][COLS.ORGS.ID - 1];
+    var orgName = data[i][COLS.ORGS.NAME - 1];
+    if (!orgId || !orgName) continue;
     var sector = data[i][COLS.ORGS.SECTOR - 1];
     var sub = data[i][COLS.ORGS.SUBSECTOR - 1];
     var sectorId = data[i][COLS.ORGS.SECTOR_ID - 1];
     var subId = data[i][COLS.ORGS.SUBSECTOR_ID - 1];
-    if (sector && (!sectorId || (sub && !subId))) applyOrgTaxonomyLink(row, sector, sub);
+    if (!sectorId || isNeedsClassificationLabel(sector)) {
+      applyOrgTaxonomyLink(row, sector, sub);
+    } else if (sector && (!sectorId || (sub && !subId))) {
+      applyOrgTaxonomyLink(row, sector, sub);
+    }
   }
 }
 
@@ -2558,23 +2659,31 @@ function onEditOrgs(sheet, row, col, newVal, e) {
     propagateOrganisationRename(orgId, finalOrgName, oldOrgName);
     var sector = sheet.getRange(row, COLS.ORGS.SECTOR).getValue();
     var sub = sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue();
-    if (sector || sub) {
-      var linkedBranch = applyOrgTaxonomyLink(row, sector, sub);
-      if (linkedBranch && !linkedBranch.isSectorOnly) {
-        renderTodayDecisionCards();
-        requestHomeRefresh();
-      }
+    var linkedBranch = applyOrgTaxonomyLink(row, sector, sub);
+    if (linkedBranch && !linkedBranch.isSectorOnly) {
+      renderTodayDecisionCards();
+      requestHomeRefresh();
     }
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
     return;
   }
   if (col === COLS.ORGS.SECTOR || col === COLS.ORGS.SUBSECTOR) {
-    var taxonomyBranch = applyOrgTaxonomyLink(row, sheet.getRange(row, COLS.ORGS.SECTOR).getValue(), sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue());
+    var editedSector = sheet.getRange(row, COLS.ORGS.SECTOR).getValue();
+    var editedSubsector = sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue();
+    if (col === COLS.ORGS.SECTOR && editedSector && editedSubsector && !isNeedsClassificationLabel(editedSector) && !findSectorBranch(editedSector, editedSubsector)) {
+      sheet.getRange(row, COLS.ORGS.SUBSECTOR_ID).setValue('');
+      sheet.getRange(row, COLS.ORGS.SUBSECTOR).setValue('');
+      appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[taxonomy] Sub-sector cleared because Sector changed');
+      editedSubsector = '';
+    }
+    var taxonomyBranch = applyOrgTaxonomyLink(row, editedSector, editedSubsector);
     if (taxonomyBranch && !taxonomyBranch.isSectorOnly) {
       renderTodayDecisionCards();
       requestHomeRefresh();
     }
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ORGS.TIER) {
@@ -4356,7 +4465,7 @@ function taskMatchesFocus(workflow, objType, focus) {
   if (focus === 'Applications') return ['Application preparation', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
   if (focus === 'Networking') return objType === 'Person';
   if (focus === 'Interviews') return objType === 'Interview round' || /Interview/.test(workflow);
-  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'People sourcing', 'Sector selection', 'Org research'].indexOf(workflow) !== -1;
+  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'People sourcing', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
   if (focus === 'Admin / light day') return workflow === 'Admin';
   return true;
 }
@@ -5569,7 +5678,7 @@ function buildSetupHtml() {
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Engaged / arranging next step","Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
-    ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector, if known",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
+    ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
     'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
@@ -5774,10 +5883,12 @@ function processOrgOnboarding(fields) {
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
   var created = 0, reused = 0;
   names.forEach(function (name) {
-    var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B' });
+    var hasTaxonomyInput = !!(fields.sector || fields.subsector);
+    var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B', deferClassification: hasTaxonomyInput });
     if (org && org.existing) reused++; else if (org) created++;
     applyOrganisationStatusFromCapture(org, status, fields.tier || 'B');
     if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
+    else if (org) ensureOrgClassificationState(org.row);
   });
   var suffix = status === 'Active' ? ' Marked Active — a Decision to find people/scan jobs was created for each (not a direct Task).' : ' Status: ' + status + '.';
   return okResult('Captured ' + names.length + ' organisation(s): ' + created + ' new, ' + reused + ' existing.' + suffix);
@@ -5904,7 +6015,7 @@ function captureConfig(captureType) {
     'Add/update organisation': {
       title: 'Add/update organisation',
       fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
-      { k: 'sector', l: 'Sector, if known', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
+      { k: 'sector', l: 'Sector (leave blank to classify later)', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
       { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
@@ -6010,9 +6121,11 @@ function processCapturePayload(captureType, fields) {
     if (!namesNew.length) return failResult('I need at least one organisation name.', 'orgNames', 'MISSING_ORG');
     var createdFound = 0, reusedFound = 0;
     namesNew.forEach(function (name) {
-      var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B' });
+      var hasTaxonomyInput = !!(fields.sector || fields.subsector);
+      var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B', deferClassification: hasTaxonomyInput });
       if (org && org.existing) reusedFound++; else if (org) createdFound++;
       if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
+      else if (org) ensureOrgClassificationState(org.row);
     });
     return okResult('Captured ' + namesNew.length + ' organisation(s) found from exploration: ' + createdFound + ' new, ' + reusedFound + ' existing.');
   }
@@ -6105,8 +6218,8 @@ var HEADER_GUIDANCE = {
   },
   'Organisations': {
     'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
-    'Sector ID': 'system link to Sectors.Sector ID', 'Sector': 'Link to Sectors taxonomy',
-    'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Link or create',
+    'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
+    'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
     'Tier': 'A/B/C, optional', 'Status': 'Mapped (default) / Active / Dormant / Archived',
     'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
