@@ -3647,9 +3647,19 @@ function ensureTodaySheet() {
   return sheet;
 }
 
+function hardResetTodaySheet(sheet) {
+  var maxRows = Math.max(sheet.getMaxRows(), TODAY_TABLE_LAST_ROW);
+  var maxCols = Math.max(sheet.getMaxColumns(), HEADERS["Today's plan"].length);
+  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
+}
+
 function bootstrapToday() {
   var sheet = ensureTodaySheet();
-  sheet.clear();
+  hardResetTodaySheet(sheet);
   sheet.setTabColor(ZONE_WORK_COLOR);
 
   sheet.getRange('A1:I1').merge().setValue('Today').setFontSize(16).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
