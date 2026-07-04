@@ -29,7 +29,7 @@
  * If you add Today behavior, edit those — never append a second copy.
  *
  * v7.3 also hardens runtime robustness:
- *   - Concurrency: every mutating path runs behind withDocumentLock().
+ *   - Concurrency: mutating edit, popup, scheduled, menu, and row-action paths use withDocumentLock() where practical.
  *   - Performance: getOrgById/getJobRowById/getPersonRowById/getRoundById
  *     do a single bulk getValues() instead of per-field reads.
  *   - Triggers: all trigger wiring flows through ONE idempotent,
@@ -364,10 +364,11 @@ function popupExceptionResult(context, err) {
   return failResult('Something went wrong while saving. Run Maintenance > Repair all tabs, then try again.', '', 'SERVER_ERROR');
 }
 
-// v7.3.1: Serialises every mutating path behind a single document lock so
+// v7.3.1: Serialises covered mutating paths behind a single document lock so
 // two overlapping edits (or an edit landing while dailyMaintenance runs)
-// can't double-create tasks or collide on nextId() / appendRow(). Runs fn
-// while holding the lock and always releases it, even on error.
+// are much less likely to double-create tasks or collide on nextId() /
+// appendRow(). Runs fn while holding the lock and always releases it, even
+// on error.
 //
 // IMPORTANT (v7.3.1 fix): if the lock can't be acquired within the
 // timeout, fn is STILL RUN (unguarded) rather than silently skipped. In a
@@ -4337,30 +4338,32 @@ function pullSelectedTaskIntoToday() {
   var task = String(active.getRange(row, COLS.TODO.TASK).getValue() || '');
   if (!todoId || !task) { SpreadsheetApp.getUi().alert('That row does not have a Task ID and task.'); return; }
 
-  var todaySheet = getSheet('Today');
-  if (!todaySheet) { bootstrapToday(); todaySheet = getSheet('Today'); }
-  for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
-    if (String(todaySheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
-      var notes = String(todaySheet.getRange(r, COLS.TODAY.NOTES).getValue() || '');
-      if (notes.indexOf('[pulled]') === -1) todaySheet.getRange(r, COLS.TODAY.NOTES).setValue('[pulled] ' + notes);
-      ss.setActiveSheet(todaySheet);
-      SpreadsheetApp.getActiveSpreadsheet().toast('Task is already on Today.', 'The Planner', 3);
-      return;
+  withDocumentLock(function () {
+    var todaySheet = getSheet('Today');
+    if (!todaySheet) { bootstrapToday(); todaySheet = getSheet('Today'); }
+    for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+      if (String(todaySheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
+        var notes = String(todaySheet.getRange(r, COLS.TODAY.NOTES).getValue() || '');
+        if (notes.indexOf('[pulled]') === -1) todaySheet.getRange(r, COLS.TODAY.NOTES).setValue('[pulled] ' + notes);
+        ss.setActiveSheet(todaySheet);
+        SpreadsheetApp.getActiveSpreadsheet().toast('Task is already on Today.', 'The Planner', 3);
+        return;
+      }
     }
-  }
-  var targetRow = -1;
-  for (var empty = TODAY_TABLE_FIRST_ROW; empty <= TODAY_TABLE_LAST_ROW; empty++) {
-    if (!todaySheet.getRange(empty, COLS.TODAY.TASK).getValue()) { targetRow = empty; break; }
-  }
-  if (targetRow === -1) { SpreadsheetApp.getUi().alert('Today is full. Clear or defer something first.'); return; }
-  var est = parseTimeEst(String(active.getRange(row, COLS.TODO.TIME_EST).getValue() || '30 min')) || 30;
-  writeTodayRow(todaySheet, targetRow, targetRow - 10, {
-    todoId: todoId, task: task, estMin: est,
-    effort: String(active.getRange(row, COLS.TODO.EFFORT_TYPE).getValue() || ''),
-    reason: 'manually pulled from Tasks', tags: '[pulled]', userNote: ''
-  }, 'Commit');
-  ss.setActiveSheet(todaySheet);
-  SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
+    var targetRow = -1;
+    for (var empty = TODAY_TABLE_FIRST_ROW; empty <= TODAY_TABLE_LAST_ROW; empty++) {
+      if (!todaySheet.getRange(empty, COLS.TODAY.TASK).getValue()) { targetRow = empty; break; }
+    }
+    if (targetRow === -1) { SpreadsheetApp.getUi().alert('Today is full. Clear or defer something first.'); return; }
+    var est = parseTimeEst(String(active.getRange(row, COLS.TODO.TIME_EST).getValue() || '30 min')) || 30;
+    writeTodayRow(todaySheet, targetRow, targetRow - 10, {
+      todoId: todoId, task: task, estMin: est,
+      effort: String(active.getRange(row, COLS.TODO.EFFORT_TYPE).getValue() || ''),
+      reason: 'manually pulled from Tasks', tags: '[pulled]', userNote: ''
+    }, 'Commit');
+    ss.setActiveSheet(todaySheet);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
+  }, { label: 'pullSelectedTaskIntoToday' });
 }
 
 function lockTodayRow() {
@@ -4368,10 +4371,12 @@ function lockTodayRow() {
   if (sheet.getName() !== 'Today') { SpreadsheetApp.getUi().alert('Select a row on Today first.'); return; }
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) { SpreadsheetApp.getUi().alert('Pick a task row.'); return; }
-  var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
-  if (notes.indexOf('[locked]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[locked] ' + notes);
-  sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('bold');
-  SpreadsheetApp.getActiveSpreadsheet().toast('Row locked — stays in place on the next refresh.', 'The Planner', 3);
+  withDocumentLock(function () {
+    var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
+    if (notes.indexOf('[locked]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[locked] ' + notes);
+    sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('bold');
+    SpreadsheetApp.getActiveSpreadsheet().toast('Row locked — stays in place on the next refresh.', 'The Planner', 3);
+  }, { label: 'lockTodayRow' });
 }
 
 function unlockTodayRow() {
@@ -4379,10 +4384,12 @@ function unlockTodayRow() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
-  var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '').replace(/\[locked\]\s*/g, '').trim();
-  sheet.getRange(row, COLS.TODAY.NOTES).setValue(notes);
-  sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('normal');
-  SpreadsheetApp.getActiveSpreadsheet().toast('Row unlocked.', 'The Planner', 3);
+  withDocumentLock(function () {
+    var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '').replace(/\[locked\]\s*/g, '').trim();
+    sheet.getRange(row, COLS.TODAY.NOTES).setValue(notes);
+    sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('normal');
+    SpreadsheetApp.getActiveSpreadsheet().toast('Row unlocked.', 'The Planner', 3);
+  }, { label: 'unlockTodayRow' });
 }
 
 function swapTodayRows(sheet, a, b) {
@@ -4396,8 +4403,10 @@ function moveTodayRowUp() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row <= TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
-  swapTodayRows(sheet, row, row - 1);
-  sheet.setActiveRange(sheet.getRange(row - 1, COLS.TODAY.TASK));
+  withDocumentLock(function () {
+    swapTodayRows(sheet, row, row - 1);
+    sheet.setActiveRange(sheet.getRange(row - 1, COLS.TODAY.TASK));
+  }, { label: 'moveTodayRowUp' });
 }
 
 function moveTodayRowDown() {
@@ -4405,8 +4414,10 @@ function moveTodayRowDown() {
   if (sheet.getName() !== 'Today') return;
   var row = sheet.getActiveRange().getRow();
   if (row < TODAY_TABLE_FIRST_ROW || row >= TODAY_TABLE_LAST_ROW) return;
-  swapTodayRows(sheet, row, row + 1);
-  sheet.setActiveRange(sheet.getRange(row + 1, COLS.TODAY.TASK));
+  withDocumentLock(function () {
+    swapTodayRows(sheet, row, row + 1);
+    sheet.setActiveRange(sheet.getRange(row + 1, COLS.TODAY.TASK));
+  }, { label: 'moveTodayRowDown' });
 }
 
 function topUpToday() {
@@ -4417,10 +4428,12 @@ function topUpToday() {
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var mins = parseInt(resp.getResponseText().trim(), 10);
   if (isNaN(mins) || mins <= 0) { ui.alert('Enter a positive number.'); return; }
-  var current = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10) || 0;
-  sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(current + mins);
-  populateToday();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + mins + ' minutes to today.', 'The Planner', 4);
+  withDocumentLock(function () {
+    var current = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10) || 0;
+    sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(current + mins);
+    populateToday();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + mins + ' minutes to today.', 'The Planner', 4);
+  }, { label: 'topUpToday' });
 }
 
 function endOfDayReconcile() {
@@ -6200,28 +6213,36 @@ function rowActionFindPeopleAtSelectedOrg() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Organisations') { SpreadsheetApp.getUi().alert('Select an Organisation row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'People sourcing', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'People sourcing', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionFindPeopleAtSelectedOrg' });
 }
 
 function rowActionScanJobsAtSelectedOrg() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Organisations') { SpreadsheetApp.getUi().alert('Select an Organisation row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Scan jobs at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Org job scan', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Scan jobs at: ' + sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Organisation', sheet.getRange(row, COLS.ORGS.ID).getValue(), sheet.getRange(row, COLS.ORGS.NAME).getValue(), 'Org job scan', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionScanJobsAtSelectedOrg' });
 }
 
 function rowActionPrepSelectedJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+  }, { label: 'rowActionPrepSelectedJob' });
 }
 
 function rowActionReferralSearchSelectedJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+  withDocumentLock(function () {
+    appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'rowActionReferralSearchSelectedJob' });
 }
 
 function rowActionSearchOrgsForSubsector() {
@@ -6231,9 +6252,11 @@ function rowActionSearchOrgsForSubsector() {
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   var sub = sheet.getRange(row, COLS.SECTORS.SUBSECTOR).getValue();
   if (!sector || !sub) { SpreadsheetApp.getUi().alert('Select a row with a Sector and Sub-sector.'); return; }
-  var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
-  if (!branch || !branch.id) return;
-  appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+  withDocumentLock(function () {
+    var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+    if (!branch || !branch.id) return;
+    appendTodoWithSource('Market map: ' + branch.sector + ' — ' + branch.subsector, 'Sector', branch.id, '', 'Market mapping', 'Not started', '', '45 min', '', 'Manually added');
+  }, { label: 'rowActionSearchOrgsForSubsector' });
 }
 
 function rowActionBreakDownSelectedSector() {
@@ -6242,15 +6265,19 @@ function rowActionBreakDownSelectedSector() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var sector = sheet.getRange(row, COLS.SECTORS.SECTOR).getValue();
   if (!sector) return;
-  var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
-  fireSectorOnlyTask(branch);
+  withDocumentLock(function () {
+    var branch = upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
+    fireSectorOnlyTask(branch);
+  }, { label: 'rowActionBreakDownSelectedSector' });
 }
 
 function rowActionAddInterviewRound() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+  withDocumentLock(function () {
+    createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+  }, { label: 'rowActionAddInterviewRound' });
 }
 
 // v7.4 §4.2 — Multi-day Phase 2: break a Multi-day Task into real
@@ -6316,6 +6343,12 @@ function retireBrokenDownParent(parentTodoId, childCount) {
 }
 
 function completeBreakdownFromPopup(parentTodoId, subtasks) {
+  return withDocumentLock(function () {
+    return completeBreakdownFromPopupImpl(parentTodoId, subtasks);
+  }, { label: 'completeBreakdownFromPopup' });
+}
+
+function completeBreakdownFromPopupImpl(parentTodoId, subtasks) {
   var parent = getTodoById(parentTodoId);
   if (!parent) return 'Parent task not found.';
   var createdIds = [];
@@ -6362,9 +6395,11 @@ function linkContactToJob() {
   if (ambiguous.length) ui.alert('Ambiguous contact(s)', ambiguous.join(', ') + ' matched more than one person at ' + (jobOrg || 'this organisation') + '. Link manually from People first.', ui.ButtonSet.OK);
   if (notFound.length) ui.alert('Some names not found', notFound.join(', '), ui.ButtonSet.OK);
   if (!newIds.length) return;
-  var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
-  sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(existing ? existing + ', ' + newIds.join(', ') : newIds.join(', '));
-  refreshLinkedContactsDisplay();
+  withDocumentLock(function () {
+    var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
+    sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).setValue(existing ? existing + ', ' + newIds.join(', ') : newIds.join(', '));
+    refreshLinkedContactsDisplay();
+  }, { label: 'linkContactToJob' });
 }
 
 function refreshLinkedContactsDisplay() {
@@ -6393,15 +6428,19 @@ function logInteractionForRow() {
   var personId = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ID).getValue() : '';
   var person = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.NAME).getValue() : '';
   var org = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ORG).getValue() : sheet.getRange(row, COLS.JOBS.ORG).getValue();
-  appendInteraction(personId, person, org, today(), 'Other', notes, 'Useful');
+  withDocumentLock(function () {
+    appendInteraction(personId, person, org, today(), 'Other', notes, 'Useful');
+  }, { label: 'logInteractionForRow' });
 }
 
 function softCloseRow() {
   var sheet = SpreadsheetApp.getActiveSheet();
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  if (sheet.getName() === 'People') movePersonStage(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed', {});
-  else if (sheet.getName() === 'Jobs') setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
-  else SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.');
+  if (sheet.getName() !== 'People' && sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.'); return; }
+  withDocumentLock(function () {
+    if (sheet.getName() === 'People') movePersonStage(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed', {});
+    else setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
+  }, { label: 'softCloseRow' });
 }
 
 // v7.6 §5: prompts for a reason, appends [blocked] <reason> to Notes. No
@@ -6416,8 +6455,10 @@ function rowActionMarkTaskBlocked() {
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var reason = resp.getResponseText().trim();
   if (!reason) { ui.alert('Enter a reason.'); return; }
-  appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
-  refreshHome();
+  withDocumentLock(function () {
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
+    refreshHome();
+  }, { label: 'rowActionMarkTaskBlocked' });
 }
 
 // v7.6 §5: Tasks has no Deferred status of its own (DROPDOWNS.TODO_STATUS
@@ -6430,19 +6471,21 @@ function rowActionDeferSelectedTask() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  var newDue = addDays(today(), 3);
-  sheet.getRange(row, COLS.TODO.DUE_DATE).setValue(newDue);
-  sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
-  sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
-    String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
-    String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
-  sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
-  // v7.6.1: if this task is currently sitting on Today's Commit list, it
-  // would otherwise keep showing stale info until some unrelated refresh.
-  syncTodayRowForTodo(row, 'Not started');
-  populateToday();
-  refreshHome();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
+  withDocumentLock(function () {
+    var newDue = addDays(today(), 3);
+    sheet.getRange(row, COLS.TODO.DUE_DATE).setValue(newDue);
+    sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
+    sheet.getRange(row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
+      String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
+      String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
+    sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+    // v7.6.1: if this task is currently sitting on Today's Commit list, it
+    // would otherwise keep showing stale info until some unrelated refresh.
+    syncTodayRowForTodo(row, 'Not started');
+    populateToday();
+    refreshHome();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
+  }, { label: 'rowActionDeferSelectedTask' });
 }
 
 // =============================================================
@@ -6653,6 +6696,12 @@ function ensureCanonicalSheet(name) {
 // is created, so a v6.x workbook's existing tabs are renamed in place
 // (data preserved) rather than shadowed by new empty canonical tabs.
 function repairAllTabs() {
+  var result = withDocumentLock(repairAllTabsImpl, { label: 'repairAllTabs', timeoutMs: 30000, failOpen: false });
+  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Repair skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  return result;
+}
+
+function repairAllTabsImpl() {
   migrateLegacyTabs();
 
   CANONICAL_TAB_ORDER.forEach(function (name) {
@@ -6699,6 +6748,7 @@ function repairAllTabs() {
   // silently stay missing after a Maintenance run. Idempotent + silent.
   ensureTriggersInstalled({ silent: true });
   SpreadsheetApp.getActiveSpreadsheet().toast('All tabs repaired + triggers verified (' + SCRIPT_VERSION + ').', 'The Planner', 4);
+  return true;
 }
 
 function dailyMaintenance() {
@@ -6728,6 +6778,12 @@ function dailyMaintenance() {
 }
 
 function fullRefresh() {
+  var result = withDocumentLock(fullRefreshImpl, { label: 'fullRefresh', timeoutMs: 30000, failOpen: false });
+  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Refresh skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  return result;
+}
+
+function fullRefreshImpl() {
   // v7.3: also force a trigger check on every full refresh.
   ensureTriggersInstalled({ silent: true });
   dailyMaintenance();
@@ -6740,6 +6796,7 @@ function fullRefresh() {
   refreshAllDropdowns();
   refreshHome();
   renderTodayDecisionCards();
+  return true;
 }
 
 // Back-compat: force-reinstall the time triggers only (leaves the edit
