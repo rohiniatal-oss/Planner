@@ -283,7 +283,7 @@ var DROPDOWNS = {
     'Outreach', 'Send outreach', 'Contact follow-up',
     'Reply and arrange conversation', 'Conversation prep',
     'Reschedule conversation', 'Conversation debrief', 'Referral search',
-    'Application preparation', 'Submit application',
+    'Application preparation', 'Application blocker', 'Submit application',
     'Check application response', 'Offer decision',
     'Interview scheduling', 'Interview prep (Domain scoping)',
     'Interview prep (Study)', 'Interview prep (Fit case)',
@@ -1614,6 +1614,7 @@ function defaultTimeForWorkflow(workflow) {
   switch (String(workflow || '')) {
     case 'Market mapping': return '45 min';
     case 'Application preparation': return '60 min';
+    case 'Application blocker': return '30 min';
     case 'People sourcing':
     case 'Org job scan':
     case 'Referral search':
@@ -1666,10 +1667,6 @@ function acceptPendingDecision(sheet, row) {
     return { ok: false, todoId: '', reason: 'Task was not created or found' };
   }
   sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-  var key = String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
-  if (key.indexOf('JOB_START:') === 0 && targetType === 'Job' && workflow === 'Application preparation') {
-    setJobStatus(targetId, 'In progress', { source: 'decision-start-application' });
-  }
   return { ok: true, todoId: todoId, reused: false };
 }
 
@@ -1682,7 +1679,14 @@ function resolveDecision(decisionsSheet, row, action) {
   decisionsSheet.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
   var accepted = null;
   if (action === 'Yes') accepted = acceptPendingDecision(decisionsSheet, row);
-  if (action === 'No' || action === 'Auto-dismissed') decisionsSheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  if (action === 'No' || action === 'Auto-dismissed') {
+    decisionsSheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    var key = String(decisionsSheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
+    if (isApplicationPlanDecisionKey(key)) {
+      var job = getJobRowById(decisionsSheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue());
+      if (job) clearNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+    }
+  }
   return accepted;
 }
 
@@ -1707,6 +1711,12 @@ function onEditDecisions(sheet, row, col, newVal, e) {
   // acceptPendingDecision's own existingTodoId guard makes re-accepting
   // idempotent rather than creating a second Task.
   var wasAlreadyResolved = e && e.oldValue && ['Yes', 'No', 'Auto-dismissed'].indexOf(String(e.oldValue)) !== -1;
+  var key = String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
+  if (decision === 'Yes' && isApplicationPlanDecisionKey(key)) {
+    sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runApplicationPlanPopup(sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue(), sheet.getRange(row, COLS.DECISIONS.ID).getValue());
+    return;
+  }
   var accepted = resolveDecision(sheet, row, decision);
   renderTodayDecisionCards();
   if (decision === 'Yes' && accepted && accepted.ok) populateToday();
@@ -1770,17 +1780,34 @@ function pendingDecisionCount() {
   return count;
 }
 
-// Up to `limit` (default 3) pending decisions, oldest-created first.
+function decisionSortDateValue(decisionRow) {
+  var created = decisionRow[COLS.DECISIONS.CREATED - 1] || today();
+  var key = String(decisionRow[COLS.DECISIONS.KEY - 1] || '');
+  if (isApplicationPlanDecisionKey(key) && String(decisionRow[COLS.DECISIONS.TARGET_TYPE - 1]) === 'Job') {
+    var job = getJobRowById(decisionRow[COLS.DECISIONS.TARGET_ID - 1]);
+    var planBy = applicationPlanDueDate(job);
+    if (planBy) return new Date(planBy).getTime();
+  }
+  return new Date(created).getTime();
+}
+
+// Up to `limit` (default 3) pending decisions. Application planning
+// decisions use their plan-by date, so deadlines push genuinely urgent
+// application planning onto Home without changing the Decisions schema.
 function firstPendingDecisions(limit) {
   limit = limit || 3;
   var sheet = ensureDecisionsTab();
   if (!sheet || sheet.getLastRow() < 2) return [];
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
   var out = [];
-  for (var i = 0; i < data.length && out.length < limit; i++) {
+  for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.DECISIONS.DECISION - 1]) === 'Pending') out.push({ row: i + 2, data: data[i] });
   }
-  return out;
+  out.sort(function (a, b) {
+    var diff = decisionSortDateValue(a.data) - decisionSortDateValue(b.data);
+    return diff || (a.row - b.row);
+  });
+  return out.slice(0, limit);
 }
 
 // =============================================================
@@ -1830,6 +1857,8 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
     case 'Interview prep (Fit case)':
     case 'Application preparation':
       return (daysToLinked !== null && daysToLinked <= 7) ? 'Blocking' : 'Active pursuit';
+    case 'Application blocker':
+      return 'Blocking';
     case 'Contact follow-up':
     case 'Reply and arrange conversation':
     case 'Thank-you and debrief':
@@ -1860,7 +1889,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 function deriveEffortType(workflow) {
   var deep = ['Application preparation', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
   var medium = ['People sourcing', 'Org job scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
-  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
+  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
   if (shallow.indexOf(workflow) !== -1) return 'Shallow';
@@ -1909,13 +1938,14 @@ function syncOpenJobDeadlineTaskDates(jobId, deadline) {
   if (!sheet || sheet.getLastRow() < 2) return 0;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
   var count = 0;
-  var dateDriven = { 'Application preparation': true, 'Submit application': true };
+  var planBy = applicationPlanDueDate({ deadline: deadline });
+  var dateDriven = { 'Application preparation': true, 'Submit application': true, 'Referral search': true };
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(jobId)) continue;
     if (isTerminalTodoStatus(data[i][COLS.TODO.STATUS - 1])) continue;
     if (!dateDriven[String(data[i][COLS.TODO.WORKFLOW - 1] || '')]) continue;
-    sheet.getRange(i + 2, COLS.TODO.DUE_DATE).setValue(deadline || '');
+    sheet.getRange(i + 2, COLS.TODO.DUE_DATE).setValue(planBy || '');
     count++;
   }
   if (count) recalcTodosLinkedToObject(String(jobId));
@@ -2387,15 +2417,19 @@ function routeTodoCompletion(todo, options) {
 function handleJobTodoCompletion(todo, options) {
   var job = getJobRowById(todo.objId);
   if (!job) return;
-  if (todo.workflow === 'Application preparation') {
-    appendTodoOnceForWorkflow('Submit application: ' + job.title + ' at ' + job.org, 'Job', todo.objId, job.org, 'Submit application', 'Not started', job.deadline, '15 min', 'Application prep completed.', 'Auto-triggered');
+  if (todo.workflow === 'Application preparation' || todo.workflow === 'Application blocker') {
+    createFinalSubmitTaskIfApplicationReady(job);
+    return;
   } else if (todo.workflow === 'Submit application') {
     setJobStatus(todo.objId, 'Submitted', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
+    if (String(todo.task || '').indexOf('Find referral contact:') !== 0) return;
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
-      'Add/update referral contacts for ' + job.title + ' at ' + job.org, 'Job', todo.objId, 'People sourcing', todo.notes || '');
+      'Add/update referral contact found for ' + job.title + ' at ' + job.org,
+      'Job', todo.objId, 'People sourcing',
+      'If you found someone, accept this and add/link the person. If not, choose No; the application can still be submitted.' + (todo.notes ? '\n' + todo.notes : ''));
   } else if (todo.workflow === 'Offer decision') {
     appendPendingDecision('OFFER_DECISION_DONE:' + todo.id, 'Offer decision needs an outcome: ' + job.title,
       'Record offer decision for ' + job.title + ' at ' + job.org, 'Job', todo.objId, 'Admin', '');
@@ -2506,6 +2540,7 @@ function handleSkipCascade(todoSheet, row) {
       if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '\u26a0 Research skipped — decide activation');
       break;
     case 'Application preparation':
+    case 'Application blocker':
     case 'Submit application':
       var jobs = getSheet('Jobs');
       if (jobs) flagLinkedRow(jobs, COLS.JOBS.ID, objId, COLS.JOBS.NOTES, '\u26a0 Prep/submit skipped — Park or Close?');
@@ -2548,7 +2583,7 @@ function handleCancelCascade(todoSheet, row) {
       break;
     case 'Org research':
       var org = getSheet('Organisations'); if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '⚠ Task cancelled — decide activation'); break;
-    case 'Application preparation': case 'Submit application':
+    case 'Application preparation': case 'Application blocker': case 'Submit application':
       var jobs = getSheet('Jobs'); if (jobs) flagLinkedRow(jobs, COLS.JOBS.ID, objId, COLS.JOBS.NOTES, '⚠ Task cancelled — Park or Close?'); break;
     case 'Outreach': case 'Send outreach':
       var people = getSheet('People'); if (people) flagLinkedRow(people, COLS.PEOPLE.ID, objId, COLS.PEOPLE.NOTES, '⚠ Task cancelled — Identified or Closed?'); break;
@@ -2594,30 +2629,37 @@ function getJobInfo(jobId) { var j = getJobRowById(jobId); return j ? { title: j
 // The single place Job status transitions are handled — called from
 // onEditJobs (manual edit), setJobStatus (programmatic), and onboarding
 // capture. Never called twice for the same transition.
-function queueStartApplicationDecision(job) {
+function applicationPlanDecisionKey(jobId) {
+  return 'JOB_PLAN:' + jobId + ':Application preparation';
+}
+
+function isApplicationPlanDecisionKey(key) {
+  return String(key || '').indexOf('JOB_PLAN:') === 0;
+}
+
+function applicationPlanDueDate(job) {
+  if (!job || !job.deadline) return '';
+  var deadline = new Date(job.deadline);
+  if (isNaN(deadline.getTime())) return '';
+  return addDays(deadline, -1);
+}
+
+function applicationPlanDueText(job) {
+  var planBy = applicationPlanDueDate(job);
+  if (planBy) return 'Plan by: ' + formatDateHuman(planBy) + '. Deadline: ' + formatDateHuman(job.deadline) + '.';
+  return 'No deadline set. Final submit task will stay undated until a deadline is added.';
+}
+
+function queueApplicationPlanDecision(job) {
   if (!job || !job.id) return '';
   return appendPendingDecision(
-    'JOB_START:' + job.id + ':Application preparation',
-    'Application not started: ' + job.title,
-    'Prep application: ' + job.title + ' at ' + job.org,
+    applicationPlanDecisionKey(job.id),
+    'Application in progress: ' + job.title,
+    'Plan application for ' + job.title + ' at ' + job.org,
     'Job',
     job.id,
     'Application preparation',
-    (job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) + '. ' : '') +
-    'Yes creates prep work: tailor CV/resume, draft application answers, collect proof points, and check requirements. Referral is suggested separately once work starts.'
-  );
-}
-
-function queueJobReferralDecision(job) {
-  if (!job || !job.id) return '';
-  return appendPendingDecision(
-    'JOB_REFERRAL:' + job.id + ':Referral search',
-    'Application in progress: ' + job.title,
-    'Find referral for ' + job.title + ' at ' + job.org,
-    'Job',
-    job.id,
-    'Referral search',
-    'Suggested because a referral may improve this application.'
+    applicationPlanDueText(job) + ' Yes opens the application planning form.'
   );
 }
 
@@ -2673,16 +2715,13 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   var sheet = getSheet('Jobs');
 
   if (newStatus === 'Not started') {
-    queueStartApplicationDecision(job);
+    autoDismissPendingDecisionByKey(applicationPlanDecisionKey(jobId), 'Application is not in progress');
+    clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     return;
   }
   if (newStatus === 'In progress') {
-    appendTodoOnceForWorkflow('Prep application: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Application preparation',
-      'Not started', job.deadline, '60 min',
-      (job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) + '. ' : '') +
-      'Tailor CV/resume, draft application answers, collect proof points, and check requirements before submitting.',
-      'Auto-triggered');
-    queueJobReferralDecision(job);
+    queueApplicationPlanDecision(job);
+    appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan] Use Home decision to plan application tasks.');
     return;
   }
   if (newStatus === 'Submitted') {
@@ -2692,7 +2731,8 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
     sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
     if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('');
     autoDismissPendingForTarget('Job', jobId, 'Application submitted');
-    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job already applied', ['Application preparation', 'Submit application']);
+    clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job already applied', ['Application preparation', 'Application blocker', 'Submit application']);
     appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
       'Check application response', 'Not started', review, '15 min', 'Submitted on ' + formatDateHuman(applied), 'Auto-triggered');
     return;
@@ -2700,6 +2740,7 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
 
   if (newStatus === 'Closed') {
     autoDismissPendingForTarget('Job', jobId, 'Job closed');
+    clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     setOpenTodosForTarget('Job', jobId, 'Cancelled', 'Job closed');
   }
 }
@@ -5060,7 +5101,7 @@ function collectTaskPool(focus, tierLookup) {
 
 function taskMatchesFocus(workflow, objType, focus) {
   if (!focus || focus === 'Default') return true;
-  if (focus === 'Applications') return ['Application preparation', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
+  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
   if (focus === 'Networking') return objType === 'Person';
   if (focus === 'Interviews') return objType === 'Interview round' || /Interview/.test(workflow);
   if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'People sourcing', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
@@ -5507,6 +5548,11 @@ function handleDecisionAction(sheet, action, decisionId) {
   if (String(decisions.getRange(row, COLS.DECISIONS.DECISION).getValue()) !== 'Pending') {
     renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
     SpreadsheetApp.getActiveSpreadsheet().toast('That decision was already resolved. Home has been refreshed.', 'The Planner', 4);
+    return;
+  }
+  var key = String(decisions.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
+  if (action === 'Yes' && isApplicationPlanDecisionKey(key)) {
+    runApplicationPlanPopup(decisions.getRange(row, COLS.DECISIONS.TARGET_ID).getValue(), decisionId);
     return;
   }
   var accepted = resolveDecision(decisions, row, action);
@@ -6418,7 +6464,7 @@ function processJobOnboarding(fields) {
   if (fields.deadline) getSheet('Jobs').getRange(getJobRowById(jobId).row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
   fireJobStatusChanged(jobId, '', 'Not started', {});
-  return okResult('Captured the job and queued the start-application decision.');
+  return okResult('Captured the job. Set Application status to In progress when you are ready to plan the application work.');
 }
 
 function processInterviewOnboarding(fields) {
@@ -6541,6 +6587,127 @@ function writePersonRow(name, org, role) {
   row[COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT - 1] = 0;
   sheet.appendRow(row);
   return id;
+}
+
+function knownPeopleForJob(jobId) {
+  var job = getJobRowById(jobId);
+  var sheet = getSheet('People');
+  if (!job || !sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.People.length).getValues();
+  var out = [];
+  for (var i = 0; i < data.length; i++) {
+    var orgId = String(data[i][COLS.PEOPLE.ORG_ID - 1] || '');
+    var orgName = String(data[i][COLS.PEOPLE.ORG - 1] || '');
+    if ((job.orgId && orgId === String(job.orgId)) || (!job.orgId && orgName === String(job.org))) {
+      out.push({
+        id: String(data[i][COLS.PEOPLE.ID - 1] || ''),
+        name: String(data[i][COLS.PEOPLE.NAME - 1] || ''),
+        role: String(data[i][COLS.PEOPLE.ROLE - 1] || ''),
+        stage: String(data[i][COLS.PEOPLE.STAGE - 1] || '')
+      });
+    }
+  }
+  return out.filter(function (p) { return p.id && p.name; });
+}
+
+function linkPersonIdToJob(jobId, personId) {
+  var job = getJobRowById(jobId), person = getPersonRowById(personId);
+  if (!job || !person) return false;
+  var sheet = getSheet('Jobs');
+  var existing = String(sheet.getRange(job.row, COLS.JOBS.CONTACTS_IDS).getValue() || '');
+  var ids = existing.split(',').map(function (s) { return s.trim(); }).filter(String);
+  if (ids.indexOf(String(personId)) === -1) ids.push(String(personId));
+  sheet.getRange(job.row, COLS.JOBS.CONTACTS_IDS).setValue(ids.join(', '));
+  refreshLinkedContactsDisplay();
+  return true;
+}
+
+function createReferralOutreachTask(job, personId, source) {
+  var person = getPersonRowById(personId);
+  if (!job || !person) return '';
+  var personName = String(person.data[COLS.PEOPLE.NAME - 1] || '');
+  var task = 'Draft outreach to ' + personName + ' about ' + job.title + ' at ' + job.org;
+  return appendTodoWithSource(task, 'Person', personId, job.org, 'Outreach', 'Not started',
+    applicationPlanDueDate(job), '20 min',
+    'Referral outreach for ' + job.title + ' at ' + job.org + '. Referral is optional; submit without it if there is not enough time.',
+    source || 'Application plan');
+}
+
+function applicationPlanTaskSpec(item, effort, job) {
+  var map = {
+    cv: {
+      label: 'CV',
+      Ready: ['Review CV', '15 min'],
+      Light: ['Light CV edits', '30 min'],
+      Moderate: ['Tailor CV', '60 min'],
+      Heavy: ['Rebuild CV', '120 min']
+    },
+    cover: {
+      label: 'Cover letter',
+      Ready: ['Review cover letter', '15 min'],
+      Light: ['Light cover letter edits', '30 min'],
+      Moderate: ['Draft/tailor cover letter', '60 min'],
+      Heavy: ['Write cover letter from scratch', '120 min']
+    },
+    form: {
+      label: 'Application form',
+      Ready: ['Review application form', '15 min'],
+      Light: ['Complete short application form', '30 min'],
+      Moderate: ['Complete application form', '60 min'],
+      Heavy: ['Complete long application form', '120 min']
+    },
+    other: {
+      label: 'Other',
+      Ready: ['Review other application item', '15 min'],
+      Light: ['Prepare other application item', '30 min'],
+      Moderate: ['Prepare other application item', '60 min'],
+      Heavy: ['Prepare other application item', '120 min']
+    }
+  };
+  var itemMap = map[item];
+  if (!itemMap || !itemMap[effort]) return null;
+  return {
+    task: itemMap[effort][0] + ': ' + job.title + ' at ' + job.org,
+    time: itemMap[effort][1],
+    notes: itemMap.label + ' effort: ' + effort + '.'
+  };
+}
+
+function createApplicationPlanTask(job, task, workflow, dueDate, timeEst, notes) {
+  var id = appendTodoWithSource(task, 'Job', job.id, job.org, workflow, 'Not started', dueDate, timeEst, notes, 'Application plan');
+  return id || findOpenTodoByTaskTarget(task, job.id, workflow);
+}
+
+function openApplicationPrepTaskCount(jobId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !jobId) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(jobId)) continue;
+    if (['Application preparation', 'Application blocker'].indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
+    var status = String(data[i][COLS.TODO.STATUS - 1] || '');
+    if (status === 'Not started' || status === 'In progress') count++;
+  }
+  return count;
+}
+
+function createFinalSubmitTaskIfApplicationReady(job) {
+  if (!job || !job.id) return '';
+  if (openApplicationPrepTaskCount(job.id) > 0) return '';
+  return createApplicationPlanTask(job, 'Final QA and submit application: ' + job.title + ' at ' + job.org,
+    'Submit application', applicationPlanDueDate(job), '20 min',
+    'All required application prep is complete. Referral is optional; do not block submission just because no referral was found.');
+}
+
+function resolveApplicationPlanDecision(decisionId, todoId) {
+  if (!decisionId) return;
+  var found = getDecisionRowById(decisionId);
+  if (!found) return;
+  found.sheet.getRange(found.row, COLS.DECISIONS.DECISION).setValue('Yes');
+  found.sheet.getRange(found.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  if (todoId) found.sheet.getRange(found.row, COLS.DECISIONS.TODO_ID).setValue(todoId);
 }
 
 // Called from the popup. Wipes existing data (unless skipped), captures
@@ -6695,6 +6862,117 @@ function runCapturePopup(captureType) {
   if (!captureType || captureType === 'No updates') return;
   var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType)).setWidth(600).setHeight(600).setTitle(captureType);
   SpreadsheetApp.getUi().showModalDialog(html, captureType);
+}
+
+function buildApplicationPlanHtml(jobId, decisionId) {
+  var job = getJobRowById(jobId);
+  if (!job) return '<p>Job not found.</p>';
+  var data = {
+    jobId: job.id,
+    decisionId: decisionId || '',
+    title: job.title,
+    org: job.org,
+    deadline: job.deadline ? formatDateHuman(job.deadline) : '',
+    planBy: applicationPlanDueDate(job) ? formatDateHuman(applicationPlanDueDate(job)) : '',
+    people: knownPeopleForJob(job.id)
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    '.section{border-top:1px solid #D8DAD4;margin-top:16px;padding-top:14px;}.section h3{margin:0 0 8px;color:#1B474D;font-size:14px;}' +
+    '.item{display:grid;grid-template-columns:1fr 160px;gap:10px;align-items:center;margin:8px 0;}.item label{font-weight:bold;color:#1B474D;font-size:13px;}' +
+    'select,input,textarea{box-sizing:border-box;width:100%;padding:8px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    'textarea{min-height:58px;resize:vertical;}.hint{font-size:12px;color:#5F625E;margin-top:6px;}.hidden{display:none;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Plan application</h2><p id="jobLine"></p>' +
+    '<div class="section"><h3>What needs submitting?</h3><div id="items"></div><div class="hint">Ready = final check only; Light = under 30 min; Moderate = 30-90 min; Heavy = 90+ min.</div></div>' +
+    '<div class="section"><h3>Referral</h3><select id="referral"></select><div id="knownBlock" class="hidden"><select id="personId"></select></div><div id="newBlock" class="hidden"><input id="personName" placeholder="Contact name"></div><div class="hint">Referral is optional. Submit is created when required prep is done, even if no referral was found.</div></div>' +
+    '<div class="section"><h3>Blocker</h3><select id="blocker"><option>No</option><option>Yes</option></select><textarea id="blockerNotes" class="hidden" placeholder="What is blocking this application?"></textarea></div>' +
+    '<button class="primary" type="button" onclick="submitPlan()">Create plan</button><div id="status"></div>' +
+    '<script>var data=' + json + ';' +
+    'var efforts=["Ready","Light","Moderate","Heavy"],items=[["cv","CV"],["cover","Cover letter"],["form","Application form"],["other","Other"]];' +
+    'document.getElementById("jobLine").textContent=data.title+" at "+data.org+(data.deadline?" · Deadline "+data.deadline:"")+(data.planBy?" · Plan by "+data.planBy:"");' +
+    'var itemsEl=document.getElementById("items");items.forEach(function(it){var row=document.createElement("div");row.className="item";var label=document.createElement("label");var cb=document.createElement("input");cb.type="checkbox";cb.id="need_"+it[0];label.appendChild(cb);label.appendChild(document.createTextNode(" "+it[1]));var sel=document.createElement("select");sel.id="effort_"+it[0];efforts.forEach(function(e){var opt=document.createElement("option");opt.value=e;opt.textContent=e;sel.appendChild(opt);});row.appendChild(label);row.appendChild(sel);itemsEl.appendChild(row);});' +
+    'var ref=document.getElementById("referral"),opts=[["no_referral","No referral / submit without it"],["already_have","Already have referral"],["find_contact","Need to find someone"]];if(data.people.length)opts.push(["known_person","Reach out to known person"]);opts.push(["new_person","Add a new contact to reach out"]);opts.forEach(function(o){var opt=document.createElement("option");opt.value=o[0];opt.textContent=o[1];ref.appendChild(opt);});' +
+    'var person=document.getElementById("personId");data.people.forEach(function(p){var opt=document.createElement("option");opt.value=p.id;opt.textContent=p.name+(p.role?" - "+p.role:"")+(p.stage?" ("+p.stage+")":"");person.appendChild(opt);});' +
+    'function update(){document.getElementById("knownBlock").className=ref.value==="known_person"?"":"hidden";document.getElementById("newBlock").className=ref.value==="new_person"?"":"hidden";document.getElementById("blockerNotes").className=document.getElementById("blocker").value==="Yes"?"":"hidden";}' +
+    'ref.onchange=update;document.getElementById("blocker").onchange=update;update();' +
+    'function submitPlan(){var payload={jobId:data.jobId,decisionId:data.decisionId,items:{},referralPlan:ref.value,personId:person.value,personName:document.getElementById("personName").value,blocker:document.getElementById("blocker").value,blockerNotes:document.getElementById("blockerNotes").value};items.forEach(function(it){if(document.getElementById("need_"+it[0]).checked)payload.items[it[0]]=document.getElementById("effort_"+it[0]).value;});var status=document.getElementById("status");if(payload.referralPlan==="known_person"&&!payload.personId){status.textContent="Choose the known person.";return;}if(payload.referralPlan==="new_person"&&!String(payload.personName||"").trim()){status.textContent="Add the contact name.";return;}status.textContent="Creating plan...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not create plan.";return;}status.textContent=res.message||"Plan created.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(){status.textContent="Could not create plan. Try again from Home.";}).completeApplicationPlanFromPopup(payload);}</script>';
+}
+
+function runApplicationPlanPopup(jobId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildApplicationPlanHtml(jobId, decisionId)).setWidth(660).setHeight(700).setTitle('Plan application');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Plan application');
+}
+
+function completeApplicationPlanFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var job = getJobRowById(payload.jobId);
+      if (!job) return failResult('I could not find that job.', '', 'JOB_NOT_FOUND');
+      var due = applicationPlanDueDate(job);
+      var created = [], finalSubmitId = '';
+      var items = payload.items || {};
+      if (String(payload.blocker || 'No') === 'Yes') {
+        var blockerId = createApplicationPlanTask(job, 'Resolve application blocker: ' + job.title + ' at ' + job.org,
+          'Application blocker', today(), '30 min', payload.blockerNotes || 'Application planning blocker.');
+        if (blockerId) created.push(blockerId);
+      }
+      ['cv', 'cover', 'form', 'other'].forEach(function (item) {
+        var spec = applicationPlanTaskSpec(item, items[item], job);
+        if (!spec) return;
+        var id = createApplicationPlanTask(job, spec.task, 'Application preparation', due, spec.time,
+          spec.notes + ' Created from application planning.');
+        if (id) created.push(id);
+      });
+
+      var referralPlan = String(payload.referralPlan || 'no_referral');
+      if (referralPlan === 'already_have') {
+        var reviewId = createApplicationPlanTask(job, 'Review referral plan: ' + job.title + ' at ' + job.org,
+          'Referral search', due, '15 min', 'Referral is optional; submit without it if timing is tight.');
+        if (reviewId) created.push(reviewId);
+      } else if (referralPlan === 'find_contact') {
+        var findId = createApplicationPlanTask(job, 'Find referral contact: ' + job.title + ' at ' + job.org,
+          'Referral search', due, '30 min',
+          'If you find someone, mark Done and accept the follow-up decision to add/link them. If not, choose No; submit still proceeds.');
+        if (findId) created.push(findId);
+      } else if (referralPlan === 'known_person') {
+        if (!payload.personId) return failResult('Choose the known person.', 'personId', 'MISSING_PERSON');
+        linkPersonIdToJob(job.id, payload.personId);
+        var knownOutreachId = createReferralOutreachTask(job, payload.personId, 'Application plan');
+        if (knownOutreachId) created.push(knownOutreachId);
+      } else if (referralPlan === 'new_person') {
+        var personName = String(payload.personName || '').trim();
+        if (!personName) return failResult('Add the contact name.', 'personName', 'MISSING_PERSON');
+        var personId = writePersonRow(personName, { id: job.orgId, name: job.org }, '');
+        var person = getPersonRowById(personId);
+        if (person && !person.data[COLS.PEOPLE.STAGE - 1]) getSheet('People').getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
+        promoteOrgForLivePerson(job.orgId, 'Identified');
+        linkPersonIdToJob(job.id, personId);
+        var newOutreachId = createReferralOutreachTask(job, personId, 'Application plan');
+        if (newOutreachId) created.push(newOutreachId);
+      }
+
+      if (openApplicationPrepTaskCount(job.id) === 0) {
+        finalSubmitId = createFinalSubmitTaskIfApplicationReady(job);
+        if (finalSubmitId) created.push(finalSubmitId);
+      }
+
+      resolveApplicationPlanDecision(payload.decisionId, finalSubmitId || created[0] || '');
+      clearNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      colorCodeManualFields();
+      return okResult('Application plan created: ' + created.length + ' task(s).');
+    } catch (err) {
+      return popupExceptionResult('completeApplicationPlanFromPopup', err);
+    }
+  }, { label: 'completeApplicationPlanFromPopup', timeoutMs: 30000 });
 }
 
 function completeCaptureFromPopup(payload) {
@@ -7378,7 +7656,7 @@ function openApplicationWorkByJobId() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return out;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
-  var workflows = ['Application preparation', 'Submit application', 'Referral search'];
+  var workflows = ['Application preparation', 'Application blocker', 'Submit application', 'Referral search'];
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
     if (workflows.indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
@@ -7933,7 +8211,6 @@ function rowActionPrepSelectedJob() {
     var job = ensureJobRowActionContext(sheet, row);
     if (!job) return;
     setJobStatus(job.id, 'In progress', { source: 'row-action-prep' });
-    autoDismissPendingDecisionByKey('JOB_START:' + job.id + ':Application preparation', 'Prep task created from row action');
     promoteOrgForLiveJob(job.orgId, 'In progress');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
@@ -7949,8 +8226,8 @@ function rowActionReferralSearchSelectedJob() {
     if (!job) return;
     setJobStatus(job.id, 'In progress', { source: 'row-action-referral' });
     promoteOrgForLiveJob(job.orgId, 'In progress');
-    appendTodoWithSource('Find referral for ' + job.title + ' at ' + job.org, 'Job', job.id, job.org, 'Referral search', 'Not started', job.deadline, '30 min', '', 'Manually added');
-    autoDismissPendingDecisionByKey('JOB_REFERRAL:' + job.id + ':Referral search', 'Referral task created from row action');
+    appendTodoWithSource('Find referral contact: ' + job.title + ' at ' + job.org, 'Job', job.id, job.org, 'Referral search', 'Not started',
+      applicationPlanDueDate(job), '30 min', 'Referral is optional; submit without it if timing is tight.', 'Manually added');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionReferralSearchSelectedJob' });
