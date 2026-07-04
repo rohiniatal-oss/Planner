@@ -4985,15 +4985,15 @@ function refreshHome() {
     });
   }
 
-  // --- Refresh (§1.6) — demoted utility control, folds in trigger status ---
+  // --- Refresh (§1.6) — demoted utility control for re-reading Home status ---
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
-    .setValue('Refresh & verify triggers — Capture: ' + (editReady ? 'Ready' : 'Trigger setup needed'))
+    .setValue('Refresh Home status — Today / Tasks / Decisions')
     .setFontSize(9).setFontColor('#8A8D87');
 
   var maint = readMaintenanceHealth();
   if (maint.error || maint.stale) {
-    var maintText = maint.error ? ('Maintenance issue: ' + maint.error) : 'Maintenance has not run in 2 days. Run Refresh & verify triggers.';
+    var maintText = maint.error ? ('Maintenance issue: ' + maint.error) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Run daily maintenance now.';
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   }
@@ -5030,8 +5030,14 @@ function onEditHome(sheet, row, col, newVal) {
   }
   if (row === HOME_REFRESH_ROW && col === HOME_REFRESH_COL && newVal === true) {
     sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false);
-    fullRefresh();
+    refreshHomeStatusFromButton();
   }
+}
+
+function refreshHomeStatusFromButton() {
+  checkTriggerHealth();
+  refreshHome();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Home refreshed from Today, Tasks, and Decisions.', 'The Planner', 3);
 }
 
 // =============================================================
