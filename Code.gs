@@ -4033,11 +4033,21 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       else { var pv5 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, outside focus, near miss on capacity', tags: pv5.tags, userNote: pv5.userNote }); }
     });
 
-  // Stage 9 — remaining near-misses (Backlog-tier or anything left over
-  // that's close to fitting) go to Options, capped at 6.
+  // Stage 8.5 — Backlog fill: deadline-bearing and focus-relevant work
+  // above always wins the capacity first, but idle capacity shouldn't
+  // sit empty just because what's left is ad-hoc/Admin-class Backlog.
+  // Items that don't fit fall through to Stage 9's options fallback below
+  // like anything else, rather than being permanently hidden.
+  pool.filter(function (p) { return p.cls === 'Backlog' && !usedIds[p.todoId]; })
+    .sort(compareForStage(energyLow))
+    .forEach(function (p) {
+      if (minutesUsed + p.estMin <= capacity) { usedIds[p.todoId] = true; addCommit(p, 'backlog — filling spare capacity'); }
+    });
+
+  // Stage 9 — remaining near-misses (including Backlog that missed on
+  // capacity above) go to Options, capped at 6.
   pool.forEach(function (p) {
     if (usedIds[p.todoId] || options.length >= 6) return;
-    if (p.cls === 'Backlog') return; // Stage 10 — stays hidden in Tasks entirely
     var pv4 = preserved(p.todoId);
     options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'not selected today — capacity or priority', tags: pv4.tags, userNote: pv4.userNote });
   });
