@@ -7385,6 +7385,7 @@ function linkPersonIdToJob(jobId, personId) {
   var existing = String(sheet.getRange(job.row, COLS.JOBS.CONTACTS_IDS).getValue() || '');
   writeLinkedContactIdsForJobRow(sheet, job.row, parseLinkedContactIds(existing).concat([personId]));
   refreshLinkedContactsDisplay();
+  syncPeopleHelperColumns();
   return true;
 }
 
@@ -9458,6 +9459,7 @@ function linkContactToJob() {
     var existing = sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue();
     writeLinkedContactIdsForJobRow(sheet, row, parseLinkedContactIds(existing).concat(newIds));
     refreshLinkedContactsDisplay();
+    syncPeopleHelperColumns();
   }, { label: 'linkContactToJob' });
 }
 
