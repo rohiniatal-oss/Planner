@@ -94,10 +94,10 @@
  * -------
  *   1. Back up the sheet (File → Make a copy).
  *   2. Paste this entire file as Code.gs (replacing everything else).
- *   3. Run `repairAllTabs` from the Apps Script function dropdown.
- *   4. Run `installEditTrigger` once for reliable Home/Today popups.
- *   5. Run `installTimeTriggers` if this is a fresh install.
- *   6. Reload the sheet.
+ *   3. Reload the sheet.
+ *   4. In The Planner menu, run Triggers & setup > Set up / verify triggers.
+ *   5. Run Maintenance > Repair all tabs (safe to re-run).
+ *   6. Start from Home, or run The Planner > Set up / redo onboarding.
  */
 
 // =============================================================
@@ -301,7 +301,7 @@ var DROPDOWNS = {
   TODAY_STATUS: ['Planned', 'In progress', 'Done', 'Deferred', 'Skipped'],
   // v7.4: Option rows get a smaller status list — 'Pull in' promotes the
   // row into Commit on the spot instead of waiting for the next refresh.
-  TODAY_STATUS_OPTION: ['Deferred', 'Pull in'],
+  TODAY_STATUS_OPTION: ['Deferred', 'Done', 'Pull in'],
   TODAY_ENERGY: ['Low', 'Normal', 'High'],
   TODAY_PRIORITY: ['Default', 'Applications', 'Networking', 'Interviews', 'Pipeline building', 'Admin / light day'],
   TODAY_UPDATE_TYPES: [
@@ -337,6 +337,29 @@ function getSheet(name) {
   return ss ? ss.getSheetByName(name) : null;
 }
 
+function okResult(message, extras) {
+  var out = extras || {};
+  out.ok = true;
+  out.message = message || 'Saved.';
+  if (!out.warnings) out.warnings = [];
+  return out;
+}
+
+function failResult(message, field, code) {
+  return {
+    ok: false,
+    message: message || 'Please check the form.',
+    field: field || '',
+    code: code || 'VALIDATION_ERROR'
+  };
+}
+
+function coerceResult(result, fallbackMessage) {
+  if (result && typeof result === 'object' && result.ok !== undefined) return result;
+  if (result && typeof result === 'object' && result.message) return okResult(result.message, result);
+  return okResult(result || fallbackMessage || 'Saved.');
+}
+
 // v7.3.1: Serialises every mutating path behind a single document lock so
 // two overlapping edits (or an edit landing while dailyMaintenance runs)
 // can't double-create tasks or collide on nextId() / appendRow(). Runs fn
@@ -358,6 +381,7 @@ function withDocumentLock(fn, opts) {
   opts = opts || {};
   var timeoutMs = opts.timeoutMs || 20000;
   var label = opts.label || 'operation';
+  var failOpen = opts.failOpen !== false;
   if (_PLANNER_LOCK_HELD) return fn();   // already inside a locked section
   var lock = LockService.getDocumentLock();
   var got = false;
@@ -365,6 +389,11 @@ function withDocumentLock(fn, opts) {
     try { got = lock.tryLock(timeoutMs); }
     catch (lockErr) { Logger.log('withDocumentLock acquire (' + label + '): ' + lockErr); got = false; }
     if (!got) {
+      if (!failOpen) {
+        recordMaintenanceError(label, 'Lock unavailable after ' + timeoutMs + 'ms');
+        Logger.log('withDocumentLock: lock unavailable for ' + label + ' after ' + timeoutMs + 'ms - skipped.');
+        return null;
+      }
       // Could not get the lock — run anyway rather than drop the action.
       Logger.log('withDocumentLock: lock unavailable for ' + label + ' after ' + timeoutMs + 'ms — running unguarded so the action still completes.');
       return fn();
@@ -377,6 +406,39 @@ function withDocumentLock(fn, opts) {
       try { lock.releaseLock(); } catch (err) { Logger.log('withDocumentLock release (' + label + '): ' + err); }
     }
   }
+}
+
+function maintenanceProps() {
+  return PropertiesService.getDocumentProperties();
+}
+
+function recordMaintenanceHeartbeat(key) {
+  try {
+    maintenanceProps().setProperty(key, new Date().toISOString());
+  } catch (err) {
+    Logger.log('recordMaintenanceHeartbeat: ' + err);
+  }
+}
+
+function recordMaintenanceError(label, message) {
+  try {
+    maintenanceProps().setProperty('lastMaintenanceError', new Date().toISOString() + ' ' + label + ': ' + message);
+  } catch (err) {
+    Logger.log('recordMaintenanceError: ' + err);
+  }
+}
+
+function readMaintenanceHealth() {
+  var props = maintenanceProps();
+  var now = new Date();
+  var dailyRaw = props.getProperty('lastDailyMaintenanceAt') || '';
+  var error = props.getProperty('lastMaintenanceError') || '';
+  var stale = false;
+  if (dailyRaw) {
+    var dailyDate = new Date(dailyRaw);
+    stale = !isNaN(dailyDate.getTime()) && ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000);
+  }
+  return { daily: dailyRaw, error: error, stale: stale };
 }
 
 function today() {
@@ -447,8 +509,10 @@ function styleHeader(sheet, numCols) {
   sheet.getRange(1, 1, 1, numCols).setBackground(HEADER_COLOR).setFontColor('#FFFFFF').setFontWeight('bold');
 }
 
-function setDropdown(range, values) {
-  range.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(values, true).setAllowInvalid(true).build());
+function setDropdown(range, values, opts) {
+  opts = opts || {};
+  var allowInvalid = opts.allowInvalid !== false;
+  range.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(values, true).setAllowInvalid(allowInvalid).build());
 }
 
 function normalizeTier(value) {
@@ -463,7 +527,7 @@ function normalizeJobStatus(value) {
     'Referral needed': 'Want to apply', 'Apply now': 'Want to apply',
     'To pursue': 'Want to apply', 'Application ready': 'Want to apply'
   };
-  return legacyMap[v] || (DROPDOWNS.JOB_STATUS.indexOf(v) !== -1 ? v : v);
+  return legacyMap[v] || (DROPDOWNS.JOB_STATUS.indexOf(v) !== -1 ? v : '');
 }
 
 function normalizePersonStage(value) {
@@ -474,7 +538,7 @@ function normalizePersonStage(value) {
     'Relationship active': 'Engaged', 'Qualified': 'Identified',
     'Opportunity lead': 'Engaged'
   };
-  return legacyMap[v] || v;
+  return legacyMap[v] || (DROPDOWNS.PERSON_STAGE.indexOf(v) !== -1 ? v : '');
 }
 
 // Appends a marker to a Notes cell. A marker of the same bracketed
@@ -881,7 +945,7 @@ function ensureDecisionsTab() {
   if (sheet.getLastRow() < 1) sheet.appendRow(HEADERS['Pending decisions']);
   sheet.getRange(1, 1, 1, HEADERS['Pending decisions'].length).setValues([HEADERS['Pending decisions']]);
   styleHeader(sheet, HEADERS['Pending decisions'].length);
-  setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, Math.max(1, sheet.getMaxRows() - 1), 1), DROPDOWNS.DECISION);
+  setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, Math.max(1, sheet.getMaxRows() - 1), 1), DROPDOWNS.DECISION, { allowInvalid: false });
   return sheet;
 }
 
@@ -2500,6 +2564,10 @@ function onEditJobs(sheet, row, col, newVal, e) {
   }
   if (col === COLS.JOBS.STATUS) {
     var status = normalizeJobStatus(newVal);
+    if (!status && String(newVal || '').trim()) {
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[invalid-value] Job Status "' + newVal + '" rejected');
+      return;
+    }
     if (status !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.STATUS).setValue(status);
     var id = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(id);
@@ -2572,6 +2640,10 @@ function onEditPeople(sheet, row, col, newVal, e) {
     var personId = sheet.getRange(row, COLS.PEOPLE.ID).getValue() || nextId(sheet, COLS.PEOPLE.ID, 'PER');
     sheet.getRange(row, COLS.PEOPLE.ID).setValue(personId);
     var stage = normalizePersonStage(newVal);
+    if (!stage && String(newVal || '').trim()) {
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[invalid-value] People Stage "' + newVal + '" rejected');
+      return;
+    }
     if (stage !== String(newVal || '')) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(stage);
     if (!sheet.getRange(row, COLS.PEOPLE.ORG).getValue()) {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[pending-org] Add Organisation before activating this person stage.');
@@ -2598,7 +2670,7 @@ function appendInteraction(personId, personName, org, dateValue, typeValue, note
   row[COLS.INTERACTIONS.ORG - 1] = org || '';
   row[COLS.INTERACTIONS.TYPE - 1] = typeValue || 'Auto-log';
   row[COLS.INTERACTIONS.NOTES - 1] = notes || '';
-  row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || (typeValue === 'Auto-log' ? 'System log' : 'Useful');
+  row[COLS.INTERACTIONS.OUTCOME - 1] = outcome || (typeValue === 'Auto-log' ? 'System log' : '');
   sheet.appendRow(row);
   linkInteractionPersonCell(sheet.getLastRow());
   return id;
@@ -3162,6 +3234,10 @@ function editMayNeedUi(e) {
   if (name === 'Organisations' && col === COLS.ORGS.NAME) return true;
   if (name === 'Jobs' && (col === COLS.JOBS.OPPORTUNITY || col === COLS.JOBS.ORG)) return true;
   if (name === 'People' && (col === COLS.PEOPLE.NAME || col === COLS.PEOPLE.ORG)) return true;
+  if (name === 'Tasks' && col === COLS.TODO.STATUS && e.range.getNumRows && e.range.getNumRows() > 8) {
+    try { return triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); }
+    catch (err) { Logger.log('editMayNeedUi bulk status trigger check: ' + err); return false; }
+  }
   return false;
 }
 
@@ -3217,6 +3293,13 @@ function routeEditEvent(e, triggerMode) {
   var startCol = range.getColumn();
   var values = range.getValues();
   var isTaskStatusBulk = sheet.getName() === 'Tasks' && startCol === COLS.TODO.STATUS && numCols === 1;
+  if (isTaskStatusBulk && numRows > 8) {
+    var ui = SpreadsheetApp.getUi();
+    var resp = ui.alert('Bulk task status change',
+      'You are changing ' + numRows + ' task statuses. This can fire completion cascades and create follow-up tasks or decisions. Continue?',
+      ui.ButtonSet.YES_NO);
+    if (resp !== ui.Button.YES) return;
+  }
   var priorBatchContext = EDIT_BATCH_CONTEXT;
   if (isTaskStatusBulk) {
     EDIT_BATCH_CONTEXT = { deferTaskRefresh: true, needsDecisionRender: false, needsHomeRefresh: false };
@@ -3367,6 +3450,7 @@ function ensureTriggersInstalled(opts) {
 // shows the status so they can verify it took.
 function setUpTriggers() {
   ensureTriggersInstalled({ force: true, silent: true });
+  checkTriggerHealth();
   showTriggerStatus();
 }
 
@@ -3389,6 +3473,21 @@ function showTriggerStatus() {
   lines.push('Note: the always-on simple onEdit/onOpen triggers need no setup;');
   lines.push('only the installable ones above require this one-time attach.');
   SpreadsheetApp.getUi().alert('The Planner \u2014 trigger status', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function checkTriggerHealth() {
+  var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
+  var missing = [];
+  if (!editOn) missing.push(EDIT_TRIGGER_HANDLER);
+  TIME_TRIGGER_SPECS.forEach(function (spec) {
+    if (!triggerExists(spec.handler, ScriptApp.EventType.CLOCK)) missing.push(spec.handler);
+  });
+  var props = maintenanceProps();
+  props.setProperty('lastTriggerHealthCheckAt', new Date().toISOString());
+  props.setProperty('lastTriggerHealthStatus', missing.length ? 'Missing: ' + missing.join(', ') : 'OK');
+  if (missing.length) recordMaintenanceError('triggerHealth', 'Missing trigger(s): ' + missing.join(', '));
+  else props.deleteProperty('lastMaintenanceError');
+  return { ok: !missing.length, missing: missing };
 }
 
 // Back-compat shims: older menu wiring / muscle memory called these names.
@@ -4311,6 +4410,7 @@ function endOfDayReconcile() {
   if (!sheet) { SpreadsheetApp.getUi().alert('Today tab not found.'); return; }
   var ui = SpreadsheetApp.getUi();
   var doneCount = 0, carried = 0, deferred = 0, skipped = 0;
+  var unfinished = [];
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
     var status = String(sheet.getRange(r, COLS.TODAY.STATUS).getValue());
@@ -4318,18 +4418,42 @@ function endOfDayReconcile() {
     if (!task) continue;
     if (status === 'Done') { doneCount++; continue; }
     if (status === 'Skipped' || status === 'Deferred') continue;
-    var resp = ui.alert('End-of-day: unfinished', '"' + task + '"\n\nYES = carry over  NO = defer 3 days  CANCEL = skip', ui.ButtonSet.YES_NO_CANCEL);
+    unfinished.push({ row: r, task: task, todoId: todoId });
+  }
+  if (!unfinished.length) {
+    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | No unfinished tasks to reconcile.', ui.ButtonSet.OK);
+    return;
+  }
+  var summary = ui.alert('End-of-day: ' + unfinished.length + ' unfinished task(s)',
+    'YES = carry all over\nNO = defer all 3 days\nCANCEL = choose task by task',
+    ui.ButtonSet.YES_NO_CANCEL);
+  if (summary === ui.Button.YES) {
+    carried = unfinished.length;
+    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: 0 | Skipped: 0', ui.ButtonSet.OK);
+    return;
+  }
+  if (summary === ui.Button.NO) {
+    unfinished.forEach(function (item) {
+      deferred++;
+      if (item.todoId) completeTodo(String(item.todoId), 'Deferred', { source: 'eod' });
+      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
+    });
+    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: 0 | Deferred: ' + deferred + ' | Skipped: 0', ui.ButtonSet.OK);
+    return;
+  }
+  unfinished.forEach(function (item) {
+    var resp = ui.alert('End-of-day: unfinished', '"' + item.task + '"\n\nYES = carry over  NO = defer 3 days  CANCEL = skip', ui.ButtonSet.YES_NO_CANCEL);
     if (resp === ui.Button.YES) { carried++; }
     else if (resp === ui.Button.NO) {
       deferred++;
-      if (todoId) completeTodo(String(todoId), 'Deferred', { source: 'eod' });
-      sheet.getRange(r, COLS.TODAY.STATUS).setValue('Deferred');
+      if (item.todoId) completeTodo(String(item.todoId), 'Deferred', { source: 'eod' });
+      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
     } else {
       skipped++;
-      if (todoId) completeTodo(String(todoId), 'Skipped', { source: 'eod' });
-      sheet.getRange(r, COLS.TODAY.STATUS).setValue('Skipped');
+      if (item.todoId) completeTodo(String(item.todoId), 'Skipped', { source: 'eod' });
+      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Skipped');
     }
-  }
+  });
   ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: ' + deferred + ' | Skipped: ' + skipped, ui.ButtonSet.OK);
 }
 
@@ -4352,17 +4476,20 @@ function checkMorningCarryForward() {
 }
 
 function middayNudge() {
-  var sheet = getSheet('Today');
-  if (!sheet) return;
-  var pending = 0;
-  for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
-    var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
-    var status = String(sheet.getRange(r, COLS.TODAY.STATUS).getValue());
-    if (task && (status === 'Planned' || status === 'In progress')) pending++;
-  }
-  if (pending >= 5) SpreadsheetApp.getActiveSpreadsheet().toast(pending + ' items still open — realistic for today, or should some defer?', 'The Planner · Mid-day check', 8);
+  return withDocumentLock(function () {
+    var sheet = getSheet('Today');
+    if (!sheet) return;
+    var pending = 0;
+    for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
+      var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
+      var status = String(sheet.getRange(r, COLS.TODAY.STATUS).getValue());
+      if (task && (status === 'Planned' || status === 'In progress')) pending++;
+    }
+    checkTriggerHealth();
+    recordMaintenanceHeartbeat('lastMiddayNudgeAt');
+    if (pending >= 5) SpreadsheetApp.getActiveSpreadsheet().toast(pending + ' items still open - realistic for today, or should some defer?', 'The Planner - Mid-day check', 8);
+  }, { label: 'middayNudge', timeoutMs: 30000, failOpen: false });
 }
-
 // =============================================================
 // HOME — orientation only. No data entry lives here.
 //
@@ -4587,22 +4714,39 @@ function refreshHome() {
   sheet.setTabColor(ZONE_WORK_COLOR);
 
   sheet.getRange(HOME_TITLE_ROW, 2, 1, 5).merge().setValue('The Planner').setFontSize(20).setFontWeight('bold').setFontColor('#1B474D');
+  var editReady = false;
+  try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
+  if (!editReady) {
+    sheet.getRange(3, 2, 1, 7).merge()
+      .setValue('Setup required: Home actions are inactive until triggers are installed. Use The Planner > Triggers & setup > Set up / verify triggers.')
+      .setFontWeight('bold').setFontColor('#964219').setBackground('#FCE8E6').setWrap(true);
+  }
 
   // --- Onboarding card (§1.1) ---
   var profile = getSetupProfile();
   if (!profile) {
-    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    if (editReady) {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    } else {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
+    }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue('Start onboarding').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
+      .setValue(editReady ? 'Start onboarding' : 'Install triggers to start onboarding')
+      .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue('Use the checkbox above or The Planner → Set up / redo onboarding. The popup writes source rows and refreshes Today.')
+      .setValue(editReady ? 'Use the checkbox above or The Planner → Set up / redo onboarding. The popup writes source rows and refreshes Today.' : 'Run The Planner > Triggers & setup > Set up / verify triggers, then come back here.')
       .setWrap(true).setFontColor('#5F625E');
   } else if (shouldShowSetupCard(profile)) {
-    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    if (editReady) {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    } else {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
+    }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue('Continue onboarding').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
+      .setValue(editReady ? 'Continue onboarding' : 'Install triggers to continue onboarding')
+      .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     var nextItem = nextIncompleteChecklistItem(profile);
-    var detail = setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '');
+    var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Triggers & setup > Set up / verify triggers, then continue onboarding.';
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue(detail).setWrap(true).setFontColor('#5F625E');
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
@@ -4610,6 +4754,12 @@ function refreshHome() {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1).setValue('Reset').setFontSize(9).setFontColor('#7A7974');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue('Welcome back. Let’s get you organised for today.').setFontColor('#5F625E');
+  }
+  var guideSheetForHome = getSheet('Guide');
+  if (guideSheetForHome) {
+    sheet.getRange(HOME_WELCOME_ROW, 7)
+      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Open Guide")')
+      .setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
   }
 
   // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
@@ -4632,7 +4782,14 @@ function refreshHome() {
   if (todaySheetForLink) {
     sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","Start working ▸")').setFontColor('#01696F').setFontWeight('bold');
   }
-  sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(taskQueueSummary()).setFontSize(9).setFontColor('#8A8D87');
+  var planSubline = taskQueueSummary();
+  if (!planCounts.built || planCounts.commit === 0) planSubline = planSubline + ' Open the Guide if you need the first-run flow.';
+  sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(planSubline).setFontSize(9).setFontColor('#8A8D87');
+  if (guideSheetForHome && (!planCounts.built || planCounts.commit === 0)) {
+    sheet.getRange(HOME_PLAN_SUBLINE_ROW, 7)
+      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Guide")')
+      .setFontSize(9).setFontColor('#01696F');
+  }
 
   // --- Upcoming (§1.5) — read-only, no cascades ---
   sheet.getRange(HOME_UPCOMING_HEADER_ROW, 2, 1, 5).merge().setValue('Upcoming').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
@@ -4649,12 +4806,17 @@ function refreshHome() {
   }
 
   // --- Refresh (§1.6) — demoted utility control, folds in trigger status ---
-  var editReady = false;
-  try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
     .setValue('Refresh & verify triggers — Capture: ' + (editReady ? 'Ready' : 'Trigger setup needed'))
     .setFontSize(9).setFontColor('#8A8D87');
+
+  var maint = readMaintenanceHealth();
+  if (maint.error || maint.stale) {
+    var maintText = maint.error ? ('Maintenance issue: ' + maint.error) : 'Maintenance has not run in 2 days. Run Refresh & verify triggers.';
+    sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
+      .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
+  }
 
   sheet.getRange(HOME_LAST_REFRESHED_ROW, 2, 1, 3).merge().setValue('Last refreshed: ' + Utilities.formatDate(new Date(), plannerTimeZone(), 'yyyy-MM-dd HH:mm'))
     .setFontSize(9).setFontColor('#BAB9B4').setFontStyle('italic');
@@ -4720,6 +4882,15 @@ function resetPlannerDataForOnboarding() {
   bootstrapToday();
 }
 
+function plannerDataRowCount() {
+  var tabs = ['Sectors', 'Organisations', 'Jobs', 'People', 'Conversations', 'Interviews', 'Tasks', 'Decisions'];
+  return tabs.reduce(function (count, name) {
+    var sheet = getSheet(name);
+    if (!sheet) return count;
+    return count + Math.max(sheet.getLastRow() - 1, 0);
+  }, 0);
+}
+
 function runSetupInterview() {
   var html = HtmlService.createHtmlOutput(buildSetupHtml()).setWidth(640).setHeight(680).setTitle('Set up The Planner');
   SpreadsheetApp.getUi().showModalDialog(html, 'Set up The Planner');
@@ -4727,6 +4898,9 @@ function runSetupInterview() {
 
 function buildSetupHtml() {
   var roundTypes = DROPDOWNS.ROUND_TYPE, domain = DROPDOWNS.DOMAIN_READINESS, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE;
+  var existingRows = plannerDataRowCount();
+  var setupIntro = existingRows ? 'Redoing setup will clear existing planner data first, then capture your starting facts and write them to the right tabs.' : 'This captures your starting facts and writes them to the right tabs.';
+  var setupButton = existingRows ? 'Save (clears existing planner data first)' : 'Save setup';
   return '' +
     '<style>' +
     'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
@@ -4745,7 +4919,7 @@ function buildSetupHtml() {
     '.warn{font-size:11px;color:#964219;margin-top:4px;}' +
     '</style>' +
     '<h2>Set up your planner</h2>' +
-    '<p>This clears any existing planner data first, then captures your starting facts here and writes them to the right tabs.</p>' +
+    '<p>' + setupIntro + '</p>' +
     '<div id="q1" class="step active">' +
     '  <p><strong>1 of 3</strong> Where are you starting from?</p>' +
     '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Start with a broad sector, then sub-sectors, then organisations.</small></button>' +
@@ -4759,21 +4933,22 @@ function buildSetupHtml() {
     '<div id="q3" class="step">' +
     '  <p id="q3title"><strong>3 of 3</strong></p>' +
     '  <form id="captureForm"></form>' +
-    '  <button class="primary" type="button" onclick="submitSetup()">Save (clears existing data first)</button>' +
+    '  <button class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
     '  <button class="back" type="button" onclick="showStep(2)">Back</button>' +
     '  <button class="skip" type="button" onclick="skipSetup()">Skip setup</button>' +
     '  <div id="status"></div>' +
     '</div>' +
     '<script>' +
     'var goal="", entryPoint="";' +
+    'var existingRows=' + existingRows + ';' +
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', domainReadiness=' + JSON.stringify(domain) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ';' +
     'var forms={' +
     ' sectors:{title:"Add your first sector(s)",fields:[{k:"sectorNames",l:"Sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
-    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text"},{k:"jobTitle",l:"Job title / opportunity",t:"text"},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness}]},' +
-    ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text"},{k:"jobTitle",l:"Job title / opportunity",t:"text"},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
-    ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text"},{k:"jobTitle",l:"Job title / opportunity",t:"text"},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
-    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text"},{k:"org",l:"Organisation",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"]},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"]},{k:"outreachDate",l:"When did you reach out?",t:"date"},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"]},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date"},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
-    ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated"},{k:"sector",l:"Sector, if known",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"]},{k:"status",l:"Status",t:"select",o:orgStatuses}]},' +
+    ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true}]},' +
+    ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
+    ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
+    ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation",t:"text",req:true},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Relationship type",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"outreachDate",l:"When did you reach out?",t:"date"},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date"},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
+    ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector, if known",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
     'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
@@ -4790,15 +4965,17 @@ function buildSetupHtml() {
     ' opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});' +
     ' showStep(2);}' +
     'function renderForm(ep){var cfg=forms[ep];document.getElementById("q3title").innerHTML="<strong>3 of 3</strong> "+cfg.title;var f=document.getElementById("captureForm");f.innerHTML="";' +
-    ' cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l;var input;' +
+    ' cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l+(field.req?" *":"");var input;' +
     '  if(field.t==="textarea"){input=document.createElement("textarea");}' +
-    '  else if(field.t==="select"){input=document.createElement("select");(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});}' +
+    '  else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     '  else{input=document.createElement("input");input.type=field.t||"text";}' +
-    '  input.name=field.k;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
+    '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
     ' showStep(3);}' +
-    'function submitSetup(){var fields={};Array.prototype.forEach.call(document.getElementById("captureForm").elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    ' document.getElementById("status").textContent="Clearing existing data and saving...";' +
-    ' google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
+    'function submitSetup(){var fields={},form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]};Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
+    ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    ' if(existingRows>0&&goal!=="skipped"&&entryPoint!=="skip"&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
+    ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
+    ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
@@ -4839,7 +5016,7 @@ function setupChecklistFor(entryPoint, fields) {
 }
 
 function processOnboardingCapture(goal, entryPoint, fields) {
-  if (goal === 'skipped' || entryPoint === 'skip') return { message: 'Setup skipped. You can run onboarding again from the menu any time.' };
+  if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped. You can run onboarding again from the menu any time.');
   if (entryPoint === 'sectors') return processSectorOnboarding(fields);
   if (entryPoint === 'interviews') return processInterviewOnboarding(fields);
   if (entryPoint === 'applications') return processApplicationOnboarding(fields);
@@ -4847,6 +5024,31 @@ function processOnboardingCapture(goal, entryPoint, fields) {
   if (entryPoint === 'people') return processPeopleOnboarding(fields);
   if (entryPoint === 'orgs') return processOrgOnboarding(fields);
   return processNotSureOnboarding(fields);
+}
+
+function validateOnboardingPayload(goal, entryPoint, fields) {
+  fields = fields || {};
+  if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped.');
+  if (entryPoint === 'applications') {
+    if (!fields.org) return failResult('I need the organisation name to capture an application.', 'org', 'MISSING_ORG');
+    if (!fields.jobTitle) return failResult('I need at least a job title to capture an application.', 'jobTitle', 'MISSING_JOB_TITLE');
+  }
+  if (entryPoint === 'jobs') {
+    if (!fields.jobTitle) return failResult('I need at least a job title to capture a job.', 'jobTitle', 'MISSING_JOB_TITLE');
+    if (!fields.org) return failResult('I need the organisation name to capture a job.', 'org', 'MISSING_ORG');
+  }
+  if (entryPoint === 'interviews') {
+    if (!fields.jobTitle) return failResult('I need at least a job title to capture an interview.', 'jobTitle', 'MISSING_JOB_TITLE');
+    if (!fields.org) return failResult('I need the organisation name to capture an interview.', 'org', 'MISSING_ORG');
+  }
+  if (entryPoint === 'people') {
+    if (!fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
+    if (!fields.org) return failResult('I need the organisation name to capture this person.', 'org', 'MISSING_ORG');
+  }
+  if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
+    return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
+  }
+  return okResult('Valid.');
 }
 
 // Sector onboarding uses the exact same upsertSectorBranch/
@@ -4857,54 +5059,56 @@ function processSectorOnboarding(fields, source) {
   var sectors = splitInputList(fields.sectorNames);
   if (!sectors.length) {
     fireSectorOnlyTask('your first sector');
-    return { message: 'Added the sector-picking task to Today.' };
+    return okResult('Added the sector-picking task to Today.');
   }
-  sectors.slice(0, 2).forEach(function (sector) {
+  sectors.forEach(function (sector, idx) {
     var branch = upsertSectorBranch({ sector: sector, source: source, createExpansionDecision: false });
-    fireSectorOnlyTask(branch);
+    if (idx < 2) fireSectorOnlyTask(branch);
   });
-  return { message: 'Added ' + Math.min(sectors.length, 2) + ' sector(s) and the sub-sector task.' };
+  var warnings = sectors.length > 2 ? ['Created all sectors; list-sub-sectors tasks were created for the first 2.'] : [];
+  return okResult('Added ' + sectors.length + ' sector(s) and the sub-sector task.', { warnings: warnings });
 }
 
 function processApplicationOnboarding(fields) {
-  if (!fields.org) return { message: 'I need the organisation name to capture an application.' };
+  if (!fields.org) return failResult('I need the organisation name to capture an application.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
-  if (!fields.jobTitle) return { message: 'I need at least a job title to capture an application.' };
+  if (!fields.jobTitle) return failResult('I need at least a job title to capture an application.', 'jobTitle', 'MISSING_JOB_TITLE');
   var jobId = writeJobRow(fields.jobTitle, org, 'Applied');
   fireJobStatusChanged(jobId, '', 'Applied', { realDate: fields.appliedDate || today() });
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
-  return { message: 'Captured the application and created the response-check follow-up.' };
+  return okResult('Captured the application and created the response-check follow-up.');
 }
 
 function processJobOnboarding(fields) {
-  if (!fields.jobTitle) return { message: 'I need at least a job title to capture a job.' };
-  if (!fields.org) return { message: 'I need the organisation name to capture a job.' };
+  if (!fields.jobTitle) return failResult('I need at least a job title to capture a job.', 'jobTitle', 'MISSING_JOB_TITLE');
+  if (!fields.org) return failResult('I need the organisation name to capture a job.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var jobId = writeJobRow(fields.jobTitle, org, 'Want to apply');
   if (fields.deadline) getSheet('Jobs').getRange(getJobRowById(jobId).row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
   fireJobStatusChanged(jobId, '', 'Want to apply', {});
-  return { message: 'Captured the job and routed the next application work to Today/Decisions.' };
+  return okResult('Captured the job and routed the next application work to Today/Decisions.');
 }
 
 function processInterviewOnboarding(fields) {
-  if (!fields.jobTitle) return { message: 'I need at least a job title to capture an interview.' };
-  if (!fields.org) return { message: 'I need the organisation name to capture an interview.' };
+  if (!fields.jobTitle) return failResult('I need at least a job title to capture an interview.', 'jobTitle', 'MISSING_JOB_TITLE');
+  if (!fields.org) return failResult('I need the organisation name to capture an interview.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var jobId = writeJobRow(fields.jobTitle, org, 'Interviewing');
   fireJobStatusChanged(jobId, '', 'Interviewing', {
     forceRound: true,
     roundDetails: { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
   });
-  return { message: 'Captured the interview and created the prep path.' };
+  return okResult('Captured the interview and created the prep path.');
 }
 
 // v7.1: relationship type is now captured and written to People if the
 // user supplied one (fields.relType), instead of being silently dropped.
 function processPeopleOnboarding(fields) {
-  if (!fields.name) return { message: 'I need at least a name to capture this person.' };
-  if (!fields.org) return { message: 'I need the organisation name to capture this person.' };
+  if (!fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
+  if (!fields.org) return failResult('I need the organisation name to capture this person.', 'org', 'MISSING_ORG');
   var org = fields.org ? createNameOnlyOrg(fields.org, { status: 'Mapped', stub: true }) : null;
+  var existingPerson = findPersonByNameOrg(fields.name, org ? org.name : '');
   var reached = String(fields.reachedOut || 'No') === 'Yes';
   var replied = String(fields.replied || 'No') === 'Yes';
   var stage = 'Identified', realDate = null;
@@ -4922,7 +5126,7 @@ function processPeopleOnboarding(fields) {
   }
   firePersonStageChanged(personId, '', stage, { realDate: realDate });
   if (fields.notes) appendNoteFlag(getSheet('People'), getPersonRowById(personId).row, COLS.PEOPLE.NOTES, fields.notes);
-  return { message: 'Captured the person and routed the outreach/follow-up state.' };
+  return okResult((existingPerson ? 'Updated existing' : 'Created') + ' person: ' + fields.name + ' at ' + (org ? org.name : fields.org) + '. Routed the outreach/follow-up state.');
 }
 
 // v7.1: honors the Status the user explicitly picked (Mapped/Active/
@@ -4931,34 +5135,42 @@ function processPeopleOnboarding(fields) {
 // fireOrgActiveCascade — never a direct search Task.
 function processOrgOnboarding(fields) {
   var names = splitInputList(fields.orgNames);
-  if (!names.length) return { message: 'I need at least one organisation name to capture this.' };
+  if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
+  var created = 0, reused = 0;
   names.forEach(function (name) {
     var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B' });
+    if (org && org.existing) reused++; else if (org) created++;
     applyOrganisationStatusFromCapture(org, status, fields.tier || 'B');
     if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
   });
   var suffix = status === 'Active' ? ' Marked Active — a Decision to find people/scan jobs was created for each (not a direct Task).' : ' Status: ' + status + '.';
-  return { message: 'Captured ' + names.length + ' organisation(s).' + suffix };
+  return okResult('Captured ' + names.length + ' organisation(s): ' + created + ' new, ' + reused + ' existing.' + suffix);
 }
 
 function processNotSureOnboarding(fields) {
   appendTodo('Clarify what is most live in the search', 'None', '', '', 'Admin', 'Not started', '', '15 min',
     fields.notes || 'Pick the most time-sensitive object: interview, application, job, person, organisation, or sector.');
-  return { message: 'Added a light clarification task to Today.' };
+  return okResult('Added a light clarification task to Today.');
 }
 
 function writeJobRow(title, org, status) {
   var sheet = getSheet('Jobs');
   var existing = findJobByTitleOrg(title, org ? org.name : '');
-  if (existing) return existing.data[COLS.JOBS.ID - 1];
+  if (existing) {
+    var normalizedStatus = normalizeJobStatus(status);
+    if (normalizedStatus && normalizeJobStatus(existing.data[COLS.JOBS.STATUS - 1]) !== normalizedStatus) {
+      sheet.getRange(existing.row, COLS.JOBS.STATUS).setValue(normalizedStatus);
+    }
+    return existing.data[COLS.JOBS.ID - 1];
+  }
   var id = nextId(sheet, COLS.JOBS.ID, 'JOB');
   var row = new Array(HEADERS.Jobs.length).fill('');
   row[COLS.JOBS.ID - 1] = id;
   row[COLS.JOBS.OPPORTUNITY - 1] = title;
   row[COLS.JOBS.ORG - 1] = org ? org.name : '';
   row[COLS.JOBS.ORG_ID - 1] = org ? org.id : '';
-  row[COLS.JOBS.STATUS - 1] = status;
+  row[COLS.JOBS.STATUS - 1] = normalizeJobStatus(status) || status;
   sheet.appendRow(row);
   return id;
 }
@@ -4966,7 +5178,10 @@ function writeJobRow(title, org, status) {
 function writePersonRow(name, org, role) {
   var sheet = getSheet('People');
   var existing = findPersonByNameOrg(name, org ? org.name : '');
-  if (existing) return existing.data[COLS.PEOPLE.ID - 1];
+  if (existing) {
+    if (role && !existing.data[COLS.PEOPLE.ROLE - 1]) sheet.getRange(existing.row, COLS.PEOPLE.ROLE).setValue(role);
+    return existing.data[COLS.PEOPLE.ID - 1];
+  }
   var id = nextId(sheet, COLS.PEOPLE.ID, 'PER');
   var row = new Array(HEADERS.People.length).fill('');
   row[COLS.PEOPLE.ID - 1] = id;
@@ -4982,27 +5197,33 @@ function writePersonRow(name, org, role) {
 // Called from the popup. Wipes existing data (unless skipped), captures
 // the new facts, rebuilds the checklist, and refreshes Today/Home.
 function completeSetupFromPopup(payload) {
-  payload = payload || {};
-  var goal = payload.goal || 'skipped';
-  var entryPoint = payload.entryPoint || 'skip';
-  var fields = payload.fields || {};
-  if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
+  return withDocumentLock(function () {
+    payload = payload || {};
+    var goal = payload.goal || 'skipped';
+    var entryPoint = payload.entryPoint || 'skip';
+    var fields = payload.fields || {};
+    var validation = validateOnboardingPayload(goal, entryPoint, fields);
+    if (!validation.ok) return validation;
+    if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
 
-  var result = processOnboardingCapture(goal, entryPoint, fields);
-  var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
-  saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
+    var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
+    if (!result.ok) return result;
+    var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
+    saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
 
-  populateToday();
-  refreshHome();
-  colorCodeManualFields();
-  applyStatusColorCoding();
-  applyColumnLayout();
-  applyColumnWidths();
+    populateToday();
+    refreshHome();
+    colorCodeManualFields();
+    applyStatusColorCoding();
+    applyColumnLayout();
+    applyColumnWidths();
 
-  var todaySheet = getSheet('Today');
-  if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
-  var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
-  return (result.message || 'Onboarding saved.') + suffix;
+    var todaySheet = getSheet('Today');
+    if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
+    var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
+    result.message = (result.message || 'Onboarding saved.') + suffix;
+    return result;
+  }, { label: 'completeSetupFromPopup', timeoutMs: 30000 });
 }
 
 // =============================================================
@@ -5031,51 +5252,51 @@ function captureConfig(captureType) {
     'Find organisations': {
       title: 'Add organisations found from exploration',
       fields: [{ k: 'sector', l: 'Sector', t: 'text' }, { k: 'subsector', l: 'Sub-sector', t: 'text' },
-      { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated' }]
+      { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated', req: true }]
     },
     'Add/update organisation': {
       title: 'Add/update organisation',
-      fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated' },
+      fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
       { k: 'sector', l: 'Sector, if known', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
-      { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'] }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS }]
+      { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
       title: 'Add/update job',
-      fields: [{ k: 'org', l: 'Organisation', t: 'text' }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text' },
-      { k: 'status', l: 'Status', t: 'select', o: jobStatuses }, { k: 'deadline', l: 'Deadline, if any', t: 'date' },
+      fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
+      { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' }, { k: 'deadline', l: 'Deadline, if any', t: 'date' },
       { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date' }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
-      { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes },
-      { k: 'interviewDate', l: 'Interview date, if known', t: 'date' }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain }]
+      { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes, blank: true, showIf: { k: 'status', v: 'Interviewing' } },
+      { k: 'interviewDate', l: 'Interview date, if known', t: 'date', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain, blank: true, showIf: { k: 'status', v: 'Interviewing' } }]
     },
     'Application update': {
       title: 'Application update',
-      fields: [{ k: 'org', l: 'Organisation', t: 'text' }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text' },
-      { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'] },
+      fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
+      { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'], blank: true, req: true },
       { k: 'appliedDate', l: 'Applied date, if missing', t: 'date' }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'] },
       { k: 'outcome', l: 'Outcome / latest update', t: 'text' }]
     },
     'Add/update person': {
       title: 'Add/update person',
-      fields: [{ k: 'name', l: 'Name', t: 'text' }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'role', l: 'Role/title, if known', t: 'text' },
-      { k: 'relType', l: 'Relationship type', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE },
-      { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'] }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'] },
-      { k: 'outreachDate', l: 'When did you reach out?', t: 'date' },
-      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'] },
-      { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date' }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
+      fields: [{ k: 'name', l: 'Name', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'role', l: 'Role/title, if known', t: 'text' },
+      { k: 'relType', l: 'Relationship type', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
+      { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
+      { k: 'outreachDate', l: 'When did you reach out?', t: 'date', showIf: { k: 'reachedOut', v: 'Yes' } },
+      { k: 'whereNow', l: 'If they replied, where are things now?', t: 'select', o: ['Need to respond / arrange next step', 'Conversation scheduled', 'Already spoke'], blank: true, showIf: { k: 'replied', v: 'Yes' } },
+      { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date', showIfAny: [{ k: 'whereNow', v: 'Conversation scheduled' }, { k: 'whereNow', v: 'Already spoke' }] }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
     },
     'Add/update conversation': {
       title: 'Add/update conversation',
-      fields: [{ k: 'person', l: 'Person', t: 'text' }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
-      { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME }]
+      fields: [{ k: 'person', l: 'Person', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
+      { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true }]
     },
     'Add/update interview': {
       title: 'Add/update interview',
-      fields: [{ k: 'org', l: 'Organisation', t: 'text' }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text' },
-      { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes },
-      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain },
-      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME }]
+      fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
+      { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes, blank: true },
+      { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'domainReadiness', l: 'Domain readiness', t: 'select', o: domain, blank: true },
+      { k: 'officialOutcome', l: 'Official outcome, if known', t: 'select', o: DROPDOWNS.OFFICIAL_OUTCOME, blank: true }]
     },
-    'Task completed / blocked': { title: 'Task completed / blocked', fields: [{ k: 'taskNotes', l: 'What changed?', t: 'textarea', p: 'If a task is done, tick it Done on Today instead. Use this for a blocker or a new follow-up.' }] }
+    'Task completed / blocked': { title: 'Task completed / blocked', fields: [{ k: 'taskNotes', l: 'What changed?', t: 'textarea', p: 'If a task is done, tick it Done on Today instead. Use this for a blocker or a new follow-up.', req: true }] }
   };
   return config[captureType] || config['Task completed / blocked'];
 }
@@ -5094,14 +5315,17 @@ function buildCaptureHtml(captureType) {
     '<h2 id="title"></h2><p>This updates the matching source tab in the background, then refreshes Today.</p>' +
     '<form id="form"></form><button class="primary" type="button" onclick="submitCapture()">Save</button><div id="status"></div>' +
     '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.title;var f=document.getElementById("form");' +
-    'cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l;var input;' +
+    'cfg.fields.forEach(function(field){var label=document.createElement("label");label.textContent=field.l+(field.req?" *":"");var input;' +
     'if(field.t==="textarea"){input=document.createElement("textarea");}' +
-    'else if(field.t==="select"){input=document.createElement("select");(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});}' +
+    'else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     'else{input=document.createElement("input");input.type=field.t||"text";}' +
-    'input.name=field.k;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
-    'function submitCapture(){var fields={};Array.prototype.forEach.call(document.getElementById("form").elements,function(el){if(el.name)fields[el.name]=el.value;});' +
-    'document.getElementById("status").textContent="Saving...";' +
-    'google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
+    'input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
+    'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx],show=true;if(field.showIf){show=f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;}if(field.showIfAny){show=field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});}label.style.display=show?"block":"none";});}' +
+    'Array.prototype.forEach.call(f.elements,function(el){el.onchange=updateConditional;});updateConditional();' +
+    'function submitCapture(){var fields={},form=document.getElementById("form"),status=document.getElementById("status");Array.prototype.forEach.call(form.elements,function(el){if(el.name)fields[el.name]=el.value;});' +
+    'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i],label=f.children[i],visible=!label||label.style.display!=="none";if(visible&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
+    'status.textContent="Saving...";' +
+    'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
     '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
     '.completeCaptureFromPopup({captureType:cfg.captureType,fields:fields});}</script>';
 }
@@ -5113,56 +5337,81 @@ function runCapturePopup(captureType) {
 }
 
 function completeCaptureFromPopup(payload) {
-  payload = payload || {};
-  var message = processCapturePayload(payload.captureType, payload.fields || {});
-  populateToday();
-  refreshHome();
-  renderTodayDecisionCards();
-  colorCodeManualFields();
-  applyStatusColorCoding();
-  applyColumnLayout();
-  applyColumnWidths();
-  SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated — Tasks and Today refreshed.', 'The Planner', 4);
-  return message || 'Saved and refreshed Today.';
+  return withDocumentLock(function () {
+    payload = payload || {};
+    var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
+    if (!result.ok) return result;
+    populateToday();
+    refreshHome();
+    renderTodayDecisionCards();
+    colorCodeManualFields();
+    SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated - Tasks and Today refreshed.', 'The Planner', 4);
+    return result;
+  }, { label: 'completeCaptureFromPopup', timeoutMs: 30000 });
 }
-
 function processCapturePayload(captureType, fields) {
-  if (captureType === 'Explore sectors') return processSectorOnboarding(fields, 'home_update').message;
+  fields = fields || {};
+  if (captureType === 'Explore sectors') return processSectorOnboarding(fields, 'home_update');
   if (captureType === 'Find organisations') {
-    var names = splitInputList(fields.orgNames);
-    names.forEach(function (name) {
+    var namesNew = splitInputList(fields.orgNames);
+    if (!namesNew.length) return failResult('I need at least one organisation name.', 'orgNames', 'MISSING_ORG');
+    var createdFound = 0, reusedFound = 0;
+    namesNew.forEach(function (name) {
       var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B' });
+      if (org && org.existing) reusedFound++; else if (org) createdFound++;
       if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
     });
-    return 'Captured ' + names.length + ' organisation(s) found from exploration.';
+    return okResult('Captured ' + namesNew.length + ' organisation(s) found from exploration: ' + createdFound + ' new, ' + reusedFound + ' existing.');
   }
-  if (captureType === 'Add/update organisation') return processOrgOnboarding(fields).message;
+  if (captureType === 'Add/update organisation') return processOrgOnboarding(fields);
+  if (captureType === 'Application update' && !fields.status) return failResult('Pick the current application status.', 'status', 'MISSING_STATUS');
   if (captureType === 'Add/update job' || captureType === 'Application update') return processJobCapture(fields);
-  if (captureType === 'Add/update person') return processPeopleOnboarding(fields).message;
-  if (captureType === 'Add/update conversation') {
-    var org = fields.org ? createNameOnlyOrg(fields.org, { status: 'Mapped', stub: true }) : null;
-    var person = findPersonByNameOrg(fields.person, org ? org.name : '');
-    var personId = person ? person.data[COLS.PEOPLE.ID - 1] : writePersonRow(fields.person || 'Unknown', org, '');
-    appendInteraction(personId, fields.person || '', org ? org.name : (fields.org || ''), fields.date || today(), 'Other', fields.notes || '', fields.outcome || 'Useful');
-    if (fields.outcome) {
-      var sheet = getSheet('Conversations');
-      onEditInteractions(sheet, sheet.getLastRow(), COLS.INTERACTIONS.OUTCOME, fields.outcome);
-    }
-    return 'Captured the conversation update.';
-  }
-  if (captureType === 'Add/update interview') return processInterviewOnboarding(fields).message;
+  if (captureType === 'Add/update person') return processPeopleOnboarding(fields);
+  if (captureType === 'Add/update conversation') return processConversationCapture(fields);
+  if (captureType === 'Add/update interview') return processInterviewOnboarding(fields);
   if (captureType === 'Task completed / blocked') {
+    if (!fields.taskNotes) return failResult('Tell me what changed or what is blocked.', 'taskNotes', 'MISSING_TASK_NOTES');
     appendTodo('Resolve blocker / next action', 'None', '', '', 'Admin', 'Not started', '', '15 min', fields.taskNotes || '');
-    return 'Captured the blocker as a task.';
+    return okResult('Captured the blocker as a task.');
   }
-  return 'Nothing captured.';
+  return failResult('Nothing captured.', '', 'NO_CAPTURE_TYPE');
+}
+function processConversationCapture(fields) {
+  fields = fields || {};
+  if (!fields.person) return failResult("I need the person's name.", 'person', 'MISSING_PERSON');
+  var org = fields.org ? createNameOnlyOrg(fields.org, { status: 'Mapped', stub: true }) : null;
+  var selection = fields.org ? fields.person + ' (' + (org ? org.name : fields.org) + ')' : fields.person;
+  var resolved = resolveInteractionPersonSelection(selection);
+  if (resolved.ambiguous) return failResult('More than one matching person. Add the organisation or choose the exact person from Conversations.', 'person', 'AMBIGUOUS_PERSON');
+  var person = resolved.person;
+  var createdPerson = false;
+  if (!person) {
+    if (!fields.org) return failResult('I need the organisation before creating a new person for this conversation.', 'org', 'MISSING_ORG');
+    var newPersonId = writePersonRow(fields.person, org, '');
+    person = getPersonRowById(newPersonId);
+    createdPerson = true;
+  }
+  if (!person) return failResult('I could not resolve that person.', 'person', 'PERSON_NOT_FOUND');
+  var personId = person.data[COLS.PEOPLE.ID - 1];
+  var personName = person.data[COLS.PEOPLE.NAME - 1];
+  var personOrg = person.data[COLS.PEOPLE.ORG - 1] || (org ? org.name : fields.org || '');
+  appendInteraction(personId, personName, personOrg, fields.date || today(), 'Other', fields.notes || '', '');
+  if (fields.outcome) {
+    var sheet = getSheet('Conversations');
+    var interactionRow = sheet.getLastRow();
+    sheet.getRange(interactionRow, COLS.INTERACTIONS.OUTCOME).setValue(fields.outcome);
+    onEditInteractions(sheet, interactionRow, COLS.INTERACTIONS.OUTCOME, fields.outcome);
+  }
+  return okResult('Captured the conversation update for ' + personName + (createdPerson ? ' and created the person row.' : '.'));
 }
 
 function processJobCapture(fields) {
-  if (!fields.jobTitle) return 'I need at least a job title.';
-  if (!fields.org) return 'I need the organisation name before I can route this job/application.';
-  var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
+  if (!fields.jobTitle) return failResult('I need at least a job title.', 'jobTitle', 'MISSING_JOB_TITLE');
+  if (!fields.org) return failResult('I need the organisation name before I can route this job/application.', 'org', 'MISSING_ORG');
   var status = normalizeJobStatus(fields.status || 'Want to apply');
+  if (!status) return failResult('Pick a valid job status.', 'status', 'INVALID_STATUS');
+  var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
+  var existingJob = findJobByTitleOrg(fields.jobTitle, org ? org.name : '');
   var jobId = writeJobRow(fields.jobTitle, org, status);
   var job = getJobRowById(jobId);
   var sheet = getSheet('Jobs');
@@ -5178,9 +5427,8 @@ function processJobCapture(fields) {
     if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
   }
   if (fields.response === 'Yes' || fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
-  return 'Captured the job/application update.';
+  return okResult((existingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
-
 // =============================================================
 // VISUAL POLISH — rich-text guidance headers, manual/auto shading,
 // status colour coding, hidden backend columns, tab zones
@@ -5552,40 +5800,40 @@ function applySheetDropdowns(canonicalName) {
   var maxRow = Math.max(sheet.getMaxRows() - 1, 40);
   switch (canonicalName) {
     case 'Sectors':
-      setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS);
+      setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER);
-      setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS);
+      setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
     case 'People':
-      setDropdown(sheet.getRange(2, COLS.PEOPLE.STAGE, maxRow, 1), DROPDOWNS.PERSON_STAGE);
+      setDropdown(sheet.getRange(2, COLS.PEOPLE.STAGE, maxRow, 1), DROPDOWNS.PERSON_STAGE, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.PEOPLE.REL_TYPE, maxRow, 1), DROPDOWNS.PERSON_REL_TYPE);
       setDropdown(sheet.getRange(2, COLS.PEOPLE.REPLY_RECEIVED, maxRow, 1), DROPDOWNS.YES_NO);
       setDropdown(sheet.getRange(2, COLS.PEOPLE.FOLLOW_UP_SENT, maxRow, 1), DROPDOWNS.YES_NO);
       break;
     case 'Jobs':
-      setDropdown(sheet.getRange(2, COLS.JOBS.STATUS, maxRow, 1), DROPDOWNS.JOB_STATUS);
+      setDropdown(sheet.getRange(2, COLS.JOBS.STATUS, maxRow, 1), DROPDOWNS.JOB_STATUS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.JOBS.RESPONSE, maxRow, 1), DROPDOWNS.YES_NO);
       break;
     case 'Conversations':
       setDropdown(sheet.getRange(2, COLS.INTERACTIONS.TYPE, maxRow, 1), DROPDOWNS.INTERACTION_TYPE);
-      setDropdown(sheet.getRange(2, COLS.INTERACTIONS.OUTCOME, maxRow, 1), DROPDOWNS.INTERACTION_OUTCOME);
+      setDropdown(sheet.getRange(2, COLS.INTERACTIONS.OUTCOME, maxRow, 1), DROPDOWNS.INTERACTION_OUTCOME, { allowInvalid: false });
       refreshInteractionPersonDropdown();
       break;
     case 'Tasks':
       setDropdown(sheet.getRange(2, COLS.TODO.OBJ_TYPE, maxRow, 1), DROPDOWNS.TODO_OBJ_TYPE);
-      setDropdown(sheet.getRange(2, COLS.TODO.WORKFLOW, maxRow, 1), DROPDOWNS.TODO_WORKFLOW);
-      setDropdown(sheet.getRange(2, COLS.TODO.STATUS, maxRow, 1), DROPDOWNS.TODO_STATUS);
+      setDropdown(sheet.getRange(2, COLS.TODO.WORKFLOW, maxRow, 1), DROPDOWNS.TODO_WORKFLOW, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.TODO.STATUS, maxRow, 1), DROPDOWNS.TODO_STATUS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.TODO.TIME_EST, maxRow, 1), DROPDOWNS.TODO_TIME);
-      setDropdown(sheet.getRange(2, COLS.TODO.COMMITMENT_CLASS, maxRow, 1), DROPDOWNS.TODO_COMMITMENT_CLASS);
+      setDropdown(sheet.getRange(2, COLS.TODO.COMMITMENT_CLASS, maxRow, 1), DROPDOWNS.TODO_COMMITMENT_CLASS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.TODO.SOURCE, maxRow, 1), DROPDOWNS.TODO_SOURCE);
       break;
     case 'Interviews':
-      setDropdown(sheet.getRange(2, COLS.ROUNDS.ROUND_TYPE, maxRow, 1), DROPDOWNS.ROUND_TYPE);
-      setDropdown(sheet.getRange(2, COLS.ROUNDS.STATUS, maxRow, 1), DROPDOWNS.ROUND_STATUS);
+      setDropdown(sheet.getRange(2, COLS.ROUNDS.ROUND_TYPE, maxRow, 1), DROPDOWNS.ROUND_TYPE, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.ROUNDS.STATUS, maxRow, 1), DROPDOWNS.ROUND_STATUS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.ROUNDS.DOMAIN_READINESS, maxRow, 1), DROPDOWNS.DOMAIN_READINESS);
-      setDropdown(sheet.getRange(2, COLS.ROUNDS.OFFICIAL_OUTCOME, maxRow, 1), DROPDOWNS.OFFICIAL_OUTCOME);
+      setDropdown(sheet.getRange(2, COLS.ROUNDS.OFFICIAL_OUTCOME, maxRow, 1), DROPDOWNS.OFFICIAL_OUTCOME, { allowInvalid: false });
       break;
     case 'Today':
       // v7.4: per-row, not blanket — Option rows need the smaller
@@ -5593,7 +5841,7 @@ function applySheetDropdowns(canonicalName) {
       applyTodayRowStatusDropdowns(sheet);
       break;
     case 'Decisions':
-      setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, maxRow, 1), DROPDOWNS.DECISION);
+      setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, maxRow, 1), DROPDOWNS.DECISION, { allowInvalid: false });
       break;
   }
 }
@@ -5691,7 +5939,7 @@ function materializeDueTasks() {
 function weeklyReview() {
   // v7.3: guarded — writes stale-nurture flags, so keep it off the daily
   // trigger's toes.
-  return withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000 });
+  return withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000, failOpen: false });
 }
 
 function weeklyReviewImpl() {
@@ -5703,6 +5951,13 @@ function weeklyReviewImpl() {
       var fupDate = pData[i][COLS.PEOPLE.FOLLOW_UP_DATE - 1];
       if (stage === 'Nurture' && fupDate) {
         var daysOver = daysBetween(new Date(fupDate), today());
+        if (daysOver >= 14) {
+          var pId = String(pData[i][COLS.PEOPLE.ID - 1] || '');
+          var hasFollowUp = openTodoExistsForTargetWorkflow('Person', pId, 'Contact follow-up');
+          appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES,
+            hasFollowUp ? '[weekly-review] Nurture overdue; follow-up task already open.' : '[weekly-review] Nurture overdue; no follow-up task found.');
+          continue;
+        }
         if (daysOver >= 14) appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES, '[weekly-review] \u26a0 Stale nurture — overdue ' + daysOver + ' days');
       }
     }
@@ -5714,6 +5969,8 @@ function weeklyReviewImpl() {
   colorCodeManualFields();
   applyColumnWidths();
   refreshAllDropdowns();
+  checkTriggerHealth();
+  recordMaintenanceHeartbeat('lastWeeklyReviewAt');
 }
 
 // v7.6.3 §4.6: an Organisation marked Active is a deliberate choice to
@@ -5782,9 +6039,15 @@ function addNewOrganisation() {
   var nameResp = ui.prompt('Add new organisation', 'Organisation name:', ui.ButtonSet.OK_CANCEL);
   if (nameResp.getSelectedButton() !== ui.Button.OK) return;
   var name = nameResp.getResponseText().trim();
-  if (!name) return;
-  var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B' });
+  if (!name) { ui.alert('Organisation required.', ui.ButtonSet.OK); return; }
+  withDocumentLock(function () {
+    createNameOnlyOrg(name, { status: 'Mapped', tier: 'B' });
+  }, { label: 'addNewOrganisation' });
   ui.alert('Added', 'Organisation "' + name + '" added as Mapped. Set Status to Active from Organisations when you\'re ready to pursue it.', ui.ButtonSet.OK);
+}
+
+function addNewInterview() {
+  runCapturePopup('Add/update interview');
 }
 
 function addNewPerson() {
@@ -5792,12 +6055,15 @@ function addNewPerson() {
   var nameResp = ui.prompt('Add new person', "Person's name:", ui.ButtonSet.OK_CANCEL);
   if (nameResp.getSelectedButton() !== ui.Button.OK) return;
   var name = nameResp.getResponseText().trim();
-  if (!name) return;
-  var orgResp = ui.prompt('Organisation', 'Where do they work? (blank if unknown)', ui.ButtonSet.OK_CANCEL);
+  if (!name) { ui.alert('Name required.', ui.ButtonSet.OK); return; }
+  var orgResp = ui.prompt('Organisation', 'Where do they work?', ui.ButtonSet.OK_CANCEL);
   var orgName = orgResp.getSelectedButton() === ui.Button.OK ? orgResp.getResponseText().trim() : '';
-  var org = orgName ? createNameOnlyOrg(orgName, { status: 'Mapped', stub: true }) : null;
-  var personId = writePersonRow(name, org, '');
-  firePersonStageChanged(personId, '', 'Identified', {});
+  if (!orgName) { ui.alert('Organisation required before routing outreach.', ui.ButtonSet.OK); return; }
+  withDocumentLock(function () {
+    var org = createNameOnlyOrg(orgName, { status: 'Mapped', stub: true });
+    var personId = writePersonRow(name, org, '');
+    firePersonStageChanged(personId, '', 'Identified', {});
+  }, { label: 'addNewPerson' });
   ui.alert('Added', 'Person "' + name + '" added. Draft outreach task created.', ui.ButtonSet.OK);
 }
 
@@ -5806,12 +6072,15 @@ function addNewJob() {
   var titleResp = ui.prompt('Add new job', 'Opportunity title:', ui.ButtonSet.OK_CANCEL);
   if (titleResp.getSelectedButton() !== ui.Button.OK) return;
   var title = titleResp.getResponseText().trim();
-  if (!title) return;
-  var orgResp = ui.prompt('Organisation', 'Which org? (blank if unknown)', ui.ButtonSet.OK_CANCEL);
+  if (!title) { ui.alert('Job title required.', ui.ButtonSet.OK); return; }
+  var orgResp = ui.prompt('Organisation', 'Which org?', ui.ButtonSet.OK_CANCEL);
   var orgName = orgResp.getSelectedButton() === ui.Button.OK ? orgResp.getResponseText().trim() : '';
-  var org = orgName ? createNameOnlyOrg(orgName, { status: 'Mapped', stub: true }) : null;
-  var jobId = writeJobRow(title, org, 'Want to apply');
-  fireJobStatusChanged(jobId, '', 'Want to apply', {});
+  if (!orgName) { ui.alert('Organisation required before routing application work.', ui.ButtonSet.OK); return; }
+  withDocumentLock(function () {
+    var org = createNameOnlyOrg(orgName, { status: 'Mapped', stub: true });
+    var jobId = writeJobRow(title, org, 'Want to apply');
+    fireJobStatusChanged(jobId, '', 'Want to apply', {});
+  }, { label: 'addNewJob' });
   ui.alert('Added', 'Job "' + title + '" added with Status = Want to apply.', ui.ButtonSet.OK);
 }
 
@@ -5820,11 +6089,18 @@ function addNewInteraction() {
   var personResp = ui.prompt('Log conversation', 'Person name (must exist on People):', ui.ButtonSet.OK_CANCEL);
   if (personResp.getSelectedButton() !== ui.Button.OK) return;
   var personName = personResp.getResponseText().trim();
-  var person = findPersonByNameOrg(personName, '');
+  if (!personName) { ui.alert('Name required.', ui.ButtonSet.OK); return; }
+  var orgResp = ui.prompt('Organisation', 'Organisation, for disambiguation:', ui.ButtonSet.OK_CANCEL);
+  var orgName = orgResp.getSelectedButton() === ui.Button.OK ? orgResp.getResponseText().trim() : '';
+  var resolved = resolveInteractionPersonSelection(orgName ? personName + ' (' + orgName + ')' : personName);
+  if (resolved.ambiguous) { ui.alert('Ambiguous person', 'More than one matching person. Re-run and include the organisation.', ui.ButtonSet.OK); return; }
+  var person = resolved.person;
   if (!person) { ui.alert('Not found', '"' + personName + '" not found on People. Add them first.', ui.ButtonSet.OK); return; }
   var notesResp = ui.prompt('Key notes', 'What was said/decided?', ui.ButtonSet.OK_CANCEL);
   var notes = notesResp.getSelectedButton() === ui.Button.OK ? notesResp.getResponseText().trim() : '';
-  var id = appendInteraction(person.data[COLS.PEOPLE.ID - 1], person.data[COLS.PEOPLE.NAME - 1], person.data[COLS.PEOPLE.ORG - 1], today(), 'Other', notes, 'Useful');
+  withDocumentLock(function () {
+    appendInteraction(person.data[COLS.PEOPLE.ID - 1], person.data[COLS.PEOPLE.NAME - 1], person.data[COLS.PEOPLE.ORG - 1], today(), 'Other', notes, '');
+  }, { label: 'addNewInteraction' });
   ui.alert('Logged', 'Conversation with ' + person.data[COLS.PEOPLE.NAME - 1] + ' logged.', ui.ButtonSet.OK);
 }
 
@@ -5833,8 +6109,10 @@ function addAdHocTodo() {
   var resp = ui.prompt('Add ad-hoc task', 'Task description:', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var task = resp.getResponseText().trim();
-  if (!task) return;
-  appendTodoWithSource(task, 'None', '', '', 'Admin', 'Not started', '', '30 min', '', 'Manually added');
+  if (!task) { ui.alert('Task description required.', ui.ButtonSet.OK); return; }
+  withDocumentLock(function () {
+    appendTodoWithSource(task, 'None', '', '', 'Admin', 'Not started', '', '30 min', '', 'Manually added');
+  }, { label: 'addAdHocTodo' });
   SpreadsheetApp.getActiveSpreadsheet().toast('Task added.', 'The Planner', 3);
 }
 
@@ -6125,7 +6403,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Onboarding');
-  r = writeKV(sheet, r, 'Set up / redo onboarding', 'A popup captures your starting facts. Redoing onboarding clears existing planner data first, then rebuilds from what you enter — you never have to navigate a backend tab manually.');
+  r = writeKV(sheet, r, 'Set up / redo onboarding', 'A popup captures your starting facts. Redoing onboarding asks for confirmation before it clears existing planner data, then rebuilds from what you enter. You never have to navigate a backend tab manually.');
   r = writeKV(sheet, r, 'Sectors — 3 stages', '1. Sector-only row → direct task to list 2-4 sub-sectors. 2. Sub-sector row → a Decision asking whether to build an organisation list there. 3. Yes → a Market-map task; No → nothing further.');
   r = writeKV(sheet, r, 'Direct sheet entry', 'Typing a Job title or Person name before Organisation defers the cascade (flagged [pending-org] in Notes) until Organisation is filled in on that row — it then fires automatically with full context.');
   r++;
@@ -6163,7 +6441,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'If something breaks');
   r = writeKV(sheet, r, 'Menu missing', 'Extensions → Apps Script → run onOpen. Reload.');
-  r = writeKV(sheet, r, 'Popups not opening', 'Menu → Maintenance → Install edit trigger (one-time, grants full authorization for modal dialogs).');
+  r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Triggers & setup > Set up / verify triggers (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Menu → Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', 'Menu → Today → Populate Today.');
   r = writeKV(sheet, r, 'Formatting looks off', 'Menu → Maintenance → Repair all tabs.');
@@ -6366,8 +6644,10 @@ function dailyMaintenance() {
     repairInteractionPersonLinks();
     populateToday();
     refreshHome();
+    checkTriggerHealth();
+    recordMaintenanceHeartbeat('lastDailyMaintenanceAt');
     Logger.log('dailyMaintenance: DONE ' + new Date());
-  }, { label: 'dailyMaintenance', timeoutMs: 30000 });
+  }, { label: 'dailyMaintenance', timeoutMs: 30000, failOpen: false });
 }
 
 function fullRefresh() {
@@ -6430,7 +6710,8 @@ function buildMenu() {
       .addItem('Organisation', 'addNewOrganisation')
       .addItem('Person', 'addNewPerson')
       .addItem('Job', 'addNewJob')
-      .addItem('Conversation', 'addNewInteraction'))
+      .addItem('Conversation', 'addNewInteraction')
+      .addItem('Interview', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Row actions')
       .addItem('Find people at selected org', 'rowActionFindPeopleAtSelectedOrg')
       .addItem('Scan jobs at selected org', 'rowActionScanJobsAtSelectedOrg')
