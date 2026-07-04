@@ -1602,9 +1602,20 @@ function setOpenTodosForTarget(objType, objId, status, reason, workflowAllowList
 // Every completion — from Today or from Tasks — routes through here.
 // =============================================================
 
-function canonicalTodoStatus(status) {
+// Today is an execution surface, so it says "Planned". Tasks is the
+// source of truth, so the same non-started state is stored as "Not started".
+// Keep the mapping centralized so new Today/Tasks sync paths cannot drift.
+function todoStatusFromTodayStatus(status) {
   var v = String(status || '').trim();
   return v === 'Planned' ? 'Not started' : v;
+}
+
+function todayStatusFromTodoStatus(status) {
+  return String(status || '') === 'Not started' ? 'Planned' : String(status || '');
+}
+
+function canonicalTodoStatus(status) {
+  return todoStatusFromTodayStatus(status);
 }
 
 function isTerminalTodoStatus(status) {
@@ -4231,11 +4242,27 @@ function syncTodayRowForTodo(todoRow, status) {
   if (!todoId) return;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     if (String(planSheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
-      var mapped = (status === 'Not started') ? 'Planned' : status;
+      var mapped = todayStatusFromTodoStatus(status);
       planSheet.getRange(r, COLS.TODAY.STATUS).setValue(mapped);
       return;
     }
   }
+}
+
+function deferTodoById(todoId, days, source) {
+  var todo = getTodoById(String(todoId || ''));
+  if (!todo) return false;
+  days = days || 3;
+  var due = addDays(today(), days);
+  todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Not started');
+  todo.sheet.getRange(todo.row, COLS.TODO.DUE_DATE).setValue(due);
+  todo.sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+  todo.sheet.getRange(todo.row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
+    String(todo.sheet.getRange(todo.row, COLS.TODO.WORKFLOW).getValue()), due,
+    String(todo.sheet.getRange(todo.row, COLS.TODO.OBJ_ID).getValue()), String(todo.sheet.getRange(todo.row, COLS.TODO.OBJ_TYPE).getValue())));
+  todo.sheet.getRange(todo.row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+  appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[deferred] pushed ' + days + ' days' + (source ? ' from ' + source : ''));
+  return true;
 }
 
 function syncTodayEstMinForTodo(todoSheet, todoRow) {
@@ -4281,24 +4308,7 @@ function onEditToday(sheet, row, col, newVal) {
   var todoId = sheet.getRange(row, COLS.TODAY.TODO_ID).getValue();
   if (!todoId) return;
   if (status === 'Deferred') {
-    var todoSheet = getSheet('Tasks');
-    if (todoSheet) {
-      var todo = getTodoById(String(todoId));
-      if (todo) {
-        todoSheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Not started');
-        todoSheet.getRange(todo.row, COLS.TODO.DUE_DATE).setValue(addDays(today(), 3));
-        todoSheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
-        // v7.4 §3.1: onEditTasks already recalculates Commitment class
-        // whenever the due date changes — Today's own Deferred push
-        // never did, so a deferred task could stay misclassified (e.g.
-        // still Fixed on a due date no longer within threshold) until
-        // the nightly recalculateCommitmentClasses caught up.
-        todoSheet.getRange(todo.row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(
-          String(todoSheet.getRange(todo.row, COLS.TODO.WORKFLOW).getValue()), todoSheet.getRange(todo.row, COLS.TODO.DUE_DATE).getValue(),
-          String(todoSheet.getRange(todo.row, COLS.TODO.OBJ_ID).getValue()), String(todoSheet.getRange(todo.row, COLS.TODO.OBJ_TYPE).getValue())));
-        todoSheet.getRange(todo.row, COLS.TODO.CLASS_CALC_AT).setValue(today());
-      }
-    }
+    deferTodoById(String(todoId), 3, 'today');
     return;
   }
   if (status === 'Done' && !sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).getValue()) {
@@ -4438,7 +4448,7 @@ function endOfDayReconcile() {
   if (summary === ui.Button.NO) {
     unfinished.forEach(function (item) {
       deferred++;
-      if (item.todoId) completeTodo(String(item.todoId), 'Deferred', { source: 'eod' });
+      if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
       sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
     });
     ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: 0 | Deferred: ' + deferred + ' | Skipped: 0', ui.ButtonSet.OK);
@@ -4449,7 +4459,7 @@ function endOfDayReconcile() {
     if (resp === ui.Button.YES) { carried++; }
     else if (resp === ui.Button.NO) {
       deferred++;
-      if (item.todoId) completeTodo(String(item.todoId), 'Deferred', { source: 'eod' });
+      if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
       sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
     } else {
       skipped++;
@@ -4771,8 +4781,12 @@ function refreshHome() {
 
   // --- Add update (§1.3) — the primary capture surface now ---
   sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
-  sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
-  setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
+  if (editReady) {
+    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
+    setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
+  } else {
+    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground('#FCE8E6').setFontColor('#964219').setFontWeight('bold');
+  }
 
   // --- Today's plan hero (§1.4) — replaces the raw open-task count ---
   sheet.getRange(HOME_PLAN_HEADER_ROW, 2, 1, 5).merge().setValue('Today’s plan').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
@@ -6446,6 +6460,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Staged, not scored', '1 manually pulled-in tasks · 2 tasks already in progress/touched today · 3 fixed work · 4 blocking work · 5 due/overdue keep-alive work · 6 active pursuit matching your focus · 7 at most one pipeline-building task · 8 active pursuit outside your focus, if capacity remains · 9 near-misses go to Options · 10 everything else stays in Tasks, out of sight but not gone. A kept time buffer applies throughout.');
   r = writeKV(sheet, r, 'Tier and Energy', 'Organisation Tier breaks ties within a stage — it never changes which stage a task lands in. Low energy sinks Deep-effort work to the bottom of Active pursuit and Pipeline, but never excludes it.');
   r = writeKV(sheet, r, 'Notes on Today', 'Anything you type into a Today row\u2019s Notes cell is kept across refreshes. The system\u2019s "Why" explanation now lives in the cell\u2019s note (hover to see it) rather than the value.');
+  r = writeKV(sheet, r, 'Today vs Tasks status', 'Today shows "Planned" for work selected for execution. The same state is stored on Tasks as "Not started"; the completion engine maps between them explicitly.');
   r = writeKV(sheet, r, 'Multi-day tasks', 'Excluded from Today until broken down. A stale one is flagged in the "Needs breakdown" section — use Row actions → Break down (on Tasks) to split it into real sub-tasks.');
   r++;
 
