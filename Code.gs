@@ -359,6 +359,11 @@ function coerceResult(result, fallbackMessage) {
   return okResult(result || fallbackMessage || 'Saved.');
 }
 
+function popupExceptionResult(context, err) {
+  Logger.log(context + ': ' + (err && err.stack ? err.stack : err));
+  return failResult('Something went wrong while saving. Run Maintenance > Repair all tabs, then try again.', '', 'SERVER_ERROR');
+}
+
 // v7.3.1: Serialises every mutating path behind a single document lock so
 // two overlapping edits (or an edit landing while dailyMaintenance runs)
 // can't double-create tasks or collide on nextId() / appendRow(). Runs fn
@@ -4993,7 +4998,7 @@ function buildSetupHtml() {
     ' if(existingRows>0&&goal!=="skipped"&&entryPoint!=="skip"&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
-    ' .withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    ' .withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
@@ -5215,31 +5220,35 @@ function writePersonRow(name, org, role) {
 // the new facts, rebuilds the checklist, and refreshes Today/Home.
 function completeSetupFromPopup(payload) {
   return withDocumentLock(function () {
-    payload = payload || {};
-    var goal = payload.goal || 'skipped';
-    var entryPoint = payload.entryPoint || 'skip';
-    var fields = payload.fields || {};
-    var validation = validateOnboardingPayload(goal, entryPoint, fields);
-    if (!validation.ok) return validation;
-    if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
+    try {
+      payload = payload || {};
+      var goal = payload.goal || 'skipped';
+      var entryPoint = payload.entryPoint || 'skip';
+      var fields = payload.fields || {};
+      var validation = validateOnboardingPayload(goal, entryPoint, fields);
+      if (!validation.ok) return validation;
+      if (goal !== 'skipped' && entryPoint !== 'skip') resetPlannerDataForOnboarding();
 
-    var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
-    if (!result.ok) return result;
-    var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
-    saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
+      var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
+      if (!result.ok) return result;
+      var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
+      saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
 
-    populateToday();
-    refreshHome();
-    colorCodeManualFields();
-    applyStatusColorCoding();
-    applyColumnLayout();
-    applyColumnWidths();
+      populateToday();
+      refreshHome();
+      colorCodeManualFields();
+      applyStatusColorCoding();
+      applyColumnLayout();
+      applyColumnWidths();
 
-    var todaySheet = getSheet('Today');
-    if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
-    var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
-    result.message = (result.message || 'Onboarding saved.') + suffix;
-    return result;
+      var todaySheet = getSheet('Today');
+      if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
+      var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
+      result.message = (result.message || 'Onboarding saved.') + suffix;
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeSetupFromPopup', err);
+    }
   }, { label: 'completeSetupFromPopup', timeoutMs: 30000 });
 }
 
@@ -5343,7 +5352,7 @@ function buildCaptureHtml(captureType) {
     'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i],label=f.children[i],visible=!label||label.style.display!=="none";if(visible&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
     '.completeCaptureFromPopup({captureType:cfg.captureType,fields:fields});}</script>';
 }
 
@@ -5355,15 +5364,19 @@ function runCapturePopup(captureType) {
 
 function completeCaptureFromPopup(payload) {
   return withDocumentLock(function () {
-    payload = payload || {};
-    var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
-    if (!result.ok) return result;
-    populateToday();
-    refreshHome();
-    renderTodayDecisionCards();
-    colorCodeManualFields();
-    SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated - Tasks and Today refreshed.', 'The Planner', 4);
-    return result;
+    try {
+      payload = payload || {};
+      var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
+      if (!result.ok) return result;
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      colorCodeManualFields();
+      SpreadsheetApp.getActiveSpreadsheet().toast('Planner updated - Tasks and Today refreshed.', 'The Planner', 4);
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeCaptureFromPopup', err);
+    }
   }, { label: 'completeCaptureFromPopup', timeoutMs: 30000 });
 }
 function processCapturePayload(captureType, fields) {
@@ -5987,10 +6000,17 @@ function materializeDueTasks() {
 function weeklyReview() {
   // v7.3: guarded — writes stale-nurture flags, so keep it off the daily
   // trigger's toes.
-  return withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000, failOpen: false });
+  var summary = withDocumentLock(weeklyReviewImpl, { label: 'weeklyReview', timeoutMs: 30000, failOpen: false });
+  if (summary && summary.message) {
+    SpreadsheetApp.getActiveSpreadsheet().toast(summary.message, 'The Planner', 8);
+  } else {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Weekly review skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  }
+  return summary;
 }
 
 function weeklyReviewImpl() {
+  var summary = { staleNurture: 0, activeEmpty: 0, orgOrphans: 0, sectorOrphans: 0 };
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
     var pData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NOTES).getValues();
@@ -6004,19 +6024,23 @@ function weeklyReviewImpl() {
           var hasFollowUp = openTodoExistsForTargetWorkflow('Person', pId, 'Contact follow-up');
           appendNoteFlag(peopleSheet, i + 2, COLS.PEOPLE.NOTES,
             hasFollowUp ? '[weekly-review] Nurture overdue; follow-up task already open.' : '[weekly-review] Nurture overdue; no follow-up task found.');
+          summary.staleNurture++;
         }
       }
     }
   }
-  checkOrgActiveEmpty();
-  checkOrgOrphans();
-  detectSectorOrphans();
+  summary.activeEmpty = checkOrgActiveEmpty();
+  summary.orgOrphans = checkOrgOrphans();
+  summary.sectorOrphans = detectSectorOrphans();
 
   colorCodeManualFields();
   applyColumnWidths();
   refreshAllDropdowns();
   checkTriggerHealth();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
+  summary.message = 'Weekly review: ' + summary.staleNurture + ' stale nurture, ' + summary.activeEmpty + ' empty Active orgs, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
+  try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
+  return summary;
 }
 
 // v7.6.3 §4.6: an Organisation marked Active is a deliberate choice to
@@ -6025,7 +6049,8 @@ function weeklyReviewImpl() {
 // this, and never apply it to Mapped (inert by design).
 function checkOrgActiveEmpty() {
   var sheet = getSheet('Organisations');
-  if (!sheet || sheet.getLastRow() < 2) return;
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var count = 0;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NOTES).getValues();
   for (var i = 0; i < data.length; i++) {
     var row = i + 2;
@@ -6034,10 +6059,12 @@ function checkOrgActiveEmpty() {
     var openOpps = Number(data[i][COLS.ORGS.OPEN_OPPS - 1]) || 0;
     if (status === 'Active' && knownPeople === 0 && openOpps === 0) {
       appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people or open opportunities yet');
+      count++;
     } else {
       clearNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty]');
     }
   }
+  return count;
 }
 
 // v7.6.3 §4.3: manual row deletion never fires onEdit, so People/Jobs/
@@ -6046,7 +6073,8 @@ function checkOrgActiveEmpty() {
 // deletes or relinks the child row.
 function checkOrgOrphans() {
   var orgSheet = getSheet('Organisations');
-  if (!orgSheet) return;
+  if (!orgSheet) return 0;
+  var count = 0;
   var validOrgIds = {};
   if (orgSheet.getLastRow() > 1) {
     orgSheet.getRange(2, COLS.ORGS.ID, orgSheet.getLastRow() - 1, 1).getValues().forEach(function (r) {
@@ -6064,6 +6092,7 @@ function checkOrgOrphans() {
       var orgId = data[i][orgIdCol - 1];
       if (orgId && !validOrgIds[String(orgId)]) {
         appendNoteFlag(sheet, row, notesCol, '[orphaned-org] ⚠ Linked Organisation no longer exists');
+        count++;
       } else {
         clearNoteFlag(sheet, row, notesCol, '[orphaned-org]');
       }
@@ -6074,6 +6103,7 @@ function checkOrgOrphans() {
   sweep(getSheet('Jobs'), COLS.JOBS.ORG_ID, COLS.JOBS.NOTES);
   sweep(getSheet('Tasks'), COLS.TODO.OBJ_ID, COLS.TODO.NOTES, COLS.TODO.OBJ_TYPE, 'Organisation');
   sweep(getSheet('Decisions'), COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.NOTES, COLS.DECISIONS.TARGET_TYPE, 'Organisation');
+  return count;
 }
 
 // =============================================================
@@ -6268,7 +6298,7 @@ function buildBreakdownHtml(todoId, taskTitle) {
     'if(!subtasks.length){document.getElementById("status").textContent="Add at least one sub-task.";return;}' +
     'document.getElementById("status").textContent="Creating sub-tasks...";' +
     'google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent=err&&err.message?err.message:String(err);})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not create sub-tasks. Run Maintenance > Repair all tabs, then try again.";})' +
     '.completeBreakdownFromPopup(cfg.todoId,subtasks);}</script>';
 }
 
