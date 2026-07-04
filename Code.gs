@@ -1842,6 +1842,7 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   var job = getJobRowById(jobId);
   if (!job) return;
   newStatus = normalizeJobStatus(newStatus);
+  if (oldStatus !== undefined && oldStatus !== null && String(oldStatus) !== '' && normalizeJobStatus(oldStatus) === newStatus) return;
   var sheet = getSheet('Jobs');
 
   if (newStatus === 'Want to apply') {
@@ -1858,7 +1859,7 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
     var review = addDays(applied, 12);
     sheet.getRange(job.row, COLS.JOBS.APPLIED_DATE).setValue(applied);
     sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
-    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('');
+    if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('');
     autoDismissPendingForTarget('Job', jobId, 'Job marked Applied');
     setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job already applied', ['Application preparation', 'Submit application']);
     appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
@@ -1971,6 +1972,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
   if (!person) return;
   var sheet = getSheet('People');
   newStage = normalizePersonStage(newStage);
+  if (oldStage !== undefined && oldStage !== null && String(oldStage) !== '' && normalizePersonStage(oldStage) === newStage) return;
 
   if (newStage === 'Identified') {
     appendTodoOnceForWorkflow('Draft outreach to ' + person.name + (person.org ? ' at ' + person.org : ''),
