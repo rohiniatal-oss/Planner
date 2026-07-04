@@ -1011,12 +1011,76 @@ function checkOrgDuplicate(sheet, editedRow) {
   }
 }
 
-function replaceOrgDisplayText(value, oldName, newName) {
-  if (!oldName || !newName || String(oldName) === String(newName)) return value;
-  var escaped = String(oldName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function replaceDisplayText(value, oldText, newText) {
+  if (!oldText || !newText || String(oldText) === String(newText)) return value;
+  var escaped = String(oldText).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return String(value || '').replace(new RegExp('(^|[^A-Za-z0-9])' + escaped + '(?=$|[^A-Za-z0-9])', 'g'), function (match, prefix) {
-    return prefix + newName;
+    return prefix + newText;
   });
+}
+
+function replaceOrgDisplayText(value, oldName, newName) {
+  return replaceDisplayText(value, oldName, newName);
+}
+
+function collectRoundIdsForJob(jobId) {
+  var out = {};
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 2 || !jobId) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ROUNDS.JOB_ID).getValues();
+  data.forEach(function (row) {
+    if (String(row[COLS.ROUNDS.JOB_ID - 1]) === String(jobId) && row[COLS.ROUNDS.ID - 1]) out[String(row[COLS.ROUNDS.ID - 1])] = true;
+  });
+  return out;
+}
+
+function propagateJobTitleRename(jobId, newTitle, oldTitle) {
+  if (!jobId || !newTitle || !oldTitle || String(newTitle) === String(oldTitle)) return;
+  var roundsSheet = getSheet('Interviews');
+  var tasksSheet = getSheet('Tasks');
+  var decisionsSheet = getSheet('Decisions');
+  var roundIds = collectRoundIdsForJob(jobId);
+
+  if (roundsSheet && roundsSheet.getLastRow() > 1) {
+    var roundData = roundsSheet.getRange(2, 1, roundsSheet.getLastRow() - 1, COLS.ROUNDS.JOB_ID).getValues();
+    roundData.forEach(function (row, i) {
+      if (String(row[COLS.ROUNDS.JOB_ID - 1]) === String(jobId)) roundsSheet.getRange(i + 2, COLS.ROUNDS.JOB_DISPLAY).setValue(newTitle);
+    });
+  }
+
+  if (tasksSheet && tasksSheet.getLastRow() > 1) {
+    var taskData = tasksSheet.getRange(2, 1, tasksSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    taskData.forEach(function (row, i) {
+      var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+      var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+      var linkedJob = objType === 'Job' && objId === String(jobId);
+      var linkedRound = objType === 'Interview round' && roundIds[objId];
+      if (!(linkedJob || linkedRound)) return;
+      var r = i + 2;
+      if (!isTerminalTodoStatus(row[COLS.TODO.STATUS - 1])) {
+        var updatedTask = replaceDisplayText(row[COLS.TODO.TASK - 1], oldTitle, newTitle);
+        if (updatedTask !== row[COLS.TODO.TASK - 1]) tasksSheet.getRange(r, COLS.TODO.TASK).setValue(updatedTask);
+      }
+      writeLinkedTo(tasksSheet, r, objType, objId);
+    });
+  }
+
+  if (decisionsSheet && decisionsSheet.getLastRow() > 1) {
+    var decisionData = decisionsSheet.getRange(2, 1, decisionsSheet.getLastRow() - 1, COLS.DECISIONS.DECISION).getValues();
+    decisionData.forEach(function (row, i) {
+      var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+      var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+      var linkedJob = targetType === 'Job' && targetId === String(jobId);
+      var linkedRound = targetType === 'Interview round' && roundIds[targetId];
+      if (!(linkedJob || linkedRound)) return;
+      if (String(row[COLS.DECISIONS.DECISION - 1]) !== 'Pending') return;
+      var r = i + 2;
+      var trigger = replaceDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldTitle, newTitle);
+      var task = replaceDisplayText(row[COLS.DECISIONS.TASK - 1], oldTitle, newTitle);
+      if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
+      if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
+    });
+  }
 }
 
 function collectIdsForOrg(sheet, idCol, orgIdCol, orgId) {
@@ -1654,6 +1718,25 @@ function recalcTodosLinkedToObject(linkedObjId) {
     sheet.getRange(i + 2, COLS.TODO.COMMITMENT_CLASS).setValue(newClass);
     sheet.getRange(i + 2, COLS.TODO.CLASS_CALC_AT).setValue(today());
   }
+}
+
+function syncOpenJobDeadlineTaskDates(jobId, deadline) {
+  if (!jobId) return 0;
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var count = 0;
+  var dateDriven = { 'Application preparation': true, 'Submit application': true };
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(jobId)) continue;
+    if (isTerminalTodoStatus(data[i][COLS.TODO.STATUS - 1])) continue;
+    if (!dateDriven[String(data[i][COLS.TODO.WORKFLOW - 1] || '')]) continue;
+    sheet.getRange(i + 2, COLS.TODO.DUE_DATE).setValue(deadline || '');
+    count++;
+  }
+  if (count) recalcTodosLinkedToObject(String(jobId));
+  return count;
 }
 
 function syncTaskHealthFlags(sheet, row, rowData, daysSinceEdit) {
@@ -3345,12 +3428,14 @@ function onEditJobs(sheet, row, col, newVal, e) {
   }
   if (col === COLS.JOBS.OPPORTUNITY && newVal) {
     if (!sheet.getRange(row, COLS.JOBS.ID).getValue()) sheet.getRange(row, COLS.JOBS.ID).setValue(nextId(sheet, COLS.JOBS.ID, 'JOB'));
+    var editedJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
+    if (e && e.oldValue) propagateJobTitleRename(editedJobId, String(newVal), String(e.oldValue));
     if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
     var org = sheet.getRange(row, COLS.JOBS.ORG).getValue();
     if (org) {
       inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.STATUS).getValue());
-      fireJobStatusChanged(sheet.getRange(row, COLS.JOBS.ID).getValue(), '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
+      fireJobStatusChanged(editedJobId, '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     } else {
@@ -3359,7 +3444,9 @@ function onEditJobs(sheet, row, col, newVal, e) {
     return;
   }
   if (col === COLS.JOBS.DEADLINE) {
-    recalcTodosLinkedToObject(String(sheet.getRange(row, COLS.JOBS.ID).getValue()));
+    var deadlineJobId = String(sheet.getRange(row, COLS.JOBS.ID).getValue());
+    syncOpenJobDeadlineTaskDates(deadlineJobId, newVal || '');
+    recalcTodosLinkedToObject(deadlineJobId);
     syncJobsPeopleHealthFlags();
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
@@ -6412,7 +6499,10 @@ function processJobCapture(fields) {
   promoteOrgForLiveJob(org && org.id, status);
   var job = getJobRowById(jobId);
   var sheet = getSheet('Jobs');
-  if (fields.deadline) sheet.getRange(job.row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
+  if (fields.deadline) {
+    sheet.getRange(job.row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
+    syncOpenJobDeadlineTaskDates(jobId, fields.deadline);
+  }
   if (fields.urlNotes) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, fields.urlNotes);
   var opts = { realDate: fields.appliedDate || '' };
   if (status === 'Interviewing') opts.roundDetails = { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' };
@@ -7115,7 +7205,7 @@ function materializeDueTasks() {
       var response = String(jData[jj][COLS.JOBS.RESPONSE - 1]);
       if (!jobId || !jobTitle) continue;
       if (jobStatus === 'Applied' && reviewDate && new Date(reviewDate) < todayDate && !response) {
-        if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
+        if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', reviewDate, '15 min', '', 'Auto-triggered')) created++;
       }
       if (jobStatus === 'Want to apply' && deadline) {
         var daysToDeadline = daysBetween(todayDate, new Date(deadline));
@@ -7368,21 +7458,7 @@ function addNewPerson() {
 }
 
 function addNewJob() {
-  var ui = SpreadsheetApp.getUi();
-  var titleResp = ui.prompt('Add new job', 'Opportunity title:', ui.ButtonSet.OK_CANCEL);
-  if (titleResp.getSelectedButton() !== ui.Button.OK) return;
-  var title = titleResp.getResponseText().trim();
-  if (!title) { ui.alert('Job title required.', ui.ButtonSet.OK); return; }
-  var orgResp = ui.prompt('Organisation', 'Which org?', ui.ButtonSet.OK_CANCEL);
-  var orgName = orgResp.getSelectedButton() === ui.Button.OK ? orgResp.getResponseText().trim() : '';
-  if (!orgName) { ui.alert('Organisation required before routing application work.', ui.ButtonSet.OK); return; }
-  withDocumentLock(function () {
-    var org = createNameOnlyOrg(orgName, { status: 'Mapped', stub: true });
-    var jobId = writeJobRow(title, org, 'Want to apply');
-    promoteOrgForLiveJob(org && org.id, 'Want to apply');
-    fireJobStatusChanged(jobId, '', 'Want to apply', {});
-  }, { label: 'addNewJob' });
-  ui.alert('Added', 'Job "' + title + '" added with Status = Want to apply.', ui.ButtonSet.OK);
+  runCapturePopup('Add/update job');
 }
 
 function addNewInteraction() {
@@ -7472,6 +7548,8 @@ function rowActionPrepSelectedJob() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
     appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'rowActionPrepSelectedJob' });
 }
 
@@ -7481,6 +7559,8 @@ function rowActionReferralSearchSelectedJob() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
     appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'rowActionReferralSearchSelectedJob' });
 }
 
@@ -7531,6 +7611,8 @@ function rowActionAddInterviewRound() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
     createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'rowActionAddInterviewRound' });
 }
 
