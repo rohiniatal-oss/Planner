@@ -2709,6 +2709,8 @@ function onEditOrgs(sheet, row, col, newVal, e) {
   }
   if (col === COLS.ORGS.TIER) {
     sheet.getRange(row, COLS.ORGS.TIER).setValue(normalizeTier(newVal));
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ORGS.STATUS) {
@@ -6250,7 +6252,7 @@ var HEADER_GUIDANCE = {
     'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
     'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
-    'Tier': 'A/B/C, optional', 'Status': 'Mapped (default) / Active / Dormant / Archived',
+    'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped (default) / Active / Dormant / Archived',
     'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
   'People': {
@@ -6828,7 +6830,7 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
-      setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER);
+      setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
     case 'People':
