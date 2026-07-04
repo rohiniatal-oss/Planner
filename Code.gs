@@ -1607,7 +1607,10 @@ function applyTaskHelperColumns(sheet, row) {
 // dailyMaintenance.
 function backfillTaskHelperColumns() {
   var sheet = getSheet('Tasks');
-  if (!sheet || sheet.getLastRow() < 2) return;
+  if (!sheet) return;
+  var bodyRows = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(2, COLS.TODO.PRIORITY_RANK, bodyRows, 4).clearContent().clearNote().clearDataValidations();
+  if (sheet.getLastRow() < 2) return;
   for (var r = 2; r <= sheet.getLastRow(); r++) {
     applyTaskHelperColumns(sheet, r);
   }
@@ -5995,6 +5998,17 @@ function sheetHeaderLength(canonicalName) {
   return HEADERS[key] ? HEADERS[key].length : 12;
 }
 
+function clearRetiredSchemaColumns(sheet, canonicalName) {
+  var width = sheetHeaderLength(canonicalName);
+  var extraCols = sheet.getMaxColumns() - width;
+  if (!width || extraCols <= 0) return;
+  sheet.getRange(1, width + 1, sheet.getMaxRows(), extraCols)
+    .clearContent()
+    .clearNote()
+    .clearDataValidations()
+    .clearFormat();
+}
+
 function applyColumnLayout() {
   CANONICAL_TAB_ORDER.forEach(function (name) {
     var sheet = getSheet(name);
@@ -6129,19 +6143,23 @@ function migrateLegacyTabs() {
 // DROPDOWNS — applied per sheet
 // =============================================================
 
+function clearBodyDropdowns(sheet, canonicalName, maxRow) {
+  if (canonicalName === 'Today') return;
+  var width = sheetHeaderLength(canonicalName);
+  if (!width) return;
+  sheet.getRange(2, 1, maxRow, width).clearDataValidations();
+}
+
 function applySheetDropdowns(canonicalName) {
   var sheet = getSheet(canonicalName);
   if (!sheet) return;
   var maxRow = Math.max(sheet.getMaxRows() - 1, 40);
+  clearBodyDropdowns(sheet, canonicalName, maxRow);
   switch (canonicalName) {
     case 'Sectors':
       setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
-      sheet.getRange(2, COLS.ORGS.KNOWN_PEOPLE, maxRow, 1).clearDataValidations();
-      sheet.getRange(2, COLS.ORGS.OPEN_OPPS, maxRow, 1).clearDataValidations();
-      sheet.getRange(2, COLS.ORGS.LAST_CHECKED, maxRow, 1).clearDataValidations();
-      sheet.getRange(2, COLS.ORGS.NEXT_CHECK, maxRow, 1).clearDataValidations();
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER);
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
@@ -6671,7 +6689,10 @@ function linkContactToJob() {
 
 function refreshLinkedContactsDisplay() {
   var jobsSheet = getSheet('Jobs'), peopleSheet = getSheet('People');
-  if (!jobsSheet || !peopleSheet || jobsSheet.getLastRow() < 2) return;
+  if (!jobsSheet || !peopleSheet) return;
+  var bodyRows = Math.max(jobsSheet.getMaxRows() - 1, 1);
+  jobsSheet.getRange(2, COLS.JOBS.CONTACTS_DISPLAY, bodyRows, 1).clearContent().clearNote().clearDataValidations();
+  if (jobsSheet.getLastRow() < 2) return;
   var peopleData = peopleSheet.getLastRow() > 1 ? peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.NAME).getValues() : [];
   for (var r = 2; r <= jobsSheet.getLastRow(); r++) {
     var idsRaw = jobsSheet.getRange(r, COLS.JOBS.CONTACTS_IDS).getValue();
@@ -6850,7 +6871,10 @@ function rewriteGuide() {
 
 function repairOrganisationsFormulas() {
   var sheet = getSheet('Organisations');
-  if (!sheet || sheet.getLastRow() < 2) return;
+  if (!sheet) return;
+  var bodyRows = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(2, COLS.ORGS.KNOWN_PEOPLE, bodyRows, 2).clearContent().clearNote().clearDataValidations();
+  if (sheet.getLastRow() < 2) return;
   for (var r = 2; r <= sheet.getLastRow(); r++) {
     if (sheet.getRange(r, COLS.ORGS.NAME).getValue()) applyOrgRowFormulas(sheet, r);
   }
@@ -6985,6 +7009,7 @@ function repairAllTabsImpl() {
     if (name === 'Today') return; // Today's layout is built by bootstrapToday, not a plain header row
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     styleHeader(sheet, headers.length);
+    clearRetiredSchemaColumns(sheet, name);
     applySheetDropdowns(name);
   });
   ensureDecisionsTab();
