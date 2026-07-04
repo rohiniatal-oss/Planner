@@ -181,7 +181,7 @@ var HEADERS = {
   ],
   Jobs: [
     'Job ID', 'Opportunity', 'Organisation', 'Org ID',
-    'Deadline', 'Status', 'Applied date',
+    'Deadline', 'Application status', 'Applied date',
     'Linked contacts (IDs)', 'Linked contacts (display)',
     'Review date', 'Response received', 'Outcome', 'Notes'
   ],
@@ -270,7 +270,7 @@ var DROPDOWNS = {
   PERSON_REL_TYPE: ['Alumni', 'Warm intro', 'Cold', 'Recruiter', 'Other'],
   YES_NO: ['Yes', 'No'],
 
-  JOB_STATUS: ['Want to apply', 'Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'],
+  JOB_STATUS: ['Not started', 'In progress', 'Submitted', 'Closed'],
   JOB_OUTCOME: ['No response yet', 'Interview invite', 'Rejected', 'Offer', 'Parked'],
 
   INTERACTION_TYPE: ['Intro call', 'Coffee', 'LinkedIn message', 'Email', 'Phone', 'Interview', 'Referral', 'Auto-log', 'Other'],
@@ -576,9 +576,17 @@ function normalizeOrgStatus(value) {
 function normalizeJobStatus(value) {
   var v = String(value || '').trim();
   var legacyMap = {
-    'Found': 'Want to apply', 'Worth exploring': 'Want to apply',
-    'Referral needed': 'Want to apply', 'Apply now': 'Want to apply',
-    'To pursue': 'Want to apply', 'Application ready': 'Want to apply'
+    'Found': 'Not started',
+    'Worth exploring': 'Not started',
+    'Referral needed': 'Not started',
+    'Apply now': 'In progress',
+    'To pursue': 'Not started',
+    'Application ready': 'In progress',
+    'Want to apply': 'Not started',
+    'Applied': 'Submitted',
+    'Interviewing': 'Submitted',
+    'Offer': 'Submitted',
+    'Parked': 'Closed'
   };
   return legacyMap[v] || (DROPDOWNS.JOB_STATUS.indexOf(v) !== -1 ? v : '');
 }
@@ -596,15 +604,6 @@ function normalizeJobOutcome(value) {
     'Reject': 'Rejected'
   };
   return legacyMap[v] !== undefined ? legacyMap[v] : (DROPDOWNS.JOB_OUTCOME.indexOf(v) !== -1 ? v : '');
-}
-
-function jobStatusForOutcome(outcome) {
-  outcome = normalizeJobOutcome(outcome);
-  if (outcome === 'Interview invite') return 'Interviewing';
-  if (outcome === 'Rejected') return 'Closed';
-  if (outcome === 'Offer') return 'Offer';
-  if (outcome === 'Parked') return 'Parked';
-  return '';
 }
 
 function normalizePersonStage(value) {
@@ -741,7 +740,7 @@ function applyOrgRowFormulas(sheet, row) {
   var jobsStatusCol = columnToLetter(COLS.JOBS.STATUS);
   sheet.getRange(row, COLS.ORGS.KNOWN_PEOPLE).setFormula('=COUNTIF(People!' + peopleOrgIdCol + ':' + peopleOrgIdCol + ',' + orgIdRef + ')');
   sheet.getRange(row, COLS.ORGS.OPEN_OPPS).setFormula(
-    '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsOpportunityCol + ':' + jobsOpportunityCol + ',"<>",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Parked")');
+    '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsOpportunityCol + ':' + jobsOpportunityCol + ',"<>",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed")');
 }
 
 function orgReviewIntervalDays(status) {
@@ -1008,7 +1007,7 @@ function routeOrgLiveEvidence(orgId, reason) {
 }
 
 function promoteOrgForLiveJob(orgId, status) {
-  if (['Want to apply', 'Applied', 'Interviewing', 'Offer'].indexOf(normalizeJobStatus(status)) === -1) return false;
+  if (['Not started', 'In progress', 'Submitted'].indexOf(normalizeJobStatus(status)) === -1) return false;
   return routeOrgLiveEvidence(orgId, 'Live job/application evidence');
 }
 
@@ -1652,7 +1651,12 @@ function acceptPendingDecision(sheet, row) {
     return { ok: true, todoId: existingTodoId, reused: true };
   }
   var org = resolveOrgForTarget(targetType, targetId);
-  var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', '', defaultTimeForWorkflow(workflow), notes, 'Decision');
+  var dueDate = '';
+  if (targetType === 'Job' && (workflow === 'Application preparation' || workflow === 'Referral search')) {
+    var decisionJob = getJobRowById(targetId);
+    dueDate = decisionJob ? decisionJob.deadline : '';
+  }
+  var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', dueDate, defaultTimeForWorkflow(workflow), notes, 'Decision');
   if (!todoId) todoId = findOpenTodoByTaskTarget(task, targetId, workflow);
   if (todoId) {
     sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId);
@@ -1662,6 +1666,10 @@ function acceptPendingDecision(sheet, row) {
     return { ok: false, todoId: '', reason: 'Task was not created or found' };
   }
   sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  var key = String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
+  if (key.indexOf('JOB_START:') === 0 && targetType === 'Job' && workflow === 'Application preparation') {
+    setJobStatus(targetId, 'In progress', { source: 'decision-start-application' });
+  }
   return { ok: true, todoId: todoId, reused: false };
 }
 
@@ -1725,6 +1733,22 @@ function autoDismissPendingForTarget(targetType, targetId, reason) {
     count++;
   }
   return count;
+}
+
+function autoDismissPendingDecisionByKey(key, reason) {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2 || !key) return false;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.DECISIONS.KEY - 1]) !== String(key)) continue;
+    if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') return false;
+    var r = i + 2;
+    sheet.getRange(r, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
+    sheet.getRange(r, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    appendNoteFlag(sheet, r, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Superseded by direct action'));
+    return true;
+  }
+  return false;
 }
 
 function dismissDecisionByKey(key, reason) {
@@ -2366,12 +2390,12 @@ function handleJobTodoCompletion(todo, options) {
   if (todo.workflow === 'Application preparation') {
     appendTodoOnceForWorkflow('Submit application: ' + job.title + ' at ' + job.org, 'Job', todo.objId, job.org, 'Submit application', 'Not started', job.deadline, '15 min', 'Application prep completed.', 'Auto-triggered');
   } else if (todo.workflow === 'Submit application') {
-    setJobStatus(todo.objId, 'Applied', { source: 'todo-completion', realDate: today() });
+    setJobStatus(todo.objId, 'Submitted', { source: 'todo-completion', realDate: today() });
   } else if (todo.workflow === 'Check application response' || todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
-      'Add/update people found at ' + job.org, 'Organisation', job.orgId, 'People sourcing', todo.notes || '');
+      'Add/update referral contacts for ' + job.title + ' at ' + job.org, 'Job', todo.objId, 'People sourcing', todo.notes || '');
   } else if (todo.workflow === 'Offer decision') {
     appendPendingDecision('OFFER_DECISION_DONE:' + todo.id, 'Offer decision needs an outcome: ' + job.title,
       'Record offer decision for ' + job.title + ' at ' + job.org, 'Job', todo.objId, 'Admin', '');
@@ -2505,7 +2529,7 @@ function handleSkipCascade(todoSheet, row) {
 // linked source object is already terminal and would make the flag
 // redundant noise.
 function isSourceObjectTerminal(objType, objId) {
-  if (objType === 'Job') { var j = getJobRowById(objId); return j && ['Closed', 'Parked'].indexOf(String(j.status)) !== -1; }
+  if (objType === 'Job') { var j = getJobRowById(objId); return j && normalizeJobStatus(j.status) === 'Closed'; }
   if (objType === 'Organisation') { var o = getOrgById(objId); return o && ['Archived', 'Dormant'].indexOf(String(o.status)) !== -1; }
   if (objType === 'Person') { var p = getPersonRowById(objId); return p && String(p.stage) === 'Closed'; }
   return false;
@@ -2542,8 +2566,8 @@ function flagLinkedRow(sheet, idCol, objId, notesCol, flag) {
 }
 
 // =============================================================
-// JOBS — status routing
-// Statuses: Want to apply / Applied / Interviewing / Offer / Parked / Closed
+// JOBS - application-status routing
+// Statuses: Not started / In progress / Submitted / Closed
 // =============================================================
 
 function setJobStatus(jobId, status, opts) {
@@ -2570,14 +2594,74 @@ function getJobInfo(jobId) { var j = getJobRowById(jobId); return j ? { title: j
 // The single place Job status transitions are handled — called from
 // onEditJobs (manual edit), setJobStatus (programmatic), and onboarding
 // capture. Never called twice for the same transition.
+function queueStartApplicationDecision(job) {
+  if (!job || !job.id) return '';
+  return appendPendingDecision(
+    'JOB_START:' + job.id + ':Application preparation',
+    'Application not started: ' + job.title,
+    'Prep application: ' + job.title + ' at ' + job.org,
+    'Job',
+    job.id,
+    'Application preparation',
+    (job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) + '. ' : '') +
+    'Yes creates prep work: tailor CV/resume, draft application answers, collect proof points, and check requirements. Referral is suggested separately once work starts.'
+  );
+}
+
+function queueJobReferralDecision(job) {
+  if (!job || !job.id) return '';
+  return appendPendingDecision(
+    'JOB_REFERRAL:' + job.id + ':Referral search',
+    'Application in progress: ' + job.title,
+    'Find referral for ' + job.title + ' at ' + job.org,
+    'Job',
+    job.id,
+    'Referral search',
+    'Suggested because a referral may improve this application.'
+  );
+}
+
 function createJobResponseOutcomeDecision(jobId, reason) {
   var job = getJobRowById(jobId);
   if (!job) return '';
   var status = normalizeJobStatus(job.status);
-  if (['Applied', 'Interviewing', 'Offer'].indexOf(status) === -1) return '';
+  if (status !== 'Submitted') return '';
   return appendPendingDecision('JOB_RESPONSE_OUTCOME:' + jobId, reason || 'Job response received: ' + job.title,
     'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', jobId, 'Admin',
     'Choose the real outcome on Jobs: no response yet / interview invite / rejected / offer / parked.');
+}
+
+function routeJobOutcome(jobId, outcome, opts) {
+  opts = opts || {};
+  var normalizedOutcome = normalizeJobOutcome(outcome);
+  if (!jobId || !normalizedOutcome || normalizedOutcome === 'No response yet') return false;
+  var job = getJobRowById(jobId);
+  if (!job) return false;
+  if (normalizedOutcome === 'Interview invite') {
+    setJobStatus(jobId, 'Submitted', { source: opts.source || 'job-outcome', realDate: opts.realDate || job.appliedDate || today() });
+    autoDismissPendingForTarget('Job', jobId, 'Interview invite recorded');
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Interview invite received', ['Check application response']);
+    if (!jobHasRounds(jobId) || opts.forceRound) createInterviewRoundForJob(jobId, opts);
+    showInterviewsTab();
+    return true;
+  }
+  if (normalizedOutcome === 'Rejected') {
+    setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
+    return true;
+  }
+  if (normalizedOutcome === 'Offer') {
+    setJobStatus(jobId, 'Submitted', { source: opts.source || 'job-outcome', realDate: opts.realDate || job.appliedDate || today() });
+    autoDismissPendingForTarget('Job', jobId, 'Offer recorded');
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Offer received', ['Check application response', 'Interview follow-up']);
+    appendTodoOnceForWorkflow('Decide on offer: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org,
+      'Offer decision', 'Not started', opts.realDate || '', '30 min', 'Offer decision/review.', 'Auto-triggered');
+    return true;
+  }
+  if (normalizedOutcome === 'Parked') {
+    setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
+    return true;
+  }
+  return false;
 }
 
 function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
@@ -2588,46 +2672,32 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   if (oldStatus !== undefined && oldStatus !== null && String(oldStatus) !== '' && normalizeJobStatus(oldStatus) === newStatus) return;
   var sheet = getSheet('Jobs');
 
-  if (newStatus === 'Want to apply') {
-    appendTodoOnceForWorkflow('Prep application: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Application preparation',
-      'Not started', job.deadline, '60 min', job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) : '', 'Auto-triggered');
-    // Finding people is a suggestion, not automatic — per spec, ask.
-    appendPendingDecision('JOB_WANT:' + jobId + ':Referral search', 'Job saved: ' + job.title + ' at ' + job.org,
-      'Find people at: ' + job.org, 'Organisation', job.orgId, 'Referral search',
-      'Suggested because people at the organisation may help with this job.');
+  if (newStatus === 'Not started') {
+    queueStartApplicationDecision(job);
     return;
   }
-  if (newStatus === 'Applied') {
+  if (newStatus === 'In progress') {
+    appendTodoOnceForWorkflow('Prep application: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org, 'Application preparation',
+      'Not started', job.deadline, '60 min',
+      (job.deadline ? 'Deadline: ' + formatDateHuman(job.deadline) + '. ' : '') +
+      'Tailor CV/resume, draft application answers, collect proof points, and check requirements before submitting.',
+      'Auto-triggered');
+    queueJobReferralDecision(job);
+    return;
+  }
+  if (newStatus === 'Submitted') {
     var applied = opts.realDate ? parseDateOr(opts.realDate) : (job.appliedDate ? parseDateOr(job.appliedDate) : today());
     var review = addDays(applied, 12);
     sheet.getRange(job.row, COLS.JOBS.APPLIED_DATE).setValue(applied);
     sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).setValue(review);
     if (!sheet.getRange(job.row, COLS.JOBS.RESPONSE).getValue()) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('');
-    autoDismissPendingForTarget('Job', jobId, 'Job marked Applied');
+    autoDismissPendingForTarget('Job', jobId, 'Application submitted');
     setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job already applied', ['Application preparation', 'Submit application']);
     appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
-      'Check application response', 'Not started', review, '15 min', 'Applied on ' + formatDateHuman(applied), 'Auto-triggered');
+      'Check application response', 'Not started', review, '15 min', 'Submitted on ' + formatDateHuman(applied), 'Auto-triggered');
     return;
   }
-  if (newStatus === 'Interviewing') {
-    autoDismissPendingForTarget('Job', jobId, 'Job is interviewing');
-    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job moved to interview stage', ['Check application response', 'Interview follow-up']);
-    if (!jobHasRounds(jobId) || opts.forceRound) createInterviewRoundForJob(jobId, opts);
-    showInterviewsTab();
-    return;
-  }
-  if (newStatus === 'Offer') {
-    autoDismissPendingForTarget('Job', jobId, 'Offer received');
-    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Offer received', ['Check application response', 'Interview follow-up']);
-    appendTodoOnceForWorkflow('Decide on offer: ' + job.title + ' at ' + job.org, 'Job', jobId, job.org,
-      'Offer decision', 'Not started', opts.realDate || '', '30 min', 'Offer decision/review.', 'Auto-triggered');
-    return;
-  }
-  if (newStatus === 'Parked') {
-    autoDismissPendingForTarget('Job', jobId, 'Job parked');
-    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Job parked — keep the record, stop active work on it');
-    return;
-  }
+
   if (newStatus === 'Closed') {
     autoDismissPendingForTarget('Job', jobId, 'Job closed');
     setOpenTodosForTarget('Job', jobId, 'Cancelled', 'Job closed');
@@ -3613,10 +3683,10 @@ function onEditJobs(sheet, row, col, newVal, e) {
     clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[missing-opportunity]');
     var ensuredJobIdForOrg = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(ensuredJobIdForOrg);
-    if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
+    if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Not started');
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
     var relinkJobId = ensuredJobIdForOrg;
-    var relinkJobStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
+    var relinkJobStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Not started');
     var newJobOrgName = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '');
     var newJobOrgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '');
     var jobOrgChanged = relinkJobId && newJobOrgName && ((oldJobOrgName && oldJobOrgName !== newJobOrgName) || (oldJobOrgId && oldJobOrgId !== newJobOrgId));
@@ -3633,7 +3703,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
       clearNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org]');
       var jId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
       sheet.getRange(row, COLS.JOBS.ID).setValue(jId);
-      var jStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply');
+      var jStatus = normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Not started');
       sheet.getRange(row, COLS.JOBS.STATUS).setValue(jStatus);
       promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), jStatus);
       fireJobStatusChanged(jId, '', jStatus, { source: 'manual-org-followup' });
@@ -3648,7 +3718,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     if (!sheet.getRange(row, COLS.JOBS.ID).getValue()) sheet.getRange(row, COLS.JOBS.ID).setValue(nextId(sheet, COLS.JOBS.ID, 'JOB'));
     var editedJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
     if (e && e.oldValue) propagateJobTitleRename(editedJobId, String(newVal), String(e.oldValue));
-    if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
+    if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Not started');
     if (!sheet.getRange(row, COLS.JOBS.ORG).getValue()) {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
     }
@@ -3683,20 +3753,19 @@ function onEditJobs(sheet, row, col, newVal, e) {
     }
     if (normalizedOutcome !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
     sheet.getRange(row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
-    var outcomeStatus = jobStatusForOutcome(normalizedOutcome);
-    if (outcomeStatus) setJobStatus(outcomeJobId, outcomeStatus, { source: 'job-outcome' });
+    routeJobOutcome(outcomeJobId, normalizedOutcome, { source: 'job-outcome' });
     refreshDerivedPlanningSurfaces();
-    autoDismissPendingForTarget('Job', outcomeJobId, 'Job outcome recorded');
     renderTodayDecisionCards();
     requestHomeRefresh();
     return;
   }
   if (col === COLS.JOBS.STATUS) {
-    var status = normalizeJobStatus(newVal);
-    if (!status && String(newVal || '').trim()) {
-      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[invalid-value] Job Status "' + newVal + '" rejected');
+    var rawStatus = normalizeJobStatus(newVal);
+    if (!rawStatus && String(newVal || '').trim()) {
+      appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[invalid-value] Application status "' + newVal + '" rejected');
       return;
     }
+    var status = rawStatus || 'Not started';
     if (status !== String(newVal || '')) sheet.getRange(row, COLS.JOBS.STATUS).setValue(status);
     var id = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(id);
@@ -4202,9 +4271,9 @@ function onEditRounds(sheet, row, col, newVal) {
       var waitingType = String(sheet.getRange(row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
     }
-    if (String(newVal) === 'Rejected') setJobStatus(jobId, 'Closed', { source: 'round-outcome' });
-    if (String(newVal) === 'Offer') setJobStatus(jobId, 'Offer', { source: 'round-outcome' });
-    if (String(newVal) === 'Parked') setJobStatus(jobId, 'Parked', { source: 'round-outcome' });
+    if (String(newVal) === 'Rejected') routeJobOutcome(jobId, 'Rejected', { source: 'round-outcome' });
+    if (String(newVal) === 'Offer') routeJobOutcome(jobId, 'Offer', { source: 'round-outcome' });
+    if (String(newVal) === 'Parked') routeJobOutcome(jobId, 'Parked', { source: 'round-outcome' });
     if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
     refreshDerivedPlanningSurfaces();
     return;
@@ -5944,7 +6013,7 @@ function collectUpcomingItems(limit) {
     jData.forEach(function (j) {
       var status = String(j[COLS.JOBS.STATUS - 1]);
       var d = j[COLS.JOBS.REVIEW_DATE - 1];
-      if (status === 'Applied' && d && new Date(d) >= t) {
+      if (normalizeJobStatus(status) === 'Submitted' && d && new Date(d) >= t) {
         items.push({ type: 'Follow-up', date: new Date(d), label: j[COLS.JOBS.ORG - 1] || '' });
       }
     });
@@ -6213,8 +6282,8 @@ function buildSetupHtml() {
     ' if(g==="explore_space"){entryPoint="sectors";renderForm("sectors");return;}' +
     ' document.getElementById("q2title").innerHTML="<strong>2 of 3</strong> What should we capture first?";' +
     ' var opts=[["interviews","I have interviews","Creates/links a Job and an Interview round."],' +
-    ' ["applications","I have applications submitted","Creates an Applied job and a response-check task from the real applied date."],' +
-    ' ["jobs","I have jobs I want to apply to","Creates a Want-to-apply job and application prep."],' +
+    ' ["applications","I have applications submitted","Creates a Submitted application and a response-check task from the real submitted date."],' +
+    ' ["jobs","I have jobs I want to apply to","Creates a Not-started application and asks whether to start work."],' +
     ' ["people","I have people or conversations","Creates a Person and the right outreach/follow-up state."],' +
     ' ["orgs","I have organisations to track","Creates/classifies Organisations — status you pick is honored; Active only ever suggests, never floods job/people search."],' +
     ' ["not_sure","I am not sure","Creates a light clarification task on Today."]];' +
@@ -6262,7 +6331,7 @@ function setupChecklistFor(entryPoint, fields) {
     }];
   }
   var map = {
-    jobs: [{ workflow: 'Application preparation', label: 'Prep application for the captured job', text: 'Prep application for the captured job', tab: 'Tasks', notes: 'Want-to-apply jobs create application prep automatically.' }],
+    jobs: [{ alwaysDone: true, label: 'Review the start-application decision', text: 'Review the start-application decision', tab: 'Home', notes: 'The captured job queues a Home decision before application work is created.' }],
     applications: [{ workflow: 'Check application response', label: 'Check application response', text: 'Check application response', tab: 'Tasks', notes: 'Due from the real applied date + 12 days.' }],
     interviews: [{ workflow: 'Interview scheduling', altWorkflows: ['Interview prep (Domain scoping)', 'Interview prep (Fit case)', 'Day-before review'], label: 'Prepare for the scheduled interview', text: 'Prepare for the scheduled interview', tab: 'Tasks', notes: 'The interview round owns prep timing and follow-up.' }],
     people: [{ workflow: 'Outreach', altWorkflows: ['Send outreach', 'Contact follow-up', 'Reply and arrange conversation'], label: 'Work the next people action', text: 'Work the next people action', tab: 'Tasks', notes: 'Draft outreach, follow up, or arrange a conversation depending on stage.' }],
@@ -6333,9 +6402,9 @@ function processApplicationOnboarding(fields) {
   if (!fields.org) return failResult('I need the organisation name to capture an application.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   if (!fields.jobTitle) return failResult('I need at least a job title to capture an application.', 'jobTitle', 'MISSING_JOB_TITLE');
-  var jobId = writeJobRow(fields.jobTitle, org, 'Applied');
-  promoteOrgForLiveJob(org && org.id, 'Applied');
-  fireJobStatusChanged(jobId, '', 'Applied', { realDate: fields.appliedDate || today() });
+  var jobId = writeJobRow(fields.jobTitle, org, 'Submitted');
+  promoteOrgForLiveJob(org && org.id, 'Submitted');
+  fireJobStatusChanged(jobId, '', 'Submitted', { realDate: fields.appliedDate || today() });
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
   return okResult('Captured the application and created the response-check follow-up.');
 }
@@ -6344,22 +6413,24 @@ function processJobOnboarding(fields) {
   if (!fields.jobTitle) return failResult('I need at least a job title to capture a job.', 'jobTitle', 'MISSING_JOB_TITLE');
   if (!fields.org) return failResult('I need the organisation name to capture a job.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
-  var jobId = writeJobRow(fields.jobTitle, org, 'Want to apply');
-  promoteOrgForLiveJob(org && org.id, 'Want to apply');
+  var jobId = writeJobRow(fields.jobTitle, org, 'Not started');
+  promoteOrgForLiveJob(org && org.id, 'Not started');
   if (fields.deadline) getSheet('Jobs').getRange(getJobRowById(jobId).row, COLS.JOBS.DEADLINE).setValue(fields.deadline);
   if (fields.urlNotes) appendNoteFlag(getSheet('Jobs'), getJobRowById(jobId).row, COLS.JOBS.NOTES, fields.urlNotes);
-  fireJobStatusChanged(jobId, '', 'Want to apply', {});
-  return okResult('Captured the job and routed the next application work to Today/Decisions.');
+  fireJobStatusChanged(jobId, '', 'Not started', {});
+  return okResult('Captured the job and queued the start-application decision.');
 }
 
 function processInterviewOnboarding(fields) {
   if (!fields.jobTitle) return failResult('I need at least a job title to capture an interview.', 'jobTitle', 'MISSING_JOB_TITLE');
   if (!fields.org) return failResult('I need the organisation name to capture an interview.', 'org', 'MISSING_ORG');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
-  var jobId = writeJobRow(fields.jobTitle, org, 'Interviewing');
-  promoteOrgForLiveJob(org && org.id, 'Interviewing');
+  var jobId = writeJobRow(fields.jobTitle, org, 'Submitted');
+  promoteOrgForLiveJob(org && org.id, 'Submitted');
   var roundNum = fields.roundNumber || '1';
-  fireJobStatusChanged(jobId, '', 'Interviewing', {
+  fireJobStatusChanged(jobId, '', 'Submitted', { realDate: fields.appliedDate || today() });
+  routeJobOutcome(jobId, 'Interview invite', {
+    source: 'interview-onboarding',
     forceRound: true,
     roundDetails: { roundNum: roundNum, roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
   });
@@ -6553,16 +6624,14 @@ function captureConfig(captureType) {
     'Add/update job': {
       title: 'Add/update job',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
-      { k: 'deadline', l: 'Deadline, if any', t: 'date' }, { k: 'status', l: 'Status', t: 'select', o: jobStatuses, defaultValue: 'Want to apply' },
-      { k: 'appliedDate', l: 'Applied date, if already applied', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' },
-      { k: 'roundNumber', l: 'Round number, if interviewing', t: 'text', p: '1', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'roundType', l: 'Round type, if interviewing', t: 'select', o: roundTypes, blank: true, showIf: { k: 'status', v: 'Interviewing' } },
-      { k: 'interviewDate', l: 'Interview date, if known', t: 'date', showIf: { k: 'status', v: 'Interviewing' } }, { k: 'domainReadiness', l: 'Domain readiness, if interviewing', t: 'select', o: domain, blank: true, showIf: { k: 'status', v: 'Interviewing' } }]
+      { k: 'deadline', l: 'Deadline, if any', t: 'date' }, { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, defaultValue: 'Not started' },
+      { k: 'appliedDate', l: 'Submitted date, if already submitted', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' }]
     },
     'Application update': {
       title: 'Application update',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
-      { k: 'status', l: 'Current status', t: 'select', o: ['Applied', 'Interviewing', 'Offer', 'Parked', 'Closed'], blank: true, req: true },
-      { k: 'appliedDate', l: 'Applied date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Applied' }, { k: 'status', v: 'Interviewing' }, { k: 'status', v: 'Offer' }, { k: 'status', v: 'Parked' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfSet: 'status' },
+      { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, blank: true, req: true },
+      { k: 'appliedDate', l: 'Submitted date, if missing', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'response', l: 'Response received?', t: 'select', o: ['', 'Yes', 'No'], showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] },
       { k: 'outcome', l: 'Outcome / latest update', t: 'select', o: jobOutcomes, blank: true, showIf: { k: 'response', v: 'Yes' } }]
     },
     'Add/update person': {
@@ -6708,8 +6777,8 @@ function processConversationCapture(fields) {
 function processJobCapture(fields) {
   if (!fields.jobTitle) return failResult('I need at least a job title.', 'jobTitle', 'MISSING_JOB_TITLE');
   if (!fields.org) return failResult('I need the organisation name before I can route this job/application.', 'org', 'MISSING_ORG');
-  var status = normalizeJobStatus(fields.status || 'Want to apply');
-  if (!status) return failResult('Pick a valid job status.', 'status', 'INVALID_STATUS');
+  var status = normalizeJobStatus(fields.status || 'Not started');
+  if (!status) return failResult('Pick a valid application status.', 'status', 'INVALID_STATUS');
   var org = createNameOnlyOrg(fields.org || '', { status: 'Mapped', stub: true });
   var existingJob = findJobByTitleOrg(fields.jobTitle, org ? org.name : '');
   var jobId = writeJobRow(fields.jobTitle, org, status);
@@ -6722,7 +6791,6 @@ function processJobCapture(fields) {
   }
   if (fields.urlNotes) appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, fields.urlNotes);
   var opts = { realDate: fields.appliedDate || '' };
-  if (status === 'Interviewing') opts.roundDetails = { roundNum: fields.roundNumber || '1', roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' };
   fireJobStatusChanged(jobId, '', status, opts);
   job = getJobRowById(jobId);
   if (fields.response) sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(fields.response);
@@ -6731,9 +6799,7 @@ function processJobCapture(fields) {
     if (!normalizedOutcome) return failResult('Pick a valid job outcome.', 'outcome', 'INVALID_OUTCOME');
     sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(normalizedOutcome);
     sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue(normalizedOutcome === 'No response yet' ? 'No' : 'Yes');
-    var outcomeStatus = jobStatusForOutcome(normalizedOutcome);
-    if (outcomeStatus) setJobStatus(jobId, outcomeStatus, { source: 'capture-outcome' });
-    autoDismissPendingForTarget('Job', jobId, 'Job outcome recorded');
+    routeJobOutcome(jobId, normalizedOutcome, { source: 'capture-outcome', realDate: fields.appliedDate || '' });
   }
   if (fields.response === 'Yes' && !fields.outcome) createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
   return okResult((existingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
@@ -6769,7 +6835,7 @@ var HEADER_GUIDANCE = {
   },
   'Jobs': {
     'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
-    'Deadline': 'needed for Want to apply', 'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Applied date': 'backend date for response checks',
+    'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Applied date': 'backend submitted date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
     'Outcome': 'No response yet / Interview invite / Rejected / Offer / Parked',
@@ -6915,7 +6981,7 @@ var STATUS_COLOR_MAP = {
   'Sectors': { col: COLS.SECTORS.STATUS, colors: { 'Open': '#FFFFFF', 'Retired': '#F1F3F4' } },
   'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#EAE3DD' } },
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'Outreach sent': '#C2DBFF', 'Engaged': '#CEEAD6', 'Conversation scheduled': '#D7BCE8', 'Conversation completed': '#B6E3E0', 'Nurture': '#FEF7CD', 'Closed': '#F1F3F4' } },
-  'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Want to apply': '#C2DBFF', 'Applied': '#B6E3E0', 'Interviewing': '#D7BCE8', 'Offer': '#CEEAD6', 'Parked': '#FEF7CD', 'Closed': '#F1F3F4' } },
+  'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
   'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
   "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
   'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#EAE3DD' } }
@@ -7307,21 +7373,69 @@ function migrateOrganisationSectorIdSchema() {
   return true;
 }
 
+function openApplicationWorkByJobId() {
+  var out = {};
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var workflows = ['Application preparation', 'Submit application', 'Referral search'];
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
+    if (workflows.indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
+    var status = String(data[i][COLS.TODO.STATUS - 1]);
+    if (status !== 'Not started' && status !== 'In progress') continue;
+    var jobId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
+    if (jobId) out[jobId] = true;
+  }
+  return out;
+}
+
+function migrateLegacyApplicationStatusValue(value, jobId, openWorkByJobId) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  if (DROPDOWNS.JOB_STATUS.indexOf(raw) !== -1) return raw;
+  if (raw === 'Want to apply') return openWorkByJobId && openWorkByJobId[String(jobId)] ? 'In progress' : 'Not started';
+  return normalizeJobStatus(raw) || raw;
+}
+
 function migrateJobsDeadlineStatusSchema() {
   var sheet = getSheet('Jobs');
   if (!sheet || sheet.getLastRow() < 1) return false;
   var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), HEADERS.Jobs.length)).getValues()[0].map(String);
-  if (headers[4] === 'Deadline' && headers[5] === 'Status') return false;
-  if (!(headers[4] === 'Status' && headers[5] === 'Deadline')) return false;
+  var oldOrder = headers[4] === 'Status' && headers[5] === 'Deadline';
+  var renamedStatus = headers[4] === 'Deadline' && headers[5] === 'Status';
+  var current = headers[4] === 'Deadline' && headers[5] === 'Application status';
+  if (!oldOrder && !renamedStatus && !current) return false;
 
+  var changed = !current;
   var rowCount = Math.max(sheet.getLastRow() - 1, 0);
   if (rowCount > 0) {
-    var values = sheet.getRange(2, 5, rowCount, 2).getValues();
-    var swapped = values.map(function (row) { return [row[1], row[0]]; });
-    sheet.getRange(2, 5, rowCount, 2).setValues(swapped);
+    var openWorkByJobId = openApplicationWorkByJobId();
+    if (oldOrder) {
+      var rows = sheet.getRange(2, 1, rowCount, HEADERS.Jobs.length).getValues();
+      for (var i = 0; i < rows.length; i++) {
+        var oldStatus = rows[i][4];
+        var oldDeadline = rows[i][5];
+        rows[i][4] = oldDeadline;
+        rows[i][5] = migrateLegacyApplicationStatusValue(oldStatus, rows[i][0], openWorkByJobId);
+      }
+      sheet.getRange(2, 1, rowCount, HEADERS.Jobs.length).setValues(rows);
+      changed = true;
+    } else {
+      var statusValues = sheet.getRange(2, COLS.JOBS.STATUS, rowCount, 1).getValues();
+      var ids = sheet.getRange(2, COLS.JOBS.ID, rowCount, 1).getValues();
+      for (var j = 0; j < statusValues.length; j++) {
+        var migrated = migrateLegacyApplicationStatusValue(statusValues[j][0], ids[j][0], openWorkByJobId);
+        if (migrated !== String(statusValues[j][0] || '').trim()) {
+          statusValues[j][0] = migrated;
+          changed = true;
+        }
+      }
+      if (changed) sheet.getRange(2, COLS.JOBS.STATUS, rowCount, 1).setValues(statusValues);
+    }
   }
-  sheet.getRange(1, 1, 1, HEADERS.Jobs.length).setValues([HEADERS.Jobs]);
-  return true;
+  if (!current) sheet.getRange(1, 1, 1, HEADERS.Jobs.length).setValues([HEADERS.Jobs]);
+  return changed;
 }
 
 function migrateSectorIdSchema() {
@@ -7444,7 +7558,7 @@ function materializeDueTasks() {
       var deadline = jData[jj][COLS.JOBS.DEADLINE - 1];
       var response = String(jData[jj][COLS.JOBS.RESPONSE - 1]);
       if (!jobId || !jobTitle) continue;
-      if (jobStatus === 'Applied' && reviewDate && new Date(reviewDate) < todayDate && !response) {
+      if (jobStatus === 'Submitted' && reviewDate && new Date(reviewDate) < todayDate && !response) {
         if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', reviewDate, '15 min', '', 'Auto-triggered')) created++;
       }
     }
@@ -7570,7 +7684,7 @@ function orgOpenOpportunityCountMap() {
     var opportunity = String(r[COLS.JOBS.OPPORTUNITY - 1] || '');
     var orgId = String(r[COLS.JOBS.ORG_ID - 1] || '');
     var status = String(r[COLS.JOBS.STATUS - 1] || '');
-    if (opportunity && orgId && status !== 'Closed' && status !== 'Parked') out[orgId] = (out[orgId] || 0) + 1;
+    if (opportunity && orgId && status !== 'Closed') out[orgId] = (out[orgId] || 0) + 1;
   });
   return out;
 }
@@ -7793,7 +7907,7 @@ function ensureJobRowActionContext(sheet, row) {
     id = nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(id);
   }
-  if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
+  if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Not started');
   inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
   org = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '').trim();
   var orgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '').trim();
@@ -7806,7 +7920,7 @@ function ensureJobRowActionContext(sheet, row) {
     title: title,
     org: org,
     orgId: orgId,
-    status: normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply'),
+    status: normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Not started'),
     deadline: sheet.getRange(row, COLS.JOBS.DEADLINE).getValue()
   };
 }
@@ -7818,8 +7932,9 @@ function rowActionPrepSelectedJob() {
   withDocumentLock(function () {
     var job = ensureJobRowActionContext(sheet, row);
     if (!job) return;
-    promoteOrgForLiveJob(job.orgId, job.status);
-    appendTodoWithSource('Prep application for: ' + job.title, 'Job', job.id, job.org, 'Application preparation', 'Not started', job.deadline, '60 min', '', 'Manually added');
+    setJobStatus(job.id, 'In progress', { source: 'row-action-prep' });
+    autoDismissPendingDecisionByKey('JOB_START:' + job.id + ':Application preparation', 'Prep task created from row action');
+    promoteOrgForLiveJob(job.orgId, 'In progress');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionPrepSelectedJob' });
@@ -7832,8 +7947,10 @@ function rowActionReferralSearchSelectedJob() {
   withDocumentLock(function () {
     var job = ensureJobRowActionContext(sheet, row);
     if (!job) return;
-    promoteOrgForLiveJob(job.orgId, job.status);
-    appendTodoWithSource('Find people at: ' + job.org, 'Organisation', job.orgId, job.org, 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+    setJobStatus(job.id, 'In progress', { source: 'row-action-referral' });
+    promoteOrgForLiveJob(job.orgId, 'In progress');
+    appendTodoWithSource('Find referral for ' + job.title + ' at ' + job.org, 'Job', job.id, job.org, 'Referral search', 'Not started', job.deadline, '30 min', '', 'Manually added');
+    autoDismissPendingDecisionByKey('JOB_REFERRAL:' + job.id + ':Referral search', 'Referral task created from row action');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionReferralSearchSelectedJob' });
@@ -8166,7 +8283,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'The status labels');
-  r = writeKV(sheet, r, 'Jobs', 'Want to apply > Applied > Interviewing > Offer / Parked / Closed.');
+  r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Outcome records interview invite, rejection, offer, or parked.');
   r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Rejected / Offer / Parked.');
@@ -8269,8 +8386,8 @@ function syncJobsPeopleHealthFlags() {
       }
       var status = normalizeJobStatus(jobs[j][COLS.JOBS.STATUS - 1]);
       var deadline = jobs[j][COLS.JOBS.DEADLINE - 1];
-      if (status === 'Want to apply' && deadline && new Date(deadline) < todayDate) {
-        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missed-deadline] Deadline passed while still Want to apply');
+      if ((status === 'Not started' || status === 'In progress') && deadline && new Date(deadline) < todayDate) {
+        appendNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missed-deadline] Deadline passed before application was submitted');
         count++;
       } else {
         clearNoteFlag(jobsSheet, jr, COLS.JOBS.NOTES, '[missed-deadline]');
