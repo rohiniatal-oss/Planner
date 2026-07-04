@@ -5565,14 +5565,23 @@ var WRAP_COLUMNS = {
   "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES]
 };
 
+// v7.7.5: three same-column colors previously collided outright (To-do
+// Skipped/Cancelled, Today's plan Deferred/Skipped, Pending decisions
+// No/Auto-dismissed all shared #F1F3F4), and Organisations Mapped/Archived
+// were close enough to be indistinguishable at a glance. Introduced a
+// small, consistent neutral system instead of one-off fixes: #F1F3F4
+// (cool grey) stays "skipped/declined this instance"; #EAE3DD (new, warm
+// taupe) means "permanently set aside" (cancelled/archived/auto-dismissed);
+// #D2E3FC (already used elsewhere for Keep-alive) means "paused, will
+// resume" (deferred). No dropdown/status text values changed — colors only.
 var STATUS_COLOR_MAP = {
   'Sectors': { col: COLS.SECTORS.STATUS, colors: { 'Open': '#FFFFFF', 'Retired': '#F1F3F4' } },
-  'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#F1F3F4' } },
+  'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#EAE3DD' } },
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'Outreach sent': '#C2DBFF', 'Engaged': '#CEEAD6', 'Conversation scheduled': '#D7BCE8', 'Conversation completed': '#B6E3E0', 'Nurture': '#FEF7CD', 'Closed': '#F1F3F4' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Want to apply': '#C2DBFF', 'Applied': '#B6E3E0', 'Interviewing': '#D7BCE8', 'Offer': '#CEEAD6', 'Parked': '#FEF7CD', 'Closed': '#F1F3F4' } },
-  'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#F1F3F4' } },
-  "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#F1F3F4', 'Skipped': '#F1F3F4' } },
-  'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#F1F3F4' } }
+  'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
+  "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
+  'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#EAE3DD' } }
 };
 
 var COMMITMENT_CLASS_COLORS = { 'Fixed': '#F6C7C3', 'Blocking': '#FDE9D9', 'Keep-alive': '#D2E3FC', 'Active pursuit': '#CEEAD6', 'Pipeline-building': '#E6F4EA', 'Backlog': '#F1F3F4' };
