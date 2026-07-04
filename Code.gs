@@ -1898,6 +1898,26 @@ function syncOpenJobDeadlineTaskDates(jobId, deadline) {
   return count;
 }
 
+function removeOpenDeadlineReminderTasks() {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var rowsToDelete = [];
+  for (var i = 0; i < data.length; i++) {
+    var task = String(data[i][COLS.TODO.TASK - 1] || '');
+    var objType = String(data[i][COLS.TODO.OBJ_TYPE - 1] || '');
+    var workflow = String(data[i][COLS.TODO.WORKFLOW - 1] || '');
+    var status = String(data[i][COLS.TODO.STATUS - 1] || '');
+    var source = String(data[i][COLS.TODO.SOURCE - 1] || '');
+    if (task.indexOf('Deadline approaching: ') !== 0) continue;
+    if (objType !== 'Job' || workflow !== 'Admin' || source !== 'Auto-triggered') continue;
+    if (isTerminalTodoStatus(status)) continue;
+    rowsToDelete.push(i + 2);
+  }
+  for (var r = rowsToDelete.length - 1; r >= 0; r--) sheet.deleteRow(rowsToDelete[r]);
+  return rowsToDelete.length;
+}
+
 function syncTaskHealthFlags(sheet, row, rowData, daysSinceEdit) {
   var todoId = String(rowData[COLS.TODO.ID - 1] || '');
   var timeEst = String(rowData[COLS.TODO.TIME_EST - 1] || '');
@@ -7427,12 +7447,6 @@ function materializeDueTasks() {
       if (jobStatus === 'Applied' && reviewDate && new Date(reviewDate) < todayDate && !response) {
         if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', reviewDate, '15 min', '', 'Auto-triggered')) created++;
       }
-      if (jobStatus === 'Want to apply' && deadline) {
-        var daysToDeadline = daysBetween(todayDate, new Date(deadline));
-        if (daysToDeadline >= 0 && daysToDeadline <= 3) {
-          if (appendTodoOnceForWorkflow('Deadline approaching: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Admin', 'Not started', deadline, '15 min', 'Deadline in ' + daysToDeadline + ' day(s).', 'Auto-triggered')) created++;
-        }
-      }
     }
   }
 
@@ -8358,6 +8372,7 @@ function repairAllTabsImpl() {
   repairSectorTaskLinks();
   detectSectorOrphans();
   syncJobsPeopleHealthFlags();
+  removeOpenDeadlineReminderTasks();
   repairOrganisationsFormulas();
   syncOrgReviewSchedules();
   refreshLinkedContactsDisplay();
@@ -8405,6 +8420,7 @@ function dailyMaintenance() {
     runQueueHygiene();
     syncOrgReviewSchedules();
     materializeDueTasks();
+    removeOpenDeadlineReminderTasks();
     repairSectorRows();
     repairSectorTaskLinks();
     detectSectorOrphans();
