@@ -5973,9 +5973,12 @@ function processJobCapture(fields) {
 
 var HEADER_GUIDANCE = {
   'Sectors': {
-    'Sector ID': 'parent sector ID (SEC-*)', 'Sub-sector ID': 'child sub-sector ID (SUB-*)',
-    'Status': 'Open / Retired', 'Notes': 'trace and repair flags',
-    'Sector': 'Prefer Home > Add update for daily capture', 'Sub-sector': 'Narrow hunting ground; raises a Decision to build an org list'
+    'Sector ID': 'Broad sector ID. Same ID groups the parent sector and its sub-sectors.',
+    'Sector': 'Parent row: rename the sector. Sub-sector row: move this sub-sector to that sector.',
+    'Sub-sector ID': 'Child ID. Stays with the sub-sector if it is moved or renamed.',
+    'Sub-sector': 'Child label. Fill to create a sub-sector; rename here.',
+    'Status': 'Open / Retired. Retiring a parent also retires its sub-sectors.',
+    'Notes': 'Review flags and context.'
   },
   'Organisations': {
     'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair',
@@ -7246,6 +7249,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Good to know');
   r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show all columns when you need to inspect them.');
+  r = writeKV(sheet, r, 'Sectors', 'A parent Sector row names the broad area. A Sub-sector row belongs to that Sector ID. Editing Sector on a parent row renames it; editing Sector on a Sub-sector row moves that child under another sector.');
   r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
   r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for Break down, Mark blocked, and Defer. Today has row actions for pulling, locking, moving, and topping up the day.');
