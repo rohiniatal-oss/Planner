@@ -756,6 +756,25 @@ function syncOrgReviewSchedules() {
   return updated;
 }
 
+function appendOrgReviewDecision(orgId, orgName, status) {
+  status = normalizeOrgStatus(status);
+  if (!orgId || !orgName || (status !== 'Active' && status !== 'Dormant')) return '';
+  if (orgPursuitRouteExists(orgId)) {
+    scheduleOrgReviewById(orgId, { stampLastChecked: true });
+    return '';
+  }
+  var isDormant = status === 'Dormant';
+  var key = 'ORG_REVIEW_DUE:' + orgId + ':' + status;
+  var trigger = (isDormant ? 'Dormant' : 'Active') + ' organisation due for review: ' + orgName;
+  var task = 'Review ' + (isDormant ? 'dormant' : 'active') + ' org: ' + orgName;
+  var notes = isDormant
+    ? 'Decide whether to reactivate, extend dormancy, or archive.'
+    : 'Decide whether to find people, scan jobs, keep active, park, or archive.';
+  var decisionId = appendPendingDecision(key, trigger, task, 'Organisation', orgId, 'Org research', notes);
+  if (decisionId) scheduleOrgReviewById(orgId, { stampLastChecked: true });
+  return decisionId;
+}
+
 // Creates a name-only Organisation row (no cascade fired) — used when a
 // Job or Person references an org that doesn't exist yet. Per spec: this
 // never fires job-search or people-search cascades on its own unless the
@@ -7028,10 +7047,10 @@ function materializeDueTasks() {
       var oNextCheck = oData[oo][COLS.ORGS.NEXT_CHECK - 1];
       if (!oId) continue;
       if (oStatus === 'Active' && isDueOnOrBefore(oNextCheck, todayDate)) {
-        if (appendTodoOnceForWorkflow('Review active org: ' + oName, 'Organisation', oId, oName, 'Org research', 'Not started', '', '30 min', 'Decide whether to find people, scan jobs, keep active, park, or archive.', 'Auto-triggered')) created++;
+        if (appendOrgReviewDecision(oId, oName, oStatus)) created++;
       }
       if (oStatus === 'Dormant' && isDueOnOrBefore(oNextCheck, todayDate)) {
-        if (appendTodoOnceForWorkflow('Review dormant org: ' + oName, 'Organisation', oId, oName, 'Org research', 'Not started', '', '30 min', 'Decide whether to reactivate, extend dormancy, or archive.', 'Auto-triggered')) created++;
+        if (appendOrgReviewDecision(oId, oName, oStatus)) created++;
       }
     }
   }
