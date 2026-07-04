@@ -3154,9 +3154,11 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
       return;
     }
     promoteOrgForLivePerson(person.orgId, newStage);
+    var prepDueDate = scheduledDate ? addDays(new Date(scheduledDate), -1) : '';
     appendTodoOnceForWorkflow('Prep conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
       'Person', personId, person.org, 'Conversation prep', 'Not started',
-      scheduledDate ? addDays(new Date(scheduledDate), -1) : '', '30 min', conversationPrepNotes(), 'Auto-triggered');
+      prepDueDate, '30 min', conversationPrepNotes(), 'Auto-triggered');
+    updateOpenTodoDueForTargetWorkflow('Person', personId, 'Conversation prep', prepDueDate);
     return;
   }
   if (newStage === 'Conversation completed') {
@@ -10047,6 +10049,8 @@ function buildMenu() {
 // it" toast that fired even when the trigger was already present.
 function onOpen() {
   buildMenu();
+  try { if (migrateWorkbookSchema()) refreshAllDropdowns(); }
+  catch (err) { Logger.log('onOpen schema migration check: ' + err); }
   refreshHome();
   renderTodayDecisionCards();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
