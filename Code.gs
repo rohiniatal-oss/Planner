@@ -822,6 +822,87 @@ function checkOrgDuplicate(sheet, editedRow) {
   }
 }
 
+function replaceOrgDisplayText(value, oldName, newName) {
+  if (!oldName || !newName || String(oldName) === String(newName)) return value;
+  return String(value || '').split(String(oldName)).join(String(newName));
+}
+
+function collectIdsForOrg(sheet, idCol, orgIdCol, orgId) {
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2 || !orgId) return out;
+  var width = Math.max(idCol, orgIdCol);
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  data.forEach(function (row) {
+    if (String(row[orgIdCol - 1]) === String(orgId) && row[idCol - 1]) out[String(row[idCol - 1])] = true;
+  });
+  return out;
+}
+
+function propagateOrganisationRename(orgId, newName, oldName) {
+  if (!orgId || !newName) return;
+  var jobsSheet = getSheet('Jobs');
+  var peopleSheet = getSheet('People');
+  var roundsSheet = getSheet('Interviews');
+  var tasksSheet = getSheet('Tasks');
+  var decisionsSheet = getSheet('Decisions');
+  var jobIds = collectIdsForOrg(jobsSheet, COLS.JOBS.ID, COLS.JOBS.ORG_ID, orgId);
+  var personIds = collectIdsForOrg(peopleSheet, COLS.PEOPLE.ID, COLS.PEOPLE.ORG_ID, orgId);
+
+  if (jobsSheet && jobsSheet.getLastRow() > 1) {
+    var jobData = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, COLS.JOBS.ORG_ID).getValues();
+    jobData.forEach(function (row, i) {
+      if (String(row[COLS.JOBS.ORG_ID - 1]) === String(orgId)) jobsSheet.getRange(i + 2, COLS.JOBS.ORG).setValue(newName);
+    });
+  }
+
+  if (peopleSheet && peopleSheet.getLastRow() > 1) {
+    var peopleData = peopleSheet.getRange(2, 1, peopleSheet.getLastRow() - 1, COLS.PEOPLE.ORG_ID).getValues();
+    peopleData.forEach(function (row, i) {
+      if (String(row[COLS.PEOPLE.ORG_ID - 1]) === String(orgId)) peopleSheet.getRange(i + 2, COLS.PEOPLE.ORG).setValue(newName);
+    });
+  }
+
+  if (roundsSheet && roundsSheet.getLastRow() > 1) {
+    var roundsData = roundsSheet.getRange(2, 1, roundsSheet.getLastRow() - 1, COLS.ROUNDS.JOB_ID).getValues();
+    roundsData.forEach(function (row, i) {
+      if (jobIds[String(row[COLS.ROUNDS.JOB_ID - 1])]) roundsSheet.getRange(i + 2, COLS.ROUNDS.ORG_DISPLAY).setValue(newName);
+    });
+  }
+
+  if (tasksSheet && tasksSheet.getLastRow() > 1) {
+    var taskData = tasksSheet.getRange(2, 1, tasksSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    taskData.forEach(function (row, i) {
+      var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+      var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+      var linkedToOrg = objType === 'Organisation' && objId === String(orgId);
+      var linkedJob = objType === 'Job' && jobIds[objId];
+      var linkedPerson = objType === 'Person' && personIds[objId];
+      if (!(linkedToOrg || linkedJob || linkedPerson)) return;
+      var r = i + 2;
+      if (!isTerminalTodoStatus(row[COLS.TODO.STATUS - 1])) {
+        tasksSheet.getRange(r, COLS.TODO.ORG).setValue(newName);
+        var updatedTask = replaceOrgDisplayText(row[COLS.TODO.TASK - 1], oldName, newName);
+        if (updatedTask !== row[COLS.TODO.TASK - 1]) tasksSheet.getRange(r, COLS.TODO.TASK).setValue(updatedTask);
+      }
+      writeLinkedTo(tasksSheet, r, objType, objId);
+    });
+  }
+
+  if (decisionsSheet && decisionsSheet.getLastRow() > 1) {
+    var decisionData = decisionsSheet.getRange(2, 1, decisionsSheet.getLastRow() - 1, COLS.DECISIONS.DECISION).getValues();
+    decisionData.forEach(function (row, i) {
+      if (String(row[COLS.DECISIONS.TARGET_TYPE - 1]) !== 'Organisation') return;
+      if (String(row[COLS.DECISIONS.TARGET_ID - 1]) !== String(orgId)) return;
+      if (String(row[COLS.DECISIONS.DECISION - 1]) !== 'Pending') return;
+      var r = i + 2;
+      var trigger = replaceOrgDisplayText(row[COLS.DECISIONS.TRIGGER - 1], oldName, newName);
+      var task = replaceOrgDisplayText(row[COLS.DECISIONS.TASK - 1], oldName, newName);
+      if (trigger !== row[COLS.DECISIONS.TRIGGER - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TRIGGER).setValue(trigger);
+      if (task !== row[COLS.DECISIONS.TASK - 1]) decisionsSheet.getRange(r, COLS.DECISIONS.TASK).setValue(task);
+    });
+  }
+}
+
 function findPersonByNameOrg(name, org) {
   var sheet = getSheet('People');
   if (!sheet || sheet.getLastRow() < 2 || !name) return null;
@@ -2452,16 +2533,29 @@ function repairOrgTaxonomyLinks() {
 // itself is unaffected — an Organisation row never needed a second
 // anchor field.
 function onEditOrgs(sheet, row, col, newVal, e) {
+  if (col === COLS.ORGS.NAME && !newVal) {
+    var existingOrgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
+    if (existingOrgId) {
+      if (e && e.oldValue) sheet.getRange(row, COLS.ORGS.NAME).setValue(e.oldValue);
+      appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[name-required] Organisation name kept because linked rows use the Org ID');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Organisation name is required for linked rows. Archive the org instead of blanking it.', 'The Planner', 5);
+    }
+    return;
+  }
   if (col === COLS.ORGS.NAME && newVal) {
+    var oldOrgName = e && e.oldValue ? String(e.oldValue) : '';
     checkOrgDuplicate(sheet, row);
     var idCell = sheet.getRange(row, COLS.ORGS.ID);
     if (!idCell.getValue()) idCell.setValue(nextId(sheet, COLS.ORGS.ID, 'ORG'));
+    var orgId = idCell.getValue();
+    var finalOrgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
     if (!sheet.getRange(row, COLS.ORGS.TIER).getValue()) sheet.getRange(row, COLS.ORGS.TIER).setValue('B');
     // Default is Mapped — never Active — so creation alone never floods
     // the queue. Active is only ever set explicitly.
     if (!sheet.getRange(row, COLS.ORGS.STATUS).getValue()) sheet.getRange(row, COLS.ORGS.STATUS).setValue('Mapped');
     sheet.getRange(row, COLS.ORGS.LAST_CHECKED).setValue(today());
     applyOrgRowFormulas(sheet, row);
+    propagateOrganisationRename(orgId, finalOrgName, oldOrgName);
     var sector = sheet.getRange(row, COLS.ORGS.SECTOR).getValue();
     var sub = sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue();
     if (sector || sub) {
@@ -2471,6 +2565,8 @@ function onEditOrgs(sheet, row, col, newVal, e) {
         requestHomeRefresh();
       }
     }
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ORGS.SECTOR || col === COLS.ORGS.SUBSECTOR) {
