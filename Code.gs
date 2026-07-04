@@ -3665,9 +3665,13 @@ function bootstrapToday() {
   // getTodayPlanBuiltDate/setTodayPlanBuiltDate).
   sheet.getRange('B2:I2').merge().setFormula('=TODAY()').setNumberFormat('dddd d MMMM').setFontColor('#5F625E');
 
-  // Row 3: plan-summary headline — populateTodayImpl fills in the real
-  // counts once stagedTodaySelection has run; this just lays out the cell.
-  sheet.getRange('B3:I3').merge().setFontWeight('bold').setFontColor('#1B474D').setWrap(true);
+  // Row 3: plan-summary headline. populateTodayImpl replaces this
+  // placeholder with the real counts once stagedTodaySelection has run.
+  sheet.getRange('B3:I3').merge()
+    .setValue('Plan not built yet - tick refresh below to build today\'s plan.')
+    .setFontWeight('bold')
+    .setFontColor(HEADER_COLOR)
+    .setWrap(true);
 
   sheet.getRange('B4').setValue('Focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
