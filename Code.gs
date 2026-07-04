@@ -227,8 +227,7 @@ var SHEET_TO_HEADER_KEY = {
   'People': 'People',
   'Conversations': 'Interactions',
   'Interviews': 'Interview rounds',
-  'Guide': null,
-  'Dashboard': null
+  'Guide': null
 };
 
 // v7.1: legacy tab names from the pre-consolidation (v6.x) workbook.
@@ -3574,6 +3573,10 @@ function bootstrapToday() {
   sheet.setTabColor(ZONE_WORK_COLOR);
 
   sheet.getRange('A1:I1').merge().setValue('Today').setFontSize(16).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  var homeSheetForToday = getSheet('Home');
+  if (homeSheetForToday) sheet.getRange('A2').setFormula('=HYPERLINK("#gid=' + homeSheetForToday.getSheetId() + '","Home")').setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
+  var guideSheetForToday = getSheet('Guide');
+  if (guideSheetForToday) sheet.getRange('A3').setFormula('=HYPERLINK("#gid=' + guideSheetForToday.getSheetId() + '","Guide")').setFontSize(9).setFontColor('#01696F').setFontWeight('bold');
 
   // Row 2: friendly plan-built date. Stays a real Date value (formatted,
   // not stringified) so collectPreviousTodayState's same-day check still
@@ -5437,15 +5440,15 @@ function processJobCapture(fields) {
 var HEADER_GUIDANCE = {
   'Sectors': {
     'Sector ID': 'system', 'Status': 'Open / Retired', 'Notes': 'trace and repair flags',
-    'Sub-sector ID': 'system', 'Sector': '1. Broad area — add sector-only rows first', 'Sub-sector': '2. Narrow hunting ground — raises a Decision to build an org list'
+    'Sub-sector ID': 'system', 'Sector': 'Prefer Home > Add update for daily capture', 'Sub-sector': 'Narrow hunting ground; raises a Decision to build an org list'
   },
   'Organisations': {
-    'Org ID': 'system', 'Organisation': '1. Type the name', 'Sector': '2. Link to Sectors taxonomy', 'Sub-sector': '3. Link or create',
+    'Org ID': 'system', 'Organisation': 'Prefer Home > Add update; type here for audit/repair', 'Sector': 'Link to Sectors taxonomy', 'Sub-sector': 'Link or create',
     'Sub-sector ID': 'system', 'Tier': 'A/B/C, optional', 'Status': 'Mapped (default) / Active / Dormant / Archived',
     'Known people (count)': 'formula', 'Open opportunities (count)': 'formula', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
   },
   'People': {
-    'Person ID': 'system', 'Name': 'Type a contact name; Organisation unlocks outreach tasks', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
+    'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
     'Role': 'optional', 'Relationship type': 'optional',
     'Stage': 'Identified / Outreach sent / Engaged / Conversation scheduled / Conversation completed / Nurture / Closed',
     'Follow-up date': 'auto or manual',
@@ -5453,7 +5456,7 @@ var HEADER_GUIDANCE = {
     'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
   },
   'Jobs': {
-    'Job ID': 'system', 'Opportunity': '1. Job title', 'Organisation': '2. Type org — stub created if needed', 'Org ID': 'system',
+    'Job ID': 'system', 'Opportunity': 'Prefer Home > Add update; job title', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
     'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
@@ -5461,7 +5464,7 @@ var HEADER_GUIDANCE = {
     'Notes': 'URL/source and prep notes'
   },
   'Interactions': {
-    'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'pick or type person', 'Organisation': 'auto from person',
+    'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'Prefer Home > Add update; pick or type person', 'Organisation': 'auto from person',
     'Type': 'call, email, message, referral, etc.', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
   },
   'To-do': {
@@ -5742,9 +5745,39 @@ function reorderAndColourTabs() {
   ZONE_REF_TABS.forEach(function (n) { var s = getSheet(n); if (s) s.setTabColor(ZONE_REF_COLOR); });
 }
 
+function isLegacySpacerSheetName(name) {
+  var compact = String(name || '').replace(/\s/g, '');
+  return /^(?:\||│)+$/.test(compact);
+}
+
+function isSheetEmpty(sheet) {
+  return sheet && sheet.getLastRow() === 0 && sheet.getLastColumn() === 0;
+}
+
+function deleteSheetIfSafe(sheet) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!sheet || ss.getSheets().length <= 1) return false;
+  if (ss.getActiveSheet().getSheetId() === sheet.getSheetId()) {
+    var fallback = getSheet('Home') || ss.getSheets().filter(function (s) { return s.getSheetId() !== sheet.getSheetId(); })[0];
+    if (fallback) ss.setActiveSheet(fallback);
+  }
+  ss.deleteSheet(sheet);
+  return true;
+}
+
 function hideLegacyUtilityTabs() {
-  var d = getSheet('Dashboard');
-  if (d && !d.isSheetHidden()) { try { d.hideSheet(); } catch (err) { } }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dashboard = getSheet('Dashboard');
+  if (dashboard) deleteSheetIfSafe(dashboard);
+
+  ss.getSheets().slice().forEach(function (sheet) {
+    if (!isLegacySpacerSheetName(sheet.getName())) return;
+    if (isSheetEmpty(sheet)) {
+      deleteSheetIfSafe(sheet);
+    } else if (!sheet.isSheetHidden()) {
+      try { sheet.hideSheet(); } catch (err) { }
+    }
+  });
 }
 
 // =============================================================
@@ -6659,6 +6692,7 @@ function fullRefresh() {
   applyAllRichTextHeaders();
   applyColumnWidths();
   applyColumnLayout();
+  hideLegacyUtilityTabs();
   refreshAllDropdowns();
   refreshHome();
   renderTodayDecisionCards();
