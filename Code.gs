@@ -284,7 +284,10 @@ var DROPDOWNS = {
     'Interview follow-up', 'Admin'
   ],
   TODO_STATUS: ['Not started', 'In progress', 'Done', 'Skipped', 'Cancelled'],
-  TODO_TIME: ['15 min', '30 min', '45 min', '60 min', '90 min', '120 min', 'Custom…', 'Multi-day'],
+  // v7.6.1: 'Custom…' removed per the handover spec (§8) — never made
+  // functional, and parseTimeEst silently treated it as 30 min, which
+  // was misleading. Consistent with minimizing daily choices elsewhere.
+  TODO_TIME: ['15 min', '30 min', '45 min', '60 min', '90 min', '120 min', 'Multi-day'],
   TODO_COMMITMENT_CLASS: ['Fixed', 'Blocking', 'Keep-alive', 'Active pursuit', 'Pipeline-building', 'Backlog'],
   TODO_SOURCE: ['Auto-triggered', 'Manually added', 'Onboarding', 'Decision', 'Manual pull'],
 
@@ -901,7 +904,7 @@ function acceptPendingDecision(sheet, row) {
   }
   var org = resolveOrgForTarget(targetType, targetId);
   var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', '', defaultTimeForWorkflow(workflow), notes, 'Decision');
-  if (!todoId) todoId = findOpenTodoByTaskTarget(task, targetId);
+  if (!todoId) todoId = findOpenTodoByTaskTarget(task, targetId, workflow);
   if (todoId) {
     sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId);
   } else {
@@ -1166,8 +1169,11 @@ function runQueueHygiene() {
     // already been broken down into real sub-tasks (\u00a74.2 guard).
     var todoId = String(row[COLS.TODO.ID - 1]);
     var timeEst = String(row[COLS.TODO.TIME_EST - 1] || '');
-    if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS) {
-      if (!hasSubtasks(todoId)) appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+    var isParent = hasSubtasks(todoId);
+    if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS && !isParent) {
+      appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+    } else {
+      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[needs breakdown]');
     }
 
     // v7.6 \u00a73: mechanical, boolean-only Tasks-tab health flags \u2014 each
@@ -1175,6 +1181,10 @@ function runQueueHygiene() {
     // HOT above) so unrelated problems on the same row can co-exist
     // instead of clobbering each other (appendNoteFlag dedupes by
     // category, replacing any prior message in that same category).
+    // v7.6.1: each one is also explicitly CLEARED when its condition is
+    // no longer true \u2014 appendNoteFlag only ever adds/replaces, so without
+    // this a fixed task (e.g. an estimate finally added) stayed flagged
+    // and highlighted forever.
     var workflow = String(row[COLS.TODO.WORKFLOW - 1] || '');
     var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
     var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
@@ -1182,19 +1192,27 @@ function runQueueHygiene() {
 
     if (!timeEst) {
       appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-estimate] \u26a0 Missing time estimate');
+    } else {
+      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-estimate]');
     }
     if (workflow !== 'Admin' && (objType === 'None' || !objType)) {
       appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-link] \u26a0 Missing linked object for ' + workflow);
+    } else {
+      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-link]');
     }
     if (DATE_CONDITIONAL_WORKFLOWS.indexOf(workflow) !== -1 && resolveDaysToLinkedDate(workflow, objId, objType, dueDate) === null) {
       appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-date] \u26a0 No due date for a date-sensitive workflow');
+    } else {
+      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[no-date]');
     }
     // A task that's already been broken down should be Skipped (see
     // completeBreakdownFromPopup) \u2014 if it's somehow still open, that's a
     // data-integrity signal worth surfacing, not a silent re-flag as
-    // "needs breakdown" (the hasSubtasks guards above already prevent that).
-    if (hasSubtasks(todoId)) {
+    // "needs breakdown" (the !isParent guard above already prevents that).
+    if (isParent) {
       appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[parent-still-open] \u26a0 Already broken down into sub-tasks \u2014 should be Skipped');
+    } else {
+      clearNoteFlag(sheet, r, COLS.TODO.NOTES, '[parent-still-open]');
     }
   }
 }
@@ -1209,7 +1227,12 @@ function runQueueHygiene() {
 // workflow to key on by design), and exact-text was brittle to minor
 // rewording. appendTodoOnceForWorkflow's (objType, objId, workflow) key
 // is unrelated and unchanged.
-function isTodoDuplicate(sheet, task, objId, statusToCreate) {
+// v7.6.1: takes workflow too — objId alone doesn't discriminate between
+// unrelated tasks against the same linked object (e.g. a Job with both
+// an "Application preparation" and a "Check application response" task
+// open at once). When workflow is supplied it must match before the
+// fuzzy-text check even runs, narrowing false-positive risk.
+function isTodoDuplicate(sheet, task, objId, statusToCreate, workflow) {
   if (!task) return false;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
@@ -1217,6 +1240,7 @@ function isTodoDuplicate(sheet, task, objId, statusToCreate) {
   var data = sheet.getRange(2, 1, lastRow - 1, COLS.TODO.STATUS).getValues();
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
+    if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
     if (st !== 'Not started' && st !== 'In progress') continue;
     if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return true;
@@ -1238,17 +1262,21 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
   return false;
 }
 
-// Kept in step with isTodoDuplicate's fuzzy match (same threshold) — this
-// finds the specific task that caused appendTodoWithSource's dedup
-// rejection, so acceptPendingDecision can still link a Decision to it.
-// An exact-only match here would miss anything isTodoDuplicate itself
-// would have flagged, reintroducing the "accepted but unlinked" gap.
-function findOpenTodoByTaskTarget(task, objId) {
+// Kept in step with isTodoDuplicate's fuzzy match (same threshold + now
+// the same workflow requirement) — this finds the specific task that
+// caused appendTodoWithSource's dedup rejection, so acceptPendingDecision
+// can still link a Decision to it. An exact-only match here would miss
+// anything isTodoDuplicate itself would have flagged, reintroducing the
+// "accepted but unlinked" gap. Without the workflow check, a busy Job/Org
+// with several open tasks against it could link the Decision to the
+// wrong one — see v7.6.1.
+function findOpenTodoByTaskTarget(task, objId, workflow) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !task) return '';
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
+    if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
     if (st !== 'Not started' && st !== 'In progress') continue;
     if (similarity(String(data[i][COLS.TODO.TASK - 1]), String(task)) >= 0.85) return String(data[i][COLS.TODO.ID - 1] || '');
@@ -1260,10 +1288,18 @@ function appendTodo(task, objType, objId, org, workflow, status, dueDate, timeEs
   return appendTodoWithSource(task, objType, objId, org, workflow, status, dueDate, timeEst, notes, 'Auto-triggered');
 }
 
-function appendTodoWithSource(task, objType, objId, org, workflow, status, dueDate, timeEst, notes, source) {
+// v7.6.1: opts.skipDuplicateCheck lets a caller bypass the dedup check
+// entirely — needed by completeBreakdownFromPopup, where every sub-task
+// under one Multi-day parent shares the same objType/objId/workflow by
+// design, so duplicate-prevention doesn't apply (the whole point is
+// intentionally creating several distinct rows in one action); without
+// this, two genuinely different sub-tasks with merely similar wording
+// could get silently dropped.
+function appendTodoWithSource(task, objType, objId, org, workflow, status, dueDate, timeEst, notes, source, opts) {
+  opts = opts || {};
   var sheet = getSheet('Tasks');
   if (!sheet || !task) return '';
-  if (isTodoDuplicate(sheet, task, objId || '', status || 'Not started')) return '';
+  if (!opts.skipDuplicateCheck && isTodoDuplicate(sheet, task, objId || '', status || 'Not started', workflow)) return '';
   var id = nextId(sheet, COLS.TODO.ID, 'TODO');
   var row = new Array(HEADERS['To-do'].length).fill('');
   row[COLS.TODO.ID - 1] = id;
@@ -1490,7 +1526,11 @@ function completeTodoRow(sheet, row, status, options) {
   if (isTerminalTodoStatus(target)) {
     if (!sheet.getRange(row, COLS.TODO.COMPLETED).getValue()) sheet.getRange(row, COLS.TODO.COMPLETED).setValue(today());
     if (target === 'Done' && !alreadyTerminal) routeTodoCompletion(getTodoByRow(sheet, row), options);
-    if (target === 'Skipped' && !alreadyTerminal) handleSkipCascade(sheet, row);
+    // v7.6.1: a Multi-day parent retired via completeBreakdownFromPopup
+    // (source: 'breakdown') is a structural rollup, not abandoned work —
+    // the skip cascade would otherwise flag the linked source object
+    // (e.g. "Prep/submit skipped — Park or Close?") as if it were.
+    if (target === 'Skipped' && !alreadyTerminal && options.source !== 'breakdown') handleSkipCascade(sheet, row);
     if (target === 'Cancelled' && !alreadyTerminal) handleCancelCascade(sheet, row);
     syncTodayRowForTodo(row, target);
     renderTodayDecisionCards();
@@ -5068,7 +5108,7 @@ function completeBreakdownFromPopup(parentTodoId, subtasks) {
     var id = appendTodoWithSource(
       st.text, parent.objType, parent.objId, parent.org, parent.workflow,
       'Not started', '', st.timeEst || defaultTimeForWorkflow(parent.workflow),
-      '', 'Manually added'
+      '', 'Manually added', { skipDuplicateCheck: true }
     );
     if (id) {
       var s = getSheet('Tasks');
@@ -5176,6 +5216,10 @@ function rowActionDeferSelectedTask() {
     String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
     String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
   sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+  // v7.6.1: if this task is currently sitting on Today's Commit list, it
+  // would otherwise keep showing stale info until some unrelated refresh.
+  populateToday();
+  refreshHome();
   SpreadsheetApp.getActiveSpreadsheet().toast('Due date pushed 3 days and commitment class recalculated.', 'The Planner', 4);
 }
 
