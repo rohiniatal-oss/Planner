@@ -6619,7 +6619,7 @@ var HEADER_GUIDANCE = {
     'Notes': 'source, context, next angle', 'Follow-ups sent count': 'system'
   },
   'Jobs': {
-    'Job ID': 'system', 'Opportunity': 'Prefer Home > Add update; job title', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
+    'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
     'Status': 'Want to apply / Applied / Interviewing / Offer / Parked / Closed', 'Deadline': 'needed for Want to apply', 'Applied date': 'backend date for response checks',
     'Linked contacts (IDs)': 'system', 'Linked contacts (display)': 'people known at this org', 'Review date': 'backend follow-up date',
     'Response received': 'Set Yes when any response arrives; the system will ask for the outcome',
@@ -7610,12 +7610,50 @@ function rowActionScanJobsAtSelectedOrg() {
   }, { label: 'rowActionScanJobsAtSelectedOrg' });
 }
 
+function ensureJobRowActionContext(sheet, row) {
+  var ui = SpreadsheetApp.getUi();
+  var title = String(sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue() || '').trim();
+  if (!title) {
+    ui.alert('Add the Opportunity first', 'Type the job/opportunity title in this row before using Job row actions.', ui.ButtonSet.OK);
+    return null;
+  }
+  var org = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '').trim();
+  if (!org) {
+    ui.alert('Add the Organisation next', 'Add Organisation on this Job row before routing tasks or interview rounds.', ui.ButtonSet.OK);
+    return null;
+  }
+  var id = String(sheet.getRange(row, COLS.JOBS.ID).getValue() || '').trim();
+  if (!id) {
+    id = nextId(sheet, COLS.JOBS.ID, 'JOB');
+    sheet.getRange(row, COLS.JOBS.ID).setValue(id);
+  }
+  if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
+  inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
+  org = String(sheet.getRange(row, COLS.JOBS.ORG).getValue() || '').trim();
+  var orgId = String(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue() || '').trim();
+  if (!orgId) {
+    ui.alert('Organisation could not be linked', 'Check the Organisation value, then try the row action again.', ui.ButtonSet.OK);
+    return null;
+  }
+  return {
+    id: id,
+    title: title,
+    org: org,
+    orgId: orgId,
+    status: normalizeJobStatus(sheet.getRange(row, COLS.JOBS.STATUS).getValue() || 'Want to apply'),
+    deadline: sheet.getRange(row, COLS.JOBS.DEADLINE).getValue()
+  };
+}
+
 function rowActionPrepSelectedJob() {
   var sheet = SpreadsheetApp.getActiveSheet();
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
-    appendTodoWithSource('Prep application for: ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue(), 'Job', sheet.getRange(row, COLS.JOBS.ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Application preparation', 'Not started', sheet.getRange(row, COLS.JOBS.DEADLINE).getValue(), '60 min', '', 'Manually added');
+    var job = ensureJobRowActionContext(sheet, row);
+    if (!job) return;
+    promoteOrgForLiveJob(job.orgId, job.status);
+    appendTodoWithSource('Prep application for: ' + job.title, 'Job', job.id, job.org, 'Application preparation', 'Not started', job.deadline, '60 min', '', 'Manually added');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionPrepSelectedJob' });
@@ -7626,7 +7664,10 @@ function rowActionReferralSearchSelectedJob() {
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
-    appendTodoWithSource('Find people at: ' + sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Organisation', sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.ORG).getValue(), 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
+    var job = ensureJobRowActionContext(sheet, row);
+    if (!job) return;
+    promoteOrgForLiveJob(job.orgId, job.status);
+    appendTodoWithSource('Find people at: ' + job.org, 'Organisation', job.orgId, job.org, 'Referral search', 'Not started', '', '30 min', '', 'Manually added');
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionReferralSearchSelectedJob' });
@@ -7678,7 +7719,9 @@ function rowActionAddInterviewRound() {
   if (sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a Job row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   withDocumentLock(function () {
-    createInterviewRoundForJob(sheet.getRange(row, COLS.JOBS.ID).getValue(), {});
+    var job = ensureJobRowActionContext(sheet, row);
+    if (!job) return;
+    createInterviewRoundForJob(job.id, {});
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionAddInterviewRound' });
