@@ -2749,6 +2749,11 @@ function routeJobOutcome(jobId, outcome, opts) {
   var job = getJobRowById(jobId);
   if (!job) return false;
   if (normalizedOutcome === 'Interview invite') {
+    var inviteSheet = getSheet('Jobs');
+    inviteSheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+    inviteSheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Interview invite');
+    inviteSheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
+    appendNoteFlag(inviteSheet, job.row, COLS.JOBS.NOTES, '[interview-invite] Interview workflow opened.');
     setJobStatus(jobId, 'Submitted', { source: opts.source || 'job-outcome', realDate: opts.realDate || job.appliedDate || today() });
     autoDismissPendingForTarget('Job', jobId, 'Interview invite recorded');
     setOpenTodosForTarget('Job', jobId, 'Skipped', 'Interview invite received', ['Check application response']);
@@ -2758,6 +2763,8 @@ function routeJobOutcome(jobId, outcome, opts) {
   }
   if (normalizedOutcome === 'Rejected') {
     var sheet = getSheet('Jobs');
+    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
+    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Rejected');
     sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
     appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[rejected] Application closed after rejection.');
     setJobStatus(jobId, 'Closed', { source: opts.source || 'job-outcome' });
@@ -2834,6 +2841,12 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
   if (newStatus === 'Closed') {
     autoDismissPendingForTarget('Job', jobId, 'Job closed');
     clearNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
+    sheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
+    var closedOutcome = normalizeJobOutcome(sheet.getRange(job.row, COLS.JOBS.OUTCOME).getValue());
+    if (!closedOutcome || closedOutcome === 'Waiting') {
+      sheet.getRange(job.row, COLS.JOBS.RESPONSE).clearContent();
+      sheet.getRange(job.row, COLS.JOBS.OUTCOME).clearContent();
+    }
     setOpenTodosForTarget('Job', jobId, 'Cancelled', 'Job closed');
   }
 }
@@ -3879,9 +3892,8 @@ function onEditJobs(sheet, row, col, newVal, e) {
       SpreadsheetApp.getActiveSpreadsheet().toast('Submit the application before recording a response.', 'The Planner', 5);
       return;
     }
-    createJobResponseOutcomeDecision(responseJobId, 'Response received for ' + sheet.getRange(row, COLS.JOBS.OPPORTUNITY).getValue());
-    renderTodayDecisionCards();
-    refreshHome();
+    restoreOrClearEditedCell(sheet, row, col, e);
+    runApplicationResultForJobPopup(responseJobId);
     return;
   }
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'No') {
@@ -6262,6 +6274,7 @@ function collectOpenApplications(limit) {
     var sortDate = deadline || nextCheck || addDays(today(), 365);
     var detail = status;
     if (status === 'Submitted') detail = result || 'Submitted';
+    if (status === 'Submitted' && result === 'Interview invite') detail = 'Interview invite - see Interviews';
     if (status === 'In progress' && deadline) detail += ' · due ' + formatDateFriendly(deadline);
     if (status === 'Submitted' && nextCheck && (result || '') === 'Waiting') detail += ' · check ' + formatDateFriendly(nextCheck);
     items.push({ title: title, org: org, status: status, detail: detail, date: new Date(sortDate) });
@@ -7298,11 +7311,17 @@ function completeReferralSearchResultFromPopup(payload) {
 }
 
 function buildApplicationResultHtml(todoId) {
-  var todo = getTodoById(todoId);
-  var job = todo ? getJobRowById(todo.objId) : null;
-  if (!todo || !job || !isApplicationResponseCheckTask(todo)) return '<p>Application response task not found.</p>';
+  return buildApplicationResultHtmlForJob('', todoId);
+}
+
+function buildApplicationResultHtmlForJob(jobId, todoId) {
+  var todo = todoId ? getTodoById(todoId) : null;
+  var job = todo ? getJobRowById(todo.objId) : getJobRowById(jobId);
+  if (todoId && (!todo || !isApplicationResponseCheckTask(todo))) return '<p>Application response task not found.</p>';
+  if (!job) return '<p>Application not found.</p>';
   var data = {
-    todoId: todo.id,
+    todoId: todo ? todo.id : '',
+    jobId: job.id,
     title: job.title,
     org: job.org,
     current: normalizeJobOutcome(job.outcome) || 'Waiting',
@@ -7323,7 +7342,7 @@ function buildApplicationResultHtml(todoId) {
     '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;' +
     'var result=document.getElementById("result");data.outcomes.forEach(function(o){var opt=document.createElement("option");opt.value=o;opt.textContent=o;result.appendChild(opt);});result.value=data.current;' +
-    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Home.";}).completeApplicationResultFromPopup({todoId:data.todoId,outcome:result.value});}</script>';
+    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Home.";}).completeApplicationResultFromPopup({todoId:data.todoId,jobId:data.jobId,outcome:result.value});}</script>';
 }
 
 function runApplicationResultPopup(todoId) {
@@ -7331,18 +7350,24 @@ function runApplicationResultPopup(todoId) {
   SpreadsheetApp.getUi().showModalDialog(html, 'Application result');
 }
 
+function runApplicationResultForJobPopup(jobId) {
+  var html = HtmlService.createHtmlOutput(buildApplicationResultHtmlForJob(jobId, '')).setWidth(460).setHeight(300).setTitle('Application result');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Application result');
+}
+
 function completeApplicationResultFromPopup(payload) {
   return withDocumentLock(function () {
     try {
       payload = payload || {};
-      var todo = getTodoById(payload.todoId);
-      var job = todo ? getJobRowById(todo.objId) : null;
-      if (!todo || !job || !isApplicationResponseCheckTask(todo)) return failResult('I could not find that response-check task.', '', 'TASK_NOT_FOUND');
+      var todo = payload.todoId ? getTodoById(payload.todoId) : null;
+      if (payload.todoId && !isApplicationResponseCheckTask(todo)) return failResult('I could not find that response-check task.', '', 'TASK_NOT_FOUND');
+      var job = todo ? getJobRowById(todo.objId) : getJobRowById(payload.jobId);
+      if (!job) return failResult('I could not find that application.', '', 'JOB_NOT_FOUND');
       if (!isJobSubmittedForResponseTracking(job.id)) return failResult('Set Application status to Submitted before recording a result.', '', 'NOT_SUBMITTED');
       var outcome = normalizeJobOutcome(payload.outcome);
       if (!outcome) return failResult('Choose Waiting, Interview invite, or Rejected.', 'outcome', 'INVALID_OUTCOME');
 
-      completeTodo(todo.id, 'Done', { source: 'application-result-popup', responseCheckHandled: true });
+      if (todo) completeTodo(todo.id, 'Done', { source: 'application-result-popup', responseCheckHandled: true });
       var sheet = getSheet('Jobs');
       job = getJobRowById(job.id);
       if (!job) return failResult('I could not find the job after updating the task.', '', 'JOB_NOT_FOUND');
