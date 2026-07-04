@@ -83,7 +83,7 @@
  *   anything, then captures starting facts entirely through popups —
  *   the user never has to manually navigate to a backend tab. Sector
  *   onboarding is 3 explicit stages:
- *     1. Sector-only row      → direct Task: "List 2-4 sub-sectors"
+ *     1. Sector-only row      → direct Task: "Add 2-4 sub-sector rows"
  *     2. Sub-sector row       → Decision: "Build an org list here?"
  *     3. Yes on that Decision → Task: "Market map: <sub-sector>"
  *                                (No → no market-map Task is created)
@@ -2196,7 +2196,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
 // functions below, so there is only one place this logic can drift):
 //
 //   1. Sector-only row (Sub-sector blank)
-//        -> direct Task: "List 2-4 sub-sectors worth exploring"
+//        -> direct Task: "Add 2-4 sub-sector rows"
 //   2. Sub-sector row added
 //        -> Decision: "Build an organisation list in this sub-sector?"
 //   3. Yes on that Decision
@@ -2464,11 +2464,21 @@ function onEditOrgs(sheet, row, col, newVal, e) {
     applyOrgRowFormulas(sheet, row);
     var sector = sheet.getRange(row, COLS.ORGS.SECTOR).getValue();
     var sub = sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue();
-    if (sector || sub) applyOrgTaxonomyLink(row, sector, sub);
+    if (sector || sub) {
+      var linkedBranch = applyOrgTaxonomyLink(row, sector, sub);
+      if (linkedBranch && !linkedBranch.isSectorOnly) {
+        renderTodayDecisionCards();
+        requestHomeRefresh();
+      }
+    }
     return;
   }
   if (col === COLS.ORGS.SECTOR || col === COLS.ORGS.SUBSECTOR) {
-    applyOrgTaxonomyLink(row, sheet.getRange(row, COLS.ORGS.SECTOR).getValue(), sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue());
+    var taxonomyBranch = applyOrgTaxonomyLink(row, sheet.getRange(row, COLS.ORGS.SECTOR).getValue(), sheet.getRange(row, COLS.ORGS.SUBSECTOR).getValue());
+    if (taxonomyBranch && !taxonomyBranch.isSectorOnly) {
+      renderTodayDecisionCards();
+      requestHomeRefresh();
+    }
     return;
   }
   if (col === COLS.ORGS.TIER) {
@@ -2509,7 +2519,7 @@ function fireOrgActiveCascade(orgId, orgName) {
 
 // --- Sectors: Stage 1 (sector-only) and Stage 2/3 (sub-sector) ---
 
-// Stage 1: fires the direct "list sub-sectors" Task. Deduplicated by
+// Stage 1: fires the direct "add sub-sector rows" Task. Deduplicated by
 // task text + target so re-editing the same Sector row (or capturing
 // it again via onboarding) never creates a second copy. Accepts either
 // a sector name (creates/finds the sector-only branch) or an
@@ -2529,10 +2539,11 @@ function fireSectorOnlyTask(sector) {
 // on that Decision is what creates the Market-map Task (see
 // acceptPendingDecision -> appendTodoWithSource, workflow 'Market
 // mapping'); No creates nothing.
-function fireSubsectorAddedDecision(sector, subsector, subsectorId) {
+function fireSubsectorAddedDecision(sector, subsector, subsectorId, opts) {
+  opts = opts || {};
   var expansionLabel = sector + ' - ' + subsector;
   var expansionKey = 'EXPAND_SUBSECTOR:' + subsectorId;
-  if (findDecisionByKey(expansionKey)) return '';
+  if (!opts.allowAfterResolved && findDecisionByKey(expansionKey)) return '';
   return appendPendingDecision(expansionKey, 'Sub-sector added: ' + expansionLabel,
     'Market map: ' + expansionLabel, 'Sector', subsectorId, 'Market mapping',
     'Build a list of target organisations in this sub-sector?');
@@ -2868,6 +2879,21 @@ function detectSectorOrphans() {
         count++;
       } else if (taskObjType === 'Sector' && isResolvedSectorRef) {
         clearNoteFlag(taskSheet, t + 2, COLS.TODO.NOTES, '[orphaned-sector]');
+      }
+    }
+  }
+  var decisionSheet = getSheet('Decisions');
+  if (decisionSheet && decisionSheet.getLastRow() >= 2) {
+    var decisionData = decisionSheet.getRange(2, 1, decisionSheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+    for (var d = 0; d < decisionData.length; d++) {
+      var decisionSectorId = String(decisionData[d][COLS.DECISIONS.TARGET_ID - 1] || '');
+      var decisionObjType = String(decisionData[d][COLS.DECISIONS.TARGET_TYPE - 1]);
+      var isResolvedDecisionSectorRef = decisionSectorId && (decisionSectorId.indexOf('SEC-') === 0 || decisionSectorId.indexOf('SUB-') === 0);
+      if (decisionObjType === 'Sector' && isResolvedDecisionSectorRef && !existing[decisionSectorId]) {
+        appendNoteFlag(decisionSheet, d + 2, COLS.DECISIONS.NOTES, '[orphaned-sector] Linked Sector/Sub-sector no longer exists');
+        count++;
+      } else if (decisionObjType === 'Sector' && isResolvedDecisionSectorRef) {
+        clearNoteFlag(decisionSheet, d + 2, COLS.DECISIONS.NOTES, '[orphaned-sector]');
       }
     }
   }
@@ -5442,7 +5468,7 @@ function buildSetupHtml() {
     'var existingRows=' + existingRows + ';' +
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', domainReadiness=' + JSON.stringify(domain) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ';' +
     'var forms={' +
-    ' sectors:{title:"Add your first sector(s)",fields:[{k:"sectorNames",l:"Sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
+    ' sectors:{title:"Add your first broad sector(s)",fields:[{k:"sectorNames",l:"Broad sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"},{k:"domainReadiness",l:"Domain readiness",t:"select",o:domainReadiness,blank:true,showIfSet:"interviewDate"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"When did you apply?",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
@@ -6952,9 +6978,13 @@ function rowActionSearchOrgsForSubsector() {
   withDocumentLock(function () {
     var branch = upsertSectorBranch({ sector: sector, subsector: sub, source: 'manual_sheet_entry', preferredRow: row, createExpansionDecision: false });
     if (!branch || !branch.id) return;
-    if (fireSubsectorAddedDecision(branch.sector, branch.subsector, branch.id)) {
+    var hadPending = !!findPendingDecisionByKey('EXPAND_SUBSECTOR:' + branch.id);
+    if (fireSubsectorAddedDecision(branch.sector, branch.subsector, branch.id, { allowAfterResolved: true })) {
       renderTodayDecisionCards();
       requestHomeRefresh();
+      SpreadsheetApp.getActiveSpreadsheet().toast(hadPending ? 'Market-map decision is already in the queue.' : 'Market-map decision queued on Home.', 'The Planner', 4);
+    } else {
+      SpreadsheetApp.getActiveSpreadsheet().toast('No market-map decision was queued. Check the selected sub-sector row.', 'The Planner', 5);
     }
   }, { label: 'rowActionSearchOrgsForSubsector' });
 }
@@ -6972,6 +7002,9 @@ function rowActionBreakDownSelectedSector() {
     if (fireSectorOnlyTask(branch)) {
       populateToday();
       requestHomeRefresh();
+      SpreadsheetApp.getActiveSpreadsheet().toast('Sub-sector entry task queued on Today.', 'The Planner', 4);
+    } else {
+      SpreadsheetApp.getActiveSpreadsheet().toast('Sub-sector entry task already exists or is in progress.', 'The Planner', 4);
     }
   }, { label: 'rowActionBreakDownSelectedSector' });
 }
