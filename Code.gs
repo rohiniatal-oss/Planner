@@ -301,7 +301,7 @@ var DROPDOWNS = {
   ROUND_TYPE: ['Recruiter', 'Hiring manager', 'Panel', 'Case', 'Technical', 'Culture fit', 'Final', 'Other'],
   ROUND_STATUS: ['To schedule', 'Scheduled', 'Completed', 'Cancelled', 'Reschedule'],
   DOMAIN_READINESS: ['Strong', 'Refresh needed', 'Weak or new'],
-  OFFICIAL_OUTCOME: ['Waiting', 'Next round', 'Rejected', 'Offer', 'Parked'],
+  OFFICIAL_OUTCOME: ['Waiting', 'Next round', 'Declined', 'Offer', 'Parked'],
 
   TODAY_STATUS: ['Planned', 'In progress', 'Done', 'Deferred', 'Skipped'],
   // v7.4: Option rows get a smaller status list — 'Pull in' promotes the
@@ -2758,11 +2758,9 @@ function routeInterviewOfficialOutcome(jobId, outcome, opts) {
   opts = opts || {};
   var job = getJobRowById(jobId);
   if (!job) return false;
-  if (outcome === 'Rejected') {
-    var sheet = getSheet('Jobs');
-    sheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
-    sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('Rejected');
-    return routeJobOutcome(jobId, 'Rejected', { source: opts.source || 'round-outcome' });
+  if (outcome === 'Declined' || outcome === 'Rejected') {
+    setJobStatus(jobId, 'Closed', { source: opts.source || 'round-outcome' });
+    return true;
   }
   if (outcome === 'Offer') {
     setJobStatus(jobId, 'Submitted', { source: opts.source || 'round-outcome', realDate: opts.realDate || job.appliedDate || today() });
@@ -4401,7 +4399,11 @@ function onEditRounds(sheet, row, col, newVal) {
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
     }
     if (String(newVal) === 'Rejected') {
-      routeInterviewOfficialOutcome(jobId, 'Rejected', { source: 'round-outcome' });
+      sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Declined');
+      routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'round-outcome' });
+    }
+    if (String(newVal) === 'Declined') {
+      routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'round-outcome' });
     }
     if (String(newVal) === 'Offer') routeInterviewOfficialOutcome(jobId, 'Offer', { source: 'round-outcome' });
     if (String(newVal) === 'Parked') routeInterviewOfficialOutcome(jobId, 'Parked', { source: 'round-outcome' });
@@ -7412,7 +7414,7 @@ var HEADER_GUIDANCE = {
   },
   'Interview rounds': {
     'Round ID': 'system', 'Linked Job ID': 'system', 'Job (display)': 'auto', 'Org (display)': 'auto', 'Round': 'round number', 'Round type': 'recruiter, case, panel, etc.',
-    'Interview date': 'scheduled date', 'Status': 'scheduled/completed/cancelled', 'Domain readiness': 'drives prep tasks', 'Official outcome': 'waiting/next/rejected/offer',
+    'Interview date': 'scheduled date', 'Status': 'scheduled/completed/cancelled', 'Domain readiness': 'drives prep tasks', 'Official outcome': 'waiting/next/declined/offer/parked',
     'Expected response date': 'follow-up timing', 'Notes': 'prep, people, logistics'
   },
   "Today's plan": {
@@ -7457,7 +7459,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
     if (name === 'Domain readiness') return 'Sets prep depth';
-    if (name === 'Official outcome') return 'Waiting / Next round / Rejected / Offer / Parked';
+    if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
   }
   if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
   if (canonicalName === 'Organisations' && (name === 'Known people (count)' || name === 'Open opportunities (count)')) return 'Updates as linked rows are added';
@@ -8876,7 +8878,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Result is Waiting, Interview invite, or Rejected.');
   r = writeKV(sheet, r, 'People', 'Identified > Outreach sent > Engaged > Conversation scheduled > Conversation completed > Nurture / Closed.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
-  r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Rejected / Offer / Parked.');
+  r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
   r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed.');
   r++;
 
