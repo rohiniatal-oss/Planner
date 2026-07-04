@@ -105,7 +105,7 @@
 // =============================================================
 
 var COLS = {
-  SECTORS: { ID: 1, SUBSECTOR_ID: 2, SECTOR: 3, SUBSECTOR: 4, STATUS: 5, NOTES: 6 },
+  SECTORS: { ID: 1, SECTOR: 2, SUBSECTOR_ID: 3, SUBSECTOR: 4, STATUS: 5, NOTES: 6 },
 
   ORGS: {
     ID: 1, NAME: 2, SECTOR_ID: 3, SECTOR: 4, SUBSECTOR_ID: 5, SUBSECTOR: 6,
@@ -166,7 +166,7 @@ var COLS = {
 };
 
 var HEADERS = {
-  Sectors: ['Sector ID', 'Sub-sector ID', 'Sector', 'Sub-sector', 'Status', 'Notes'],
+  Sectors: ['Sector ID', 'Sector', 'Sub-sector ID', 'Sub-sector', 'Status', 'Notes'],
   Organisations: [
     'Org ID', 'Organisation', 'Sector ID', 'Sector', 'Sub-sector ID', 'Sub-sector',
     'Tier', 'Status', 'Known people (count)', 'Open opportunities (count)',
@@ -5967,7 +5967,7 @@ var MANUAL_COLUMNS = {
 };
 
 var COLUMN_WIDTHS = {
-  'Sectors': { 3: 190, 4: 260, 5: 100, 6: 300 },
+  'Sectors': { 2: 190, 4: 260, 5: 100, 6: 300 },
   'Organisations': { 2: 220, 4: 170, 6: 220, 7: 70, 8: 120, 9: 135, 10: 165, 13: 300 },
   'People': { 2: 190, 3: 200, 5: 170, 6: 150, 7: 175, 8: 125, 9: 120, 12: 135, 13: 300 },
   'Jobs': { 2: 260, 3: 200, 5: 145, 6: 120, 9: 220, 11: 130, 12: 170, 13: 320 },
@@ -6297,10 +6297,17 @@ function migrateSectorsTwoIdSchema() {
   var sheet = getSheet('Sectors');
   if (!sheet || sheet.getLastRow() < 1) return false;
   var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 6)).getValues()[0].map(String);
-  if (headers[0] === 'Sector ID' && headers[1] === 'Sub-sector ID') return false;
-  if (!(headers[0] === 'Sector ID' && headers[1] === 'Sector' && headers[2] === 'Sub-sector')) return false;
+  if (headers[0] === 'Sector ID' && headers[1] === 'Sector' && headers[2] === 'Sub-sector ID') return false;
+  var hasOriginalLegacyOrder = headers[0] === 'Sector ID' && headers[1] === 'Sector' && headers[2] === 'Sub-sector';
+  var hasTwoIdOldOrder = headers[0] === 'Sector ID' && headers[1] === 'Sub-sector ID' && headers[2] === 'Sector';
+  if (!hasOriginalLegacyOrder && !hasTwoIdOldOrder) return false;
 
-  var oldRows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues() : [];
+  var rawRows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, hasTwoIdOldOrder ? 6 : 5).getValues() : [];
+  var oldRows = rawRows.map(function (row) {
+    return hasTwoIdOldOrder
+      ? [row[0], row[2], row[3], row[4], row[5], row[1]]
+      : [row[0], row[1], row[2], row[3], row[4], ''];
+  });
   var maxByPrefix = scanLegacySectorIdMax(oldRows);
   var sectorIdByName = {};
   oldRows.forEach(function (row) {
@@ -6323,13 +6330,14 @@ function migrateSectorsTwoIdSchema() {
     if (sub) {
       if (!sectorIdByName[key]) {
         sectorIdByName[key] = nextMigratedId(maxByPrefix, 'SEC');
-        parentRows.push([sectorIdByName[key], '', sector, '', 'Open', '[created-via-migration]']);
+        parentRows.push([sectorIdByName[key], sector, '', '', 'Open', '[created-via-migration]']);
       }
-      newRows.push([sectorIdByName[key], oldId.indexOf('SUB-') === 0 ? oldId : nextMigratedId(maxByPrefix, 'SUB'), sector, sub, status || 'Open', notes]);
+      var migratedSubId = row[5] || (oldId.indexOf('SUB-') === 0 ? oldId : nextMigratedId(maxByPrefix, 'SUB'));
+      newRows.push([sectorIdByName[key], sector, migratedSubId, sub, status || 'Open', notes]);
     } else {
       var sectorId = oldId.indexOf('SEC-') === 0 ? oldId : (sectorIdByName[key] || nextMigratedId(maxByPrefix, 'SEC'));
       sectorIdByName[key] = sectorId;
-      newRows.push([sectorId, '', sector, '', status || 'Open', notes]);
+      newRows.push([sectorId, sector, '', '', status || 'Open', notes]);
     }
   });
 
