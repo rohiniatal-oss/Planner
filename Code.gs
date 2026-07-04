@@ -3499,16 +3499,11 @@ function onEditJobs(sheet, row, col, newVal, e) {
     var editedJobId = sheet.getRange(row, COLS.JOBS.ID).getValue();
     if (e && e.oldValue) propagateJobTitleRename(editedJobId, String(newVal), String(e.oldValue));
     if (!sheet.getRange(row, COLS.JOBS.STATUS).getValue()) sheet.getRange(row, COLS.JOBS.STATUS).setValue('Want to apply');
-    var org = sheet.getRange(row, COLS.JOBS.ORG).getValue();
-    if (org) {
-      inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
-      promoteOrgForLiveJob(sheet.getRange(row, COLS.JOBS.ORG_ID).getValue(), sheet.getRange(row, COLS.JOBS.STATUS).getValue());
-      fireJobStatusChanged(editedJobId, '', sheet.getRange(row, COLS.JOBS.STATUS).getValue(), { source: 'manual' });
-      refreshDerivedPlanningSurfaces();
-      requestHomeRefresh();
-    } else {
+    if (!sheet.getRange(row, COLS.JOBS.ORG).getValue()) {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
     }
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.JOBS.DEADLINE) {
