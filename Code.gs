@@ -2550,6 +2550,7 @@ function onEditSectors(sheet, row, col, newVal) {
       existingId = String(currentBranch.id || '');
       if (!sheet.getRange(row, COLS.SECTORS.STATUS).getValue()) sheet.getRange(row, COLS.SECTORS.STATUS).setValue('Open');
       propagateSectorRenameToOrganisations(existingId);
+      flagDuplicateSectorNameForReview(getSectorBranchById(existingId));
       if (!subsectorValue) {
         if (fireSectorOnlyTask(getSectorBranchById(existingId))) refreshDerivedPlanningSurfaces();
       } else if (fireSubsectorAddedDecision(sectorValue, subsectorValue, existingId)) {
@@ -2566,8 +2567,10 @@ function onEditSectors(sheet, row, col, newVal) {
       return;
     }
     if (!subsectorValue) {
+      flagDuplicateSectorNameForReview(branch);
       if (fireSectorOnlyTask(branch)) refreshDerivedPlanningSurfaces();
     } else {
+      flagDuplicateSectorNameForReview(branch);
       renderTodayDecisionCards();
       requestHomeRefresh();
     }
@@ -2626,6 +2629,27 @@ function propagateSectorRenameToOrganisations(sectorId) {
     }
   }
   return count;
+}
+
+function flagDuplicateSectorNameForReview(branch) {
+  var sheet = getSheet('Sectors');
+  if (!sheet || !branch || !branch.sector || sheet.getLastRow() < 2) return false;
+  var wanted = normalizeKeyPart(branch.sector);
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.Sectors.length).getValues();
+  var duplicate = false;
+  for (var i = 0; i < data.length; i++) {
+    var candidate = sectorBranchFromRow(i + 2, data[i]);
+    if (!candidate.isSectorOnly) continue;
+    if (String(candidate.sectorId) === String(branch.sectorId)) continue;
+    if (normalizeKeyPart(candidate.sector) === wanted) {
+      duplicate = true;
+      break;
+    }
+  }
+  var flag = '[review-sector-name] Same Sector name used by another Sector ID';
+  if (duplicate) appendNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, flag);
+  else clearNoteFlag(sheet, branch.row, COLS.SECTORS.NOTES, flag);
+  return duplicate;
 }
 
 function retireSectorBranch(sectorId) {
