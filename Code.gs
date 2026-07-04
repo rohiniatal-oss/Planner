@@ -257,6 +257,8 @@ var SCRIPT_VERSION = 'v7.7.4';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
+var ORG_ACTIVE_REVIEW_DAYS = 14;
+var ORG_DORMANT_REVIEW_DAYS = 42;
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -489,6 +491,11 @@ function today() {
 
 function addDays(date, days) { var d = new Date(date); d.setDate(d.getDate() + days); return d; }
 function daysBetween(a, b) { return Math.floor((new Date(b) - new Date(a)) / 86400000); }
+function isDueOnOrBefore(dateValue, targetDate) {
+  if (!dateValue) return false;
+  var d = new Date(dateValue);
+  return !isNaN(d.getTime()) && d <= targetDate;
+}
 
 function formatDateHuman(dateValue) {
   if (!dateValue) return '';
@@ -559,6 +566,11 @@ function setDropdown(range, values, opts) {
 function normalizeTier(value) {
   var v = String(value || '').trim().toUpperCase();
   return (DROPDOWNS.ORG_TIER.indexOf(v) !== -1) ? v : 'B';
+}
+
+function normalizeOrgStatus(value) {
+  var v = String(value || '').trim();
+  return DROPDOWNS.ORG_STATUS.indexOf(v) !== -1 ? v : 'Mapped';
 }
 
 function normalizeJobStatus(value) {
@@ -694,6 +706,56 @@ function applyOrgRowFormulas(sheet, row) {
     '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsOpportunityCol + ':' + jobsOpportunityCol + ',"<>",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Parked")');
 }
 
+function orgReviewIntervalDays(status) {
+  status = normalizeOrgStatus(status);
+  if (status === 'Active') return ORG_ACTIVE_REVIEW_DAYS;
+  if (status === 'Dormant') return ORG_DORMANT_REVIEW_DAYS;
+  return 0;
+}
+
+function nextOrgReviewDate(status) {
+  var days = orgReviewIntervalDays(status);
+  return days ? addDays(today(), days) : '';
+}
+
+function scheduleOrgReviewForRow(sheet, row, status, opts) {
+  opts = opts || {};
+  if (!sheet || !row) return;
+  status = normalizeOrgStatus(status || sheet.getRange(row, COLS.ORGS.STATUS).getValue());
+  if (opts.stampLastChecked) sheet.getRange(row, COLS.ORGS.LAST_CHECKED).setValue(today());
+  var next = nextOrgReviewDate(status);
+  if (next) sheet.getRange(row, COLS.ORGS.NEXT_CHECK).setValue(next);
+  else sheet.getRange(row, COLS.ORGS.NEXT_CHECK).clearContent();
+}
+
+function scheduleOrgReviewById(orgId, opts) {
+  var org = getOrgById(orgId);
+  if (!org) return;
+  var sheet = getSheet('Organisations');
+  if (!sheet) return;
+  scheduleOrgReviewForRow(sheet, org.row, org.status, opts || {});
+}
+
+function syncOrgReviewSchedules() {
+  var sheet = getSheet('Organisations');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NEXT_CHECK).getValues();
+  var updated = 0;
+  for (var i = 0; i < data.length; i++) {
+    var row = i + 2;
+    var status = normalizeOrgStatus(data[i][COLS.ORGS.STATUS - 1]);
+    var nextCheck = data[i][COLS.ORGS.NEXT_CHECK - 1];
+    if ((status === 'Active' || status === 'Dormant') && !nextCheck) {
+      sheet.getRange(row, COLS.ORGS.NEXT_CHECK).setValue(nextOrgReviewDate(status));
+      updated++;
+    } else if ((status === 'Mapped' || status === 'Archived') && nextCheck) {
+      sheet.getRange(row, COLS.ORGS.NEXT_CHECK).clearContent();
+      updated++;
+    }
+  }
+  return updated;
+}
+
 // Creates a name-only Organisation row (no cascade fired) — used when a
 // Job or Person references an org that doesn't exist yet. Per spec: this
 // never fires job-search or people-search cascades on its own unless the
@@ -728,14 +790,14 @@ function createNameOnlyOrg(orgName, opts) {
   var sheet = getSheet('Organisations');
   if (!sheet) return null;
   var id = nextId(sheet, COLS.ORGS.ID, 'ORG');
-  var status = (DROPDOWNS.ORG_STATUS.indexOf(opts.status) !== -1) ? opts.status : 'Mapped';
+  var status = normalizeOrgStatus(opts.status);
   var row = new Array(HEADERS.Organisations.length).fill('');
   row[COLS.ORGS.ID - 1] = id;
   row[COLS.ORGS.NAME - 1] = orgName;
   row[COLS.ORGS.TIER - 1] = normalizeTier(opts.tier || 'B');
   row[COLS.ORGS.STATUS - 1] = status;
   row[COLS.ORGS.LAST_CHECKED - 1] = today();
-  if (status === 'Dormant') row[COLS.ORGS.NEXT_CHECK - 1] = addDays(today(), 42);
+  row[COLS.ORGS.NEXT_CHECK - 1] = nextOrgReviewDate(status);
   row[COLS.ORGS.NOTES - 1] = opts.stub ? '[stub] name-only org created from a linked Job/Person' : '';
   sheet.appendRow(row);
   var newRow = sheet.getLastRow();
@@ -808,13 +870,13 @@ function applyOrganisationStatusFromCapture(org, status, tier) {
   if (!org || !org.row) return;
   var sheet = getSheet('Organisations');
   if (!sheet) return;
-  var normalized = (status && DROPDOWNS.ORG_STATUS.indexOf(status) !== -1) ? status : 'Mapped';
+  var normalized = normalizeOrgStatus(status);
   if (tier) sheet.getRange(org.row, COLS.ORGS.TIER).setValue(normalizeTier(tier));
   sheet.getRange(org.row, COLS.ORGS.STATUS).setValue(normalized);
+  scheduleOrgReviewForRow(sheet, org.row, normalized, { stampLastChecked: true });
   if (normalized === 'Active') {
     fireOrgActiveCascade(org.id, org.name);
   } else if (normalized === 'Dormant') {
-    sheet.getRange(org.row, COLS.ORGS.NEXT_CHECK).setValue(addDays(today(), 42));
     autoDismissPendingForTarget('Organisation', org.id, 'Organisation marked Dormant');
     setOpenTodosForTarget('Organisation', org.id, 'Skipped', 'Organisation parked/dormant');
   } else if (normalized === 'Archived') {
@@ -832,7 +894,7 @@ function promoteMappedOrgToActive(orgId, reason) {
   var sheet = getSheet('Organisations');
   if (!sheet) return false;
   sheet.getRange(org.row, COLS.ORGS.STATUS).setValue('Active');
-  sheet.getRange(org.row, COLS.ORGS.LAST_CHECKED).setValue(today());
+  scheduleOrgReviewForRow(sheet, org.row, 'Active', { stampLastChecked: true });
   appendNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[auto-active] ' + (reason || 'Live linked work exists'));
   return true;
 }
@@ -2043,7 +2105,7 @@ function handleOrganisationTodoCompletion(todo, options) {
   var org = getOrgById(todo.objId);
   if (!org) return;
   var sheet = getSheet('Organisations');
-  sheet.getRange(org.row, COLS.ORGS.LAST_CHECKED).setValue(today());
+  scheduleOrgReviewForRow(sheet, org.row, org.status, { stampLastChecked: true });
   if (todo.workflow === ORG_CLASSIFICATION_WORKFLOW) {
     if (!org.sectorId || isNeedsClassificationLabel(org.sector)) {
       markOrgNeedsClassification(org.row, org.id, org.name, 'Classification task was completed before a real Sector was set');
@@ -2088,6 +2150,7 @@ function handleSkipCascade(todoSheet, row) {
       if (classOrg && (!classOrg.sectorId || isNeedsClassificationLabel(classOrg.sector))) markOrgNeedsClassification(classOrg.row, classOrg.id, classOrg.name, 'Classification task skipped before a real Sector was set');
       break;
     case 'Org research':
+      scheduleOrgReviewById(objId, { stampLastChecked: true });
       var org = getSheet('Organisations');
       if (org) flagLinkedRow(org, COLS.ORGS.ID, objId, COLS.ORGS.NOTES, '\u26a0 Research skipped — decide activation');
       break;
@@ -2124,8 +2187,10 @@ function isSourceObjectTerminal(objType, objId) {
 function handleCancelCascade(todoSheet, row) {
   var objType = String(todoSheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue());
   var objId = String(todoSheet.getRange(row, COLS.TODO.OBJ_ID).getValue());
+  var workflow = String(todoSheet.getRange(row, COLS.TODO.WORKFLOW).getValue());
+  if (workflow === 'Org research' && objType === 'Organisation') scheduleOrgReviewById(objId, { stampLastChecked: true });
   if (!objId || isSourceObjectTerminal(objType, objId)) return; // parent already answers this — don't add noise
-  switch (String(todoSheet.getRange(row, COLS.TODO.WORKFLOW).getValue())) {
+  switch (workflow) {
     case ORG_CLASSIFICATION_WORKFLOW:
       var classOrg = getOrgById(objId);
       if (classOrg && (!classOrg.sectorId || isNeedsClassificationLabel(classOrg.sector))) markOrgNeedsClassification(classOrg.row, classOrg.id, classOrg.name, 'Classification task cancelled before a real Sector was set');
@@ -2736,26 +2801,28 @@ function onEditOrgs(sheet, row, col, newVal, e) {
   if (col === COLS.ORGS.STATUS) {
     var orgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
     var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
-    if (String(newVal) === 'Active') {
+    var status = normalizeOrgStatus(newVal);
+    if (status !== String(newVal || '')) sheet.getRange(row, COLS.ORGS.STATUS).setValue(status);
+    scheduleOrgReviewForRow(sheet, row, status, { stampLastChecked: true });
+    if (status === 'Active') {
       ensureOrgClassificationState(row);
       fireOrgActiveCascade(orgId, orgName);
       renderTodayDecisionCards();
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     }
-    if (String(newVal) === 'Mapped') {
+    if (status === 'Mapped') {
       ensureOrgClassificationState(row);
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     }
-    if (String(newVal) === 'Dormant') {
-      sheet.getRange(row, COLS.ORGS.NEXT_CHECK).setValue(addDays(today(), 42));
+    if (status === 'Dormant') {
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation marked Dormant');
       setOpenTodosForTarget('Organisation', orgId, 'Skipped', 'Organisation parked/dormant');
       refreshDerivedPlanningSurfaces();
       requestHomeRefresh();
     }
-    if (String(newVal) === 'Archived') {
+    if (status === 'Archived') {
       autoDismissPendingForTarget('Organisation', orgId, 'Organisation archived');
       setOpenTodosForTarget('Organisation', orgId, 'Cancelled', 'Organisation archived');
       refreshDerivedPlanningSurfaces();
@@ -6275,7 +6342,7 @@ var HEADER_GUIDANCE = {
     'Sector ID': 'system link to real Sectors.Sector ID; blank while classification is needed', 'Sector': 'Real sector, or Needs classification until resolved',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; linked under the selected Sector',
     'Tier': 'A/B/C; defaults to B', 'Status': 'Mapped default; Active suggests people/jobs; Dormant parks; Archived retires',
-    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system', 'Next check date': 'system', 'Notes': 'context, links, why it matters'
+    'Known people (count)': 'formula from People; weekly review routes Active orgs at 0', 'Open opportunities (count)': 'formula from Jobs; weekly review routes Active orgs at 0', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'system trigger; Active +14, Dormant +42', 'Notes': 'context, links, why it matters'
   },
   'People': {
     'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation unlocks outreach tasks', 'Organisation': 'Org required; stub created if needed', 'Org ID': 'system',
@@ -6957,11 +7024,14 @@ function materializeDueTasks() {
     for (var oo = 0; oo < oData.length; oo++) {
       var oId = String(oData[oo][COLS.ORGS.ID - 1]);
       var oName = String(oData[oo][COLS.ORGS.NAME - 1]);
-      var oStatus = String(oData[oo][COLS.ORGS.STATUS - 1]);
+      var oStatus = normalizeOrgStatus(oData[oo][COLS.ORGS.STATUS - 1]);
       var oNextCheck = oData[oo][COLS.ORGS.NEXT_CHECK - 1];
       if (!oId) continue;
-      if (oStatus === 'Dormant' && oNextCheck && new Date(oNextCheck) < todayDate) {
-        if (appendTodoOnceForWorkflow('Review dormant org ' + oName, 'Organisation', oId, oName, 'Org research', 'Not started', '', '30 min', 'Decide Active/Archive or extend check date.', 'Auto-triggered')) created++;
+      if (oStatus === 'Active' && isDueOnOrBefore(oNextCheck, todayDate)) {
+        if (appendTodoOnceForWorkflow('Review active org: ' + oName, 'Organisation', oId, oName, 'Org research', 'Not started', '', '30 min', 'Decide whether to find people, scan jobs, keep active, park, or archive.', 'Auto-triggered')) created++;
+      }
+      if (oStatus === 'Dormant' && isDueOnOrBefore(oNextCheck, todayDate)) {
+        if (appendTodoOnceForWorkflow('Review dormant org: ' + oName, 'Organisation', oId, oName, 'Org research', 'Not started', '', '30 min', 'Decide whether to reactivate, extend dormancy, or archive.', 'Auto-triggered')) created++;
       }
     }
   }
@@ -7018,6 +7088,7 @@ function weeklyReviewImpl() {
       }
     }
   }
+  syncOrgReviewSchedules();
   var activeEmpty = checkOrgActiveEmpty();
   summary.activeEmpty = activeEmpty.flagged;
   summary.activeEmptyTasks = activeEmpty.tasksCreated;
@@ -7087,12 +7158,16 @@ function checkOrgActiveEmpty() {
     var row = i + 2;
     var orgId = String(data[i][COLS.ORGS.ID - 1] || '');
     var orgName = String(data[i][COLS.ORGS.NAME - 1] || '');
-    var status = String(data[i][COLS.ORGS.STATUS - 1]);
+    var status = normalizeOrgStatus(data[i][COLS.ORGS.STATUS - 1]);
+    var nextCheck = data[i][COLS.ORGS.NEXT_CHECK - 1];
     var knownPeople = knownPeopleByOrg[orgId] || 0;
     var openOpps = openOppsByOrg[orgId] || 0;
     if (status === 'Active' && orgId && knownPeople === 0 && openOpps === 0) {
       result.flagged++;
-      if (orgPursuitRouteExists(orgId)) {
+      if (nextCheck && !isDueOnOrBefore(nextCheck, today())) {
+        appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people/open opportunities; next review scheduled');
+        result.alreadyRouted++;
+      } else if (orgPursuitRouteExists(orgId)) {
         appendNoteFlag(sheet, row, COLS.ORGS.NOTES, '[active-empty] Active but no people/open opportunities; pursuit route already open');
         result.alreadyRouted++;
       } else {
@@ -7270,7 +7345,7 @@ function rowActionStartPursuingSelectedOrg() {
       return;
     }
     sheet.getRange(row, COLS.ORGS.STATUS).setValue('Active');
-    sheet.getRange(row, COLS.ORGS.LAST_CHECKED).setValue(today());
+    scheduleOrgReviewForRow(sheet, row, 'Active', { stampLastChecked: true });
     ensureOrgClassificationState(row);
     fireOrgActiveCascade(orgId, orgName);
     renderTodayDecisionCards();
@@ -7818,6 +7893,7 @@ function repairAllTabsImpl() {
   detectSectorOrphans();
   syncJobsPeopleHealthFlags();
   repairOrganisationsFormulas();
+  syncOrgReviewSchedules();
   refreshLinkedContactsDisplay();
   repairInteractionPersonLinks();
   recalculateCommitmentClasses();
@@ -7855,6 +7931,7 @@ function dailyMaintenance() {
     recalculateCommitmentClasses();
     backfillTaskHelperColumns();
     runQueueHygiene();
+    syncOrgReviewSchedules();
     materializeDueTasks();
     repairSectorRows();
     repairSectorTaskLinks();
