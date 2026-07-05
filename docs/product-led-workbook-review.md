@@ -1,6 +1,6 @@
 # Product-led workbook review
 
-Current code baseline: `91200c0` (`Hide stale source decisions from Home`).
+Current implementation pass through: `0efe9a0` (`Surface weekly review status on Home`).
 
 Scope: full workbook review using the product-led, exhaustive, and cohesive manuals. Guide changes are intentionally deferred until workbook behavior settles.
 
@@ -9,12 +9,13 @@ Implemented after this review began:
 - Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
 - Source-led scan completion opens a capture popup, and now has a direct "Nothing useful found" completion path.
 - Weekly review summaries are written before Home refresh and surfaced in the Home utility area; stale weekly review also appears in Needs attention.
+- First-run sector onboarding is already corrected in code: setup is marked complete after seed sectors, while sub-sector exploration is routed as Tasks.
 
 ## Pass 1 - User Journey Review
 
 | Journey | User goal | Current path | Friction | Confusion | Missing guidance | Better target path | Priority |
 |---|---|---|---|---|---|---|---|
-| First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Medium | Onboarding can keep showing next checklist work after useful seed rows exist | What "complete" means vs generated next tasks | Complete onboarding after seed facts; route next exploration as Tasks/Decisions | P2 |
+| First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Low | Seed setup completes; next exploration is task work | Guide should explain setup vs generated tasks later | Keep | Keep |
 | Daily use | Know what to do now | Home -> Today -> mark work | Low/medium | Home has plan, decisions, apps, upcoming, but critical warnings are not clearly first-class | Why something needs repair | Home warning strip + Today needs-planning details | P1 |
 | Weekly review | Keep stale search alive | time trigger -> org review decisions/tasks -> Home summary | Low | Review output is now visible in Home utility area | Details remain in Tasks/Decisions/source tabs | Keep | Keep |
 | Source-led opportunity discovery | Run flexible scans and capture findings | Task -> Done -> result popup | Low | Completion is now direct, with no-results path | None major | Keep | Keep |
@@ -33,10 +34,10 @@ Implemented after this review began:
 
 | Tab | Purpose | User should do here | User should not do here | Target state | Main current issue | Recommended fix |
 |---|---|---|---|---|---|---|
-| Home | Command centre | Decide, capture, orient, start Today | Inspect raw data | Critical warnings, decisions, Today, capture, snapshot | Warnings are partly buried in sublines/bottom maintenance | Add compact needs-attention strip |
+| Home | Command centre | Decide, capture, orient, start Today | Inspect raw data | Critical warnings, decisions, Today, capture, snapshot | Main trust loops now visible; keep live-testing layout | Keep compact, avoid dashboard creep |
 | Today | Execution surface | Do ready work, block/defer/complete | Capture source data | Only executable work plus needs-planning section | Good after terminal-source guard; still needs live UX checks | Keep; later EOD polish |
 | Tasks | Work source of truth | Inspect/repair/sequence/block work | Act as daily surface | Ready state honest and visual | Stronger now; notes tags still hidden logic | Document tags later; keep helper colors |
-| Decisions | Judgement/audit | Review queue and audit outcomes | Become task table | Action type truthful; stale decisions not on Home | Orphaned source decisions can still appear on Home before repair | Filter/auto-dismiss missing-source decisions |
+| Decisions | Judgement/audit | Review queue and audit outcomes | Become task table | Action type truthful; stale decisions not on Home | Stale decisions are hidden/auto-dismissed; keep audit readable | Keep |
 | Sectors | Strategic universe | Define sector/sub-sector rows | Track work execution | Parent/child clear, retired safe | Needs visual examples, mostly docs | Guide later |
 | Organisations | Target universe | Classify, set tier/status | Manually manage every cascade | Status controls suggestions, counts automatic | Active/Dormant review output not prominent | Home review summary later |
 | Jobs | Opportunity/application record | Track opportunity/status/deadline/result | Store interview prep detail | Application status/result clean | Looks good structurally | Keep scanning |
@@ -49,7 +50,7 @@ Implemented after this review began:
 
 | Tab | First impression | Load | Visual hierarchy | Scanability | Affordance | Feedback | Empty states | Recovery | Main UX fix |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Home | 4 | 3 | 4 | 4 | 4 | 3 | 4 | 3 | Needs-attention strip |
+| Home | 4 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | Live visual retest after deploy |
 | Today | 4 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | Later EOD batch choices |
 | Tasks | 3 | 2 | 3 | 3 | 3 | 3 | n/a | 4 | De-emphasize helpers further later |
 | Decisions | 3 | 3 | 3 | 3 | 3 | 4 | n/a | 3 | Missing-source decisions cleanup |
@@ -68,7 +69,7 @@ Representative risks from current schema:
 |---|---|---|---|---:|---|---|---|---:|---|---|---|
 | Tasks | Ready for Today | Helper | Script | No | Yes | `syncTaskPlanningHelpers` | Today pool/Home | Yes | Today/Home | If stale, Today lies | Keep script-derived; block terminal/missing links |
 | Tasks | Notes | Notes/context | Mixed | Yes | No | User + scripts | readiness/health | Yes | Today/Home | Hidden tags become invisible logic | Guide tag dictionary later |
-| Decisions | Target type/ID | Linking | Script | No | Yes/type | decisions/cascades | Home/router | Yes | Home/source | Missing source can show stale Home card | Fix now |
+| Decisions | Target type/ID | Linking | Script | No | Yes/type | decisions/cascades | Home/router | Yes | Home/source | Missing/terminal source decisions can become stale | Hidden on Home and auto-dismissed during helper backfill |
 | Decisions | Decision action type | Routing | Script | Power-user | Yes | inference/router | Home/router | Yes | popups/tasks/source | Label must match Yes behavior | Keep router truthful |
 | Jobs | Application status | Status | User/popup/script | Yes | Yes | Jobs edit/popup/tasks | app cascades | Yes | Tasks/Decisions/Today | Wrong status creates/cleans work | Keep strict |
 | Interviews | Status | Status | User/popup/script | Yes | Yes | date/outcome/edit | prep/outcome cleanup | Yes | Tasks/Decisions | Cancelled/Completed cleanup risk | Stronger after latest patches |
@@ -106,8 +107,8 @@ Representative risks from current schema:
 
 | Automation candidate | Burden | Proposed level | Why | Risk if wrong | Override | Implement now? |
 |---|---|---|---|---|---|---|
-| Hide stale terminal/missing-source Decisions from Home | Medium | L2 safe warning/repair | Home should not ask on dead links | Low | Decisions audit remains | Yes |
-| Home critical warning strip | Medium | L2 surface issue | Reduces anxiety and repair hunting | Low | Menu repair | Next |
+| Hide stale terminal/missing-source Decisions from Home | Medium | L2 safe warning/repair | Home should not ask on dead links | Low | Decisions audit remains | Done |
+| Home critical warning strip | Medium | L2 surface issue | Reduces anxiety and repair hunting | Low | Menu repair | Done |
 | Source scan result popup | Medium | L5 popup | Requires capture details | Medium | No-results button/cancel popup | Done |
 | People outreach from Identified | Medium | L3 decision | Social judgement | High | Manual status/Decision | Do not automate silently |
 | Offer decision | Medium | L5 popup | High consequence | High | Still deciding path | Keep |
@@ -121,8 +122,8 @@ Representative risks from current schema:
 | Broken task source | notes + health sync | Ready = Needs planning | Good | repair flags | Home count/Today needs planning | P1 fixed/retest |
 | Terminal source with open task | source terminal check | Ready = Needs planning | Good after latest | source cleanup | Today needs planning | P1 fixed/retest |
 | Terminal source with pending decision | terminal filter + backfill | Hidden/auto-dismissed | Good after latest | backfill decisions | Not shown on Home | P1 fixed/retest |
-| Missing source with pending decision | health flags notes | Can still show on Home | Gap | should auto-dismiss or hide | none | P1 |
-| Maintenance stale/error | properties | bottom Home note | Too low on Home | none | bottom note | P2 |
+| Missing source with pending decision | health flags notes | Hidden from Home and auto-dismissed by helper backfill | Good | decision helper backfill | Home excludes it | Done |
+| Maintenance stale/error | properties | Home attention strip + utility note | Good | none | Home attention strip | Done |
 | Invalid dropdown values | strict dropdowns/repair | mostly strict | Need full invalid scan later | repair tabs | notes | P2 |
 | Duplicate IDs | health flags | notes only | not top-level | repair/manual | notes | P2 |
 
@@ -131,12 +132,12 @@ Representative risks from current schema:
 | Surface | Element | Purpose | Current behavior | Gap | Better behavior | Fix |
 |---|---|---|---|---|---|---|
 | Home | Setup banner | Trigger health | prominent if missing | Good | Keep | Keep |
-| Home | Pending decisions | Judgement | top 3 cards | Missing-source decisions can still show | Exclude/auto-dismiss broken-link decisions | Fix now |
+| Home | Pending decisions | Judgement | top 3 cards | Stale source decisions filtered | Exclude/auto-dismiss broken-link decisions | Done |
 | Home | Today plan | execution readiness | reflects Today and warns unverified date | Good | Keep | Retest |
 | Home | Capture update | capture | primary capture dropdown | Good | Keep | Keep |
 | Home | Open applications | waiting/application state | compact list | Good | Keep | Keep |
 | Home | Upcoming | scheduled/waiting | compact list | Good | Keep | Keep |
-| Home | System health | recovery | maintenance warning at bottom, broken count in subline | Not first-class | needs-attention strip near top | Next |
+| Home | System health | recovery | Needs attention strip plus utility summary | Good | keep compact | Done |
 | Today | Commit list | executable work | ready tasks only | Good after terminal guard | Keep | Retest |
 | Today | Needs planning | recovery | reasons/actions | Good | Add missing-decision repair not relevant | Keep |
 | Today | Options | spare capacity | options/pull in | Good | Keep | Keep |
@@ -155,8 +156,8 @@ Representative risks from current schema:
 
 | Issue | Severity | Scope bucket | Reason | Dependency |
 |---|---|---|---|---|
-| Missing-source pending Decisions can still appear on Home | P1 | Must fix now | Home should not ask user to decide on an orphaned source | none |
-| Home critical warnings are not first-class | P1/P2 | Should fix next | Product cockpit should surface broken/stale/maintenance before work | warning summary helper |
+| Missing-source pending Decisions can still appear on Home | P1 | Done | Home should not ask user to decide on an orphaned source | none |
+| Home critical warnings are not first-class | P1/P2 | Done | Product cockpit should surface broken/stale/maintenance before work | warning summary helper |
 | Source-led scan no-results path | P2 | Done | Better UX, not integrity | source result popup |
 | Weekly review summary not visible enough | P2 | Done | Reduces "what happened?" anxiety | Home warning/snapshot |
 | Notes/tag logic undocumented | P2 | Guide last | User cannot self-serve repair | Guide dictionary |
