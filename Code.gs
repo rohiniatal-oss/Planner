@@ -305,7 +305,7 @@ var DROPDOWNS = {
   INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
 
   SEARCH_ROUTINE_TYPE: [WORKFLOW_OPPORTUNITY_SEARCH, WORKFLOW_NETWORK_SEARCH],
-  SEARCH_FREQUENCY: ['Weekly', 'Twice a week', 'Fortnightly', 'Monthly'],
+  SEARCH_FREQUENCY: ['Daily', 'Weekly', 'Twice a week', 'Fortnightly', 'Monthly'],
   SEARCH_OPPORTUNITY_SOURCES: ['LinkedIn', 'Recruiters', 'Company career pages', 'Job boards', 'Newsletters', 'Other'],
   SEARCH_NETWORK_SOURCES: ['Alumni', 'Former colleagues', 'Recruiters', 'Professional communities', 'Friends / warm network', 'Other'],
 
@@ -9513,7 +9513,7 @@ function buildSetupHtml() {
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation, if relevant",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
-    ' routines:{title:"Create a recurring search routine",fields:[{k:"routine",l:"Routine",t:"select",o:routineTypes,defaultValue:"Opportunity search"},{k:"sources",l:"Sources or networks to check",t:"textarea",p:"Opportunity search: LinkedIn, recruiters, newsletters\\nNetwork search: alumni, former colleagues, recruiters",req:true},{k:"frequency",l:"How often?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"timeEst",l:"How much time should each run take?",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
+    ' routines:{title:"Create recurring search routines",fields:[{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
     'function selectedResetMode(){return "append";}' +
@@ -9528,7 +9528,7 @@ function buildSetupHtml() {
     ' ["jobs","I have jobs I want to apply to","Creates a Not-started application and asks whether to start work."],' +
     ' ["people","I have people or conversations","Creates a Person and the right outreach/follow-up state."],' +
     ' ["orgs","I have organisations to track","Creates/classifies Organisations — status you pick is honored; Active only ever suggests, never floods job/people search."],' +
-    ' ["routines","I want recurring search routines","Creates an Opportunity search or Network search habit. The next task appears when due."],' +
+    ' ["routines","I want recurring search routines","Creates separate Opportunity search and Network search habits. Each task appears when due."],' +
     ' ["not_sure","I am not sure","Creates a light clarification task on Today."]];' +
     ' var c=document.getElementById("q2_options");c.innerHTML="";' +
     ' opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});' +
@@ -9626,22 +9626,57 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   }
   if (entryPoint === 'routines') {
-    if (!normalizeSearchRoutineType(fields.routine)) return failResult('Choose Opportunity search or Network search.', 'routine', 'INVALID_ROUTINE');
-    if (!splitInputList(fields.sources).length) return failResult('Add at least one source or network to check.', 'sources', 'MISSING_SOURCES');
-    if (!normalizeSearchFrequency(fields.frequency)) return failResult('Choose how often to run this search.', 'frequency', 'INVALID_FREQUENCY');
+    var hasOpp = !!splitInputList(fields.oppSources).length;
+    var hasNetwork = !!splitInputList(fields.networkSources).length;
+    var hasLegacy = !!splitInputList(fields.sources).length;
+    if (!hasOpp && !hasNetwork && !hasLegacy) return failResult('Add at least one opportunity source or network to check.', 'oppSources', 'MISSING_SOURCES');
+    if (hasLegacy && !normalizeSearchRoutineType(fields.routine)) return failResult('Choose Opportunity search or Network search.', 'routine', 'INVALID_ROUTINE');
+    if (hasLegacy && !normalizeSearchFrequency(fields.frequency)) return failResult('Choose how often to run this search.', 'frequency', 'INVALID_FREQUENCY');
+    if (hasOpp && !normalizeSearchFrequency(fields.oppFrequency)) return failResult('Choose how often to run opportunity search.', 'oppFrequency', 'INVALID_FREQUENCY');
+    if (hasNetwork && !normalizeSearchFrequency(fields.networkFrequency)) return failResult('Choose how often to run network search.', 'networkFrequency', 'INVALID_FREQUENCY');
     if (fields.timeEst && routineTimeOptions().indexOf(String(fields.timeEst)) === -1) return failResult('Choose a valid time estimate for the search task.', 'timeEst', 'INVALID_TIME_ESTIMATE');
+    if (fields.oppTimeEst && routineTimeOptions().indexOf(String(fields.oppTimeEst)) === -1) return failResult('Choose a valid time estimate for opportunity search.', 'oppTimeEst', 'INVALID_TIME_ESTIMATE');
+    if (fields.networkTimeEst && routineTimeOptions().indexOf(String(fields.networkTimeEst)) === -1) return failResult('Choose a valid time estimate for network search.', 'networkTimeEst', 'INVALID_TIME_ESTIMATE');
   }
   return okResult('Valid.');
 }
 
 function processSearchRoutineOnboarding(fields) {
-  return createSearchRoutine({
+  fields = fields || {};
+  if (splitInputList(fields.sources).length) return createSearchRoutine({
     routine: fields.routine,
     sources: fields.sources,
     frequency: fields.frequency,
     timeEst: fields.timeEst,
     notes: fields.notes
   });
+  var created = 0;
+  var parts = [];
+  if (splitInputList(fields.oppSources).length) {
+    var opp = createSearchRoutine({
+      routine: WORKFLOW_OPPORTUNITY_SEARCH,
+      sources: fields.oppSources,
+      frequency: fields.oppFrequency,
+      timeEst: fields.oppTimeEst,
+      notes: fields.notes
+    });
+    if (!opp.ok) return opp;
+    created++;
+    parts.push('Opportunity search');
+  }
+  if (splitInputList(fields.networkSources).length) {
+    var network = createSearchRoutine({
+      routine: WORKFLOW_NETWORK_SEARCH,
+      sources: fields.networkSources,
+      frequency: fields.networkFrequency,
+      timeEst: fields.networkTimeEst,
+      notes: fields.notes
+    });
+    if (!network.ok) return network;
+    created++;
+    parts.push('Network search');
+  }
+  return created ? okResult('Created ' + parts.join(' and ') + ' routine' + (created === 1 ? '' : 's') + '. The first task is due now.') : failResult('Add at least one opportunity source or network to check.', 'oppSources', 'MISSING_SOURCES');
 }
 
 // Sector onboarding uses the exact same upsertSectorBranch/
@@ -10921,6 +10956,7 @@ function searchRoutineNotesFromRow(row) {
 function nextSearchRunDate(baseDate, frequency) {
   var date = parseDateOr(baseDate) || today();
   var freq = normalizeSearchFrequency(frequency) || 'Weekly';
+  if (freq === 'Daily') return addDays(date, 1);
   if (freq === 'Twice a week') return addDays(date, 3);
   if (freq === 'Fortnightly') return addDays(date, 14);
   if (freq === 'Monthly') {
@@ -13331,7 +13367,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Source tabs');
   r = writeKV(sheet, r, 'Sectors', 'A broad Sector row has Sector filled and Sub-sector blank. A Sub-sector row has the same Sector and a narrower Sub-sector. Renaming a Sector updates linked rows.');
   r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector if known, optionally choose Sub-sector after Sector, set Tier and Status. Active organisations can suggest people-search or job-scan work.');
-  r = writeKV(sheet, r, 'Search Routines', 'Set recurring Opportunity search or Network search habits. How often controls the next due date; Time estimate controls how much Today reserves for each due run.');
+  r = writeKV(sheet, r, 'Search Routines', 'Set Opportunity search and Network search habits separately. Each routine has its own frequency, next due date, and time estimate.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
   r = writeKV(sheet, r, 'People', 'Relationship source is how you found or know the person. Relationship step is the outreach/conversation state: Identified, outreach, reply, conversation, keep warm, or Closed.');
   r = writeKV(sheet, r, 'Conversations', 'Use this as the interaction log. Scheduled and completed conversations update People and can create follow-up work.');
