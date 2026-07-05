@@ -73,6 +73,7 @@ Category 0 first implementation slice:
 | Today execution actions use plain language | Pull/Top up/Lock were compact but required planner jargon | L4 execution-surface copy | Today submenu labels describe adding a task, adding time, and keeping/releasing row position |
 | Top menu says Add one-off task | Ad-hoc was backend-ish wording | L4 capture-lite action copy | Top-level menu, prompt, and toast use one-off task language |
 | Today checkbox matches menu wording | The sheet said tick refresh while the menu said build / refresh | L1/L4 execution-surface copy | Today row 7 says Build / refresh Today's plan |
+| Setup and automation controls use product language | Trigger/install wording made first-run recovery feel technical and easy to mistrust | L2/L6 trust copy | Menu and status alerts say Start or redo setup, edit actions, and daily/weekly automation instead of exposing trigger mechanics |
 
 Product architecture to preserve:
 
