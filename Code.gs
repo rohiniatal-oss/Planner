@@ -7826,8 +7826,8 @@ function updateTodayProgress(sheet) {
 }
 
 // -------------------------------------------------------------
-// Pending Decisions — up to 3 cards live on Home (row 8/9), with a
-// "N more in queue" link to Decisions when there are more than 3.
+// Pending Decisions — up to 3 cards live on Home (row 8/9), with
+// lightweight paging on row 10 when the queue has more than 3.
 // Home labels the section "Decisions to make"; the Decisions tab remains
 // the audit queue. There is intentionally no "Later" state.
 // -------------------------------------------------------------
@@ -7842,15 +7842,99 @@ function decisionSlotsFor(idRow, actionRow) {
   ];
 }
 
-function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
-  var pendingList = firstPendingDecisions(3);
+var HOME_DECISION_OFFSET_PROP_KEY = 'homeDecisionOffset';
+var HOME_SKIPPED_DECISIONS_PROP_KEY = 'homeSkippedDecisionIds';
+
+function getHomeDecisionOffset() {
+  var raw = PropertiesService.getDocumentProperties().getProperty(HOME_DECISION_OFFSET_PROP_KEY);
+  var n = parseInt(raw || '0', 10);
+  return isNaN(n) || n < 0 ? 0 : n;
+}
+
+function setHomeDecisionOffset(offset) {
+  PropertiesService.getDocumentProperties().setProperty(HOME_DECISION_OFFSET_PROP_KEY, String(Math.max(0, offset || 0)));
+}
+
+function resetHomeDecisionOffset() {
+  setHomeDecisionOffset(0);
+}
+
+function getHomeSkippedDecisionIds() {
+  var raw = PropertiesService.getDocumentProperties().getProperty(HOME_SKIPPED_DECISIONS_PROP_KEY) || '';
+  return raw ? raw.split(',').filter(function (id) { return id; }) : [];
+}
+
+function addHomeSkippedDecisionId(decisionId) {
+  decisionId = String(decisionId || '');
+  if (!decisionId) return;
+  var ids = getHomeSkippedDecisionIds();
+  if (ids.indexOf(decisionId) === -1) ids.push(decisionId);
+  PropertiesService.getDocumentProperties().setProperty(HOME_SKIPPED_DECISIONS_PROP_KEY, ids.join(','));
+}
+
+function resetHomeSkippedDecisionIds() {
+  PropertiesService.getDocumentProperties().deleteProperty(HOME_SKIPPED_DECISIONS_PROP_KEY);
+}
+
+function normalizedHomeDecisionOffset(count, pageSize) {
+  if (!count || count <= pageSize) {
+    resetHomeDecisionOffset();
+    return 0;
+  }
+  var offset = getHomeDecisionOffset();
+  var lastOffset = Math.floor((count - 1) / pageSize) * pageSize;
+  if (offset > lastOffset) {
+    offset = lastOffset;
+    setHomeDecisionOffset(offset);
+  }
+  return offset;
+}
+
+function renderDecisionPagingControls(sheet, moreRow, offset, count, pageSize) {
+  if (!moreRow || count <= pageSize) return;
+  var end = Math.min(offset + pageSize, count);
+  if (offset > 0) {
+    sheet.getRange('B' + moreRow).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    sheet.getRange('C' + moreRow).setValue('Prev').setFontColor('#01696F').setFontWeight('bold');
+  }
+  sheet.getRange('D' + moreRow + ':F' + moreRow).merge()
+    .setValue('Showing ' + (offset + 1) + '-' + end + ' of ' + count)
+    .setFontSize(9).setFontColor('#8A8D87').setHorizontalAlignment('center');
+  if (end < count) {
+    sheet.getRange('G' + moreRow).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    sheet.getRange('H' + moreRow).setValue('Next').setFontColor('#01696F').setFontWeight('bold');
+  }
+}
+
+function handleDecisionPageAction(sheet, direction) {
+  var pageSize = 3;
   var count = pendingDecisionCount();
+  var current = normalizedHomeDecisionOffset(count, pageSize);
+  var next = current + (direction * pageSize);
+  var lastOffset = count ? Math.floor((count - 1) / pageSize) * pageSize : 0;
+  setHomeDecisionOffset(Math.min(Math.max(0, next), lastOffset));
+  renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
+}
+
+function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
+  var pageSize = 3;
+  var allPending = collectPendingDecisionQueue();
+  var skipped = getHomeSkippedDecisionIds();
+  var fullList = allPending.filter(function (pending) {
+    return skipped.indexOf(String(pending.data[COLS.DECISIONS.ID - 1] || '')) === -1;
+  });
+  var count = fullList.length;
+  var offset = normalizedHomeDecisionOffset(count, pageSize);
+  var pendingList = fullList.slice(offset, offset + pageSize);
   var slots = decisionSlotsFor(idRow, actionRow);
   var lastCol = 'I';
 
   try { sheet.getRange('A' + idRow + ':' + lastCol + actionRow).breakApart(); } catch (err) { /* not merged, ignore */ }
   sheet.getRange('A' + idRow + ':' + lastCol + actionRow).clearContent().clearNote().setBackground(null).setFontColor('#28251D').setFontWeight('normal').setWrap(false);
-  if (moreRow) sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).clearContent().clearNote().setBackground(null);
+  if (moreRow) {
+    try { sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).breakApart(); } catch (err2) { /* not merged, ignore */ }
+    sheet.getRange('A' + moreRow + ':' + lastCol + moreRow).clearContent().clearNote().clearDataValidations().setBackground(null).setFontWeight('normal');
+  }
 
   slots.forEach(function (slot) {
     sheet.getRange(slot.id).setValue('');
@@ -7859,6 +7943,10 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
   });
 
   if (!pendingList.length) {
+    if (allPending.length && skipped.length) {
+      sheet.getRange(slots[0].text).setValue('All decisions skipped for now - refresh Home to bring them back.').setBackground(null).setFontColor('#5F625E').setFontWeight('bold');
+      return;
+    }
     sheet.getRange(slots[0].text).setValue('✓ No decisions to make - work from Today.').setBackground(null).setFontColor('#437A22').setFontWeight('bold');
     return;
   }
@@ -7880,15 +7968,10 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
       .setBackground('#EAF4F5').setFontColor('#1B474D').setFontWeight('bold').setWrap(true)
       .setNote('Why: ' + trigger + (linked ? '\nLinked to: ' + linked : '') + (notes ? '\nNotes: ' + notes : ''));
     sheet.getRange(slot.action).setValue('').setBackground(MANUAL_COLOR).setFontWeight('bold');
-    setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No']);
+    setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No', 'Skip']);
   });
 
-  if (moreRow && count > 3) {
-    var decisionsSheet = ensureDecisionsTab();
-    sheet.getRange('B' + moreRow).setFormula(
-      '=HYPERLINK("#gid=' + decisionsSheet.getSheetId() + '","' + (count - 3) + ' more in queue — open queue ▸")')
-      .setFontColor('#01696F').setFontStyle('italic');
-  }
+  renderDecisionPagingControls(sheet, moreRow, offset, count, pageSize);
 }
 
 // Kept as a thin wrapper — several call sites (onEditDecisions,
@@ -7914,8 +7997,14 @@ function handleDecisionAction(sheet, action, decisionId) {
   sheet.getRange('B' + HOME_DECISIONS_ACTION_ROW).setValue('');
   sheet.getRange('D' + HOME_DECISIONS_ACTION_ROW).setValue('');
   sheet.getRange('G' + HOME_DECISIONS_ACTION_ROW).setValue('');
-  if (['Yes', 'No'].indexOf(action) === -1) return;
+  if (['Yes', 'No', 'Skip'].indexOf(action) === -1) return;
   if (!decisionId) return;
+  if (action === 'Skip') {
+    addHomeSkippedDecisionId(decisionId);
+    renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Skipped for now. The decision stays pending.', 'The Planner', 4);
+    return;
+  }
   var found = getDecisionRowById(decisionId);
   if (!found) return;
   var decisions = found.sheet;
@@ -7926,6 +8015,7 @@ function handleDecisionAction(sheet, action, decisionId) {
     return;
   }
   var accepted = resolveDecision(decisions, row, action);
+  resetHomeDecisionOffset();
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
   if (action === 'Yes' && accepted && accepted.ok && !accepted.popupOpened) populateToday();
   toastForDecisionOutcome(action, accepted);
@@ -8370,7 +8460,7 @@ var HOME_ATTENTION_ROW = 6;            // compact critical warnings, only popula
 var HOME_DECISIONS_HEADER_ROW = 7;
 var HOME_DECISIONS_ID_ROW = 8;         // A/C/F hold Decision IDs; B/D/G hold the visible card text
 var HOME_DECISIONS_ACTION_ROW = 9;     // B/D/G hold the Yes/No dropdowns
-var HOME_DECISIONS_MORE_ROW = 10;      // "N more in queue" link, only rendered when count > 3
+var HOME_DECISIONS_MORE_ROW = 10;      // Prev/Next decision queue controls, only rendered when count > 3
 
 var HOME_UPDATE_HEADER_ROW = 17;
 var HOME_UPDATE_ROW = 18;
@@ -8762,6 +8852,8 @@ function refreshHome() {
       .setFontSize(9).setFontColor('#8A8D87');
   }
   sheet.getRange(HOME_DECISIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Decisions to make').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  resetHomeDecisionOffset();
+  resetHomeSkippedDecisionIds();
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
   // --- Capture update (§1.3) — the primary capture surface now ---
@@ -8865,6 +8957,11 @@ function onEditHome(sheet, row, col, newVal) {
   }
   if (row === HOME_DECISIONS_ACTION_ROW && (col === 2 || col === 4 || col === 7)) {
     handleDecisionAction(sheet, String(newVal || ''), decisionIdForCell(sheet, row, col));
+    return;
+  }
+  if (row === HOME_DECISIONS_MORE_ROW && (col === 2 || col === 7) && newVal === true) {
+    sheet.getRange(row, col).setValue(false);
+    handleDecisionPageAction(sheet, col === 2 ? -1 : 1);
     return;
   }
   if (row === HOME_UPDATE_ROW && col === HOME_UPDATE_COL) {
