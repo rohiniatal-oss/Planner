@@ -12333,13 +12333,13 @@ function buildMenu() {
       .addItem('Move selected row down', 'moveTodayRowDown')
       .addItem('Show all Today columns', 'showAllColumns'))
     .addSubMenu(ui.createMenu('Capture update')
-      .addItem('Broad sectors', 'addNewSector')
-      .addItem('Organisations from exploration', 'addExplorationOrganisations')
-      .addItem('Organisation', 'addNewOrganisation')
-      .addItem('Person', 'addNewPerson')
-      .addItem('Job', 'addNewJob')
-      .addItem('Conversation', 'addNewInteraction')
-      .addItem('Interview', 'addNewInterview'))
+      .addItem('Explore broad sectors', 'addNewSector')
+      .addItem('Organisations found from exploration', 'addExplorationOrganisations')
+      .addItem('Organisation / target', 'addNewOrganisation')
+      .addItem('Person / contact', 'addNewPerson')
+      .addItem('Job / opportunity', 'addNewJob')
+      .addItem('Conversation / interaction', 'addNewInteraction')
+      .addItem('Interview / round', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Row actions')
       .addItem('Start pursuing selected org', 'rowActionStartPursuingSelectedOrg')
       .addItem('Find people at selected org', 'rowActionFindPeopleAtSelectedOrg')
@@ -12395,6 +12395,6 @@ function onOpen() {
   if (editReady) {
     ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
-    ss.toast('The Planner loaded, but edit popups are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Capture update popups open reliably.', 'The Planner \u2014 one-time setup needed', 12);
+    ss.toast('The Planner loaded, but edit actions are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Capture update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
 }

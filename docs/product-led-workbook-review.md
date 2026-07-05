@@ -122,6 +122,7 @@ Category 0 issue queue:
 | Home Needs attention action is too generic | P1/P2 | Blocked/parent task recovery could incorrectly point users to Repair all tabs | 0 + 4 | Fixed: Home now picks an action hint based on the attention types |
 | Maintenance menu says Full refresh | P1/P2 | Users cannot tell whether refresh is safe or reset-like | 0 + 6 | Fixed: menu says Refresh derived data (safe), and success toast says source rows were not cleared |
 | Menu says Capture update popups | P2 | Exposes implementation instead of the user action | 0 + 5 | Fixed: menu now says Capture update |
+| Capture submenu labels are raw tab nouns | P2 | Short labels like Job/Person/Interview assume the user already knows the data model | 0 + 5 | Fixed: labels now say Job / opportunity, Person / contact, Interview / round, etc. |
 | Row action says Soft-close selected row | P2 | Internal wording does not tell the user what will happen to the Person/Job | 0 + 5 | Fixed: menu says Close selected Person/Job row and confirms cancelled linked work |
 | Menu/Guide says Populate Today | P2 | Backend wording makes the daily action less obvious | 0 + 2 + 5 | Fixed: menu and Guide now say Build / refresh Today's plan |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
@@ -142,6 +143,7 @@ Implemented after this review began:
 - Home Needs attention now gives a contextual action hint: Today/Tasks for blocked or parent-task recovery, Maintenance for repair/health items.
 - Maintenance now exposes the non-destructive refresh as "Refresh derived data (safe)" and confirms that source rows were not cleared.
 - The menu now uses "Capture update" instead of "Capture update popups" so it describes the user action, not the implementation.
+- Capture update menu labels now explain the user object being captured, e.g. Job / opportunity and Person / contact.
 - Row actions now say "Close selected Person/Job row" instead of "Soft-close selected row" and confirm which linked work was cancelled.
 - Today build actions now say "Build / refresh Today's plan" instead of "Populate Today" in the menu and Guide.
 
