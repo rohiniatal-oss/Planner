@@ -546,17 +546,25 @@ function readMaintenanceHealth() {
   var weeklyRaw = props.getProperty('lastWeeklyReviewAt') || '';
   var weeklySummary = props.getProperty('lastWeeklyReviewSummary') || '';
   var error = props.getProperty('lastMaintenanceError') || '';
-  var stale = false;
-  var weeklyStale = false;
-  if (dailyRaw) {
-    var dailyDate = new Date(dailyRaw);
-    stale = !isNaN(dailyDate.getTime()) && ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000);
-  }
-  if (weeklyRaw) {
-    var weeklyDate = new Date(weeklyRaw);
-    weeklyStale = !isNaN(weeklyDate.getTime()) && ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000);
-  }
-  return { daily: dailyRaw, weekly: weeklyRaw, weeklySummary: weeklySummary, error: error, errorText: maintenanceErrorForHome(error), stale: stale, weeklyStale: weeklyStale };
+  var dailyDate = dailyRaw ? new Date(dailyRaw) : null;
+  var weeklyDate = weeklyRaw ? new Date(weeklyRaw) : null;
+  var dailyInvalid = !!(dailyRaw && isNaN(dailyDate.getTime()));
+  var weeklyInvalid = !!(weeklyRaw && isNaN(weeklyDate.getTime()));
+  var stale = !dailyRaw || dailyInvalid || ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000);
+  var weeklyStale = !weeklyRaw || weeklyInvalid || ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000);
+  return {
+    daily: dailyRaw,
+    weekly: weeklyRaw,
+    weeklySummary: weeklySummary,
+    error: error,
+    errorText: maintenanceErrorForHome(error),
+    stale: stale,
+    weeklyStale: weeklyStale,
+    dailyMissing: !dailyRaw,
+    weeklyMissing: !weeklyRaw,
+    dailyInvalid: dailyInvalid,
+    weeklyInvalid: weeklyInvalid
+  };
 }
 
 function maintenanceErrorForHome(error) {
@@ -8845,8 +8853,12 @@ function collectHomeAttentionItems() {
 
   var maint = readMaintenanceHealth();
   if (maint.error) items.push('maintenance issue logged');
+  else if (maint.dailyMissing) items.push('maintenance has not run yet');
+  else if (maint.dailyInvalid) items.push('maintenance timestamp needs repair');
   else if (maint.stale) items.push('maintenance has not run in 2 days');
-  if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
+  if (maint.weeklyMissing) items.push('weekly review has not run yet');
+  else if (maint.weeklyInvalid) items.push('weekly review timestamp needs repair');
+  else if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
   var invalidDropdowns = scanInvalidDropdownValues(false);
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
   var missingWorkflowTimes = scanWorkflowDefaultTimes(false);
@@ -9293,9 +9305,11 @@ function refreshHome() {
   if (shouldShowRestartTodayCue(maint, planCounts)) {
     var maintText = maint.error
       ? ('Catch up after time away: use The Planner > Catch up after time away. Maintenance issue: ' + (maint.errorText || maint.error))
-      : (maint.weeklyStale
+      : (maint.dailyMissing || maint.weeklyMissing
+        ? 'Catch up after time away: use The Planner > Catch up after time away. This starts maintenance, reviews active organisations, rebuilds Today, and updates Home.'
+        : (maint.weeklyStale
         ? 'Catch up after time away: use The Planner > Catch up after time away. This refreshes due tasks, reviews active organisations, rebuilds Today, and updates Home.'
-        : 'Catch up after time away: use The Planner > Catch up after time away. This refreshes due tasks, rebuilds Today, and updates Home.');
+        : 'Catch up after time away: use The Planner > Catch up after time away. This refreshes due tasks, rebuilds Today, and updates Home.'));
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklySummary) {
