@@ -4,6 +4,10 @@ Current code baseline: `91200c0` (`Hide stale source decisions from Home`).
 
 Scope: full workbook review using the product-led, exhaustive, and cohesive manuals. Guide changes are intentionally deferred until workbook behavior settles.
 
+Implemented after this review began:
+- Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
+- Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
+
 ## Pass 1 - User Journey Review
 
 | Journey | User goal | Current path | Friction | Confusion | Missing guidance | Better target path | Priority |

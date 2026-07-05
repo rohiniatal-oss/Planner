@@ -8235,6 +8235,7 @@ var HOME_ONBOARD_ROW = 4;
 var HOME_ONBOARD_CHECK_COL = 2;        // B — primary checkbox (Start/Continue), hidden when complete
 var HOME_ONBOARD_RESET_CHECK_COL = 8;  // H — small secondary "Reset" checkbox, shown only when complete
 var HOME_WELCOME_ROW = 5;              // welcome / stage-detail line, one merged row B:F
+var HOME_ATTENTION_ROW = 6;            // compact critical warnings, only populated when something needs repair
 
 var HOME_DECISIONS_HEADER_ROW = 7;
 var HOME_DECISIONS_ID_ROW = 8;         // A/C/F hold Decision IDs; B/D/G hold the visible card text
@@ -8352,6 +8353,50 @@ function taskQueueSummary() {
 // Explicitly tearing down merges/validations/formatting/content/notes
 // before every rebuild means a changed layout can never leave leftover
 // state behind.
+function collectHomeAttentionItems() {
+  var items = [];
+  var taskSheet = getSheet('Tasks');
+  if (taskSheet && taskSheet.getLastRow() > 1) {
+    var tasks = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+    var ctx = buildTaskPlanningContext(tasks);
+    var brokenOrClosed = 0;
+    var blockedNeedsReason = 0;
+    var parentReview = 0;
+    tasks.forEach(function (row) {
+      var status = String(row[COLS.TODO.STATUS - 1] || '');
+      if (!isOpenTodoStatus(status)) return;
+      var notes = String(row[COLS.TODO.NOTES - 1] || '');
+      if (taskHasBrokenSourceNotes(notes) || taskLinkedSourceIsTerminal(row, ctx)) brokenOrClosed++;
+      if (status === 'Blocked') {
+        var blocker = String(row[COLS.TODO.BLOCKER - 1] || '');
+        var blockedBy = String(row[COLS.TODO.BLOCKED_BY_ID - 1] || '');
+        if (!blocker || blocker === 'Blocked - add reason' || !blockedBy) blockedNeedsReason++;
+      }
+      var id = String(row[COLS.TODO.ID - 1] || '');
+      if (notes.indexOf('[parent-ready]') !== -1 || (allChildTodosTerminalInContext(id, ctx) && !allChildTodosDoneInContext(id, ctx))) parentReview++;
+    });
+    if (brokenOrClosed) items.push(brokenOrClosed + ' task' + (brokenOrClosed === 1 ? '' : 's') + ' need source repair');
+    if (blockedNeedsReason) items.push(blockedNeedsReason + ' blocked task' + (blockedNeedsReason === 1 ? '' : 's') + ' need recovery');
+    if (parentReview) items.push(parentReview + ' parent task' + (parentReview === 1 ? '' : 's') + ' need review');
+  }
+
+  var decisionSheet = getSheet('Decisions');
+  if (decisionSheet && decisionSheet.getLastRow() > 1) {
+    var decisions = decisionSheet.getRange(2, 1, decisionSheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+    var maps = buildLinkedObjectHealthMaps();
+    var staleDecisions = 0;
+    decisions.forEach(function (row) {
+      if (String(row[COLS.DECISIONS.DECISION - 1] || '') === 'Pending' && decisionLinkedSourceUnavailable(row, maps)) staleDecisions++;
+    });
+    if (staleDecisions) items.push(staleDecisions + ' stale decision' + (staleDecisions === 1 ? '' : 's') + ' hidden from Home');
+  }
+
+  var maint = readMaintenanceHealth();
+  if (maint.error) items.push('maintenance issue logged');
+  else if (maint.stale) items.push('maintenance has not run in 2 days');
+  return items;
+}
+
 function hardResetHomeSheet(sheet) {
   var maxRows = Math.max(sheet.getMaxRows(), 60);
   var maxCols = Math.max(sheet.getMaxColumns(), 10);
@@ -8547,6 +8592,15 @@ function refreshHome() {
   }
 
   // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
+  var attentionItems = collectHomeAttentionItems();
+  if (attentionItems.length) {
+    sheet.getRange(HOME_ATTENTION_ROW, 2, 1, 5).merge()
+      .setValue('Needs attention: ' + attentionItems.slice(0, 3).join(' - ') + (attentionItems.length > 3 ? ' - +' + (attentionItems.length - 3) + ' more' : ''))
+      .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
+    sheet.getRange(HOME_ATTENTION_ROW, 7)
+      .setValue('Use Maintenance > Repair all tabs')
+      .setFontSize(9).setFontColor('#8A8D87');
+  }
   sheet.getRange(HOME_DECISIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Pending Decisions').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
