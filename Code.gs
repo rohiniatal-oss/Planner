@@ -3070,6 +3070,29 @@ function setOpenTodosForTarget(objType, objId, status, reason, workflowAllowList
   return count;
 }
 
+function cancelInterviewRoundWorkForJob(jobId, reason) {
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 2 || !jobId) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Interview rounds'].length).getValues();
+  var count = 0;
+  var msg = reason || 'Job closed';
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.ROUNDS.JOB_ID - 1] || '') !== String(jobId)) continue;
+    var roundId = String(data[i][COLS.ROUNDS.ID - 1] || '');
+    if (!roundId) continue;
+    var row = i + 2;
+    var status = String(data[i][COLS.ROUNDS.STATUS - 1] || '');
+    if (status && ['Completed', 'Cancelled'].indexOf(status) === -1) {
+      sheet.getRange(row, COLS.ROUNDS.STATUS).setValue('Cancelled');
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[job-closed] ' + msg);
+    }
+    count += setOpenTodosForTarget('Interview round', roundId, 'Cancelled', msg);
+    autoDismissPendingForTarget('Interview round', roundId, msg);
+  }
+  if (count) syncTaskPlanningHelpers();
+  return count;
+}
+
 // =============================================================
 // CANONICAL TASK COMPLETION ENGINE
 // Every completion — from Today or from Tasks — routes through here.
@@ -3790,6 +3813,7 @@ function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
       sheet.getRange(job.row, COLS.JOBS.OUTCOME).clearContent();
     }
     setOpenTodosForTarget('Job', jobId, 'Cancelled', 'Job closed');
+    cancelInterviewRoundWorkForJob(jobId, 'Job closed');
   }
 }
 
@@ -8280,14 +8304,14 @@ function hardResetHomeSheet(sheet) {
 // A row counts as Commit unless its Slot cell starts with 'O' (Option
 // rows are written as 'O1', 'O2', ... by writeTodayRow).
 function todayPlanCounts() {
-  var result = { built: false, commit: 0, minutes: 0, options: 0, headline: '' };
+  var result = { built: false, unverified: false, commit: 0, minutes: 0, options: 0, headline: '' };
   var sheet = getSheet('Today');
   if (!sheet) return result;
   result.headline = String(sheet.getRange('B3').getValue() || '');
   var builtDate = getTodayPlanBuiltDate();
   var noteDate = todayPlanDateFromNote(sheet.getRange('B3').getNote());
   var t = today().getTime();
-  result.built = (builtDate && builtDate.getTime() === t) || (noteDate && noteDate.getTime() === t);
+  var verifiedBuilt = (builtDate && builtDate.getTime() === t) || (noteDate && noteDate.getTime() === t);
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
     if (!slot) continue;
@@ -8297,6 +8321,13 @@ function todayPlanCounts() {
       result.commit++;
       result.minutes += parseInt(sheet.getRange(r, COLS.TODAY.EST_MIN).getValue(), 10) || 0;
     }
+  }
+  result.built = verifiedBuilt;
+  var notBuiltHeadline = /not built/i.test(result.headline);
+  var builtLookingHeadline = /(ready|realistic|tight|over capacity|nothing committed|no ready tasks)/i.test(result.headline);
+  if (!result.built && !notBuiltHeadline && (result.commit + result.options > 0 || builtLookingHeadline)) {
+    result.built = true;
+    result.unverified = true;
   }
   return result;
 }
@@ -8476,6 +8507,7 @@ function refreshHome() {
     sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","Start working ▸")').setFontColor('#01696F').setFontWeight('bold');
   }
   var planSubline = taskQueueSummary();
+  if (planCounts.unverified) planSubline = planSubline + ' Today has a visible plan, but the build date is not verified - refresh Today if this looks stale.';
   if (!planCounts.built || planCounts.commit === 0) planSubline = planSubline + ' Open the Guide if you need the first-run flow.';
   sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(planSubline).setFontSize(9).setFontColor('#8A8D87');
   if (guideSheetForHome && (!planCounts.built || planCounts.commit === 0)) {
