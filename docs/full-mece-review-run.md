@@ -9,6 +9,9 @@ Rule for this run: review outputs come before implementation. Imported prior fix
 Restart note:
 The review was explicitly restarted from the beginning after the user asked to "start from the beginning again." Stage 0 is the active review point. Later sections in this file from earlier passes are retained as historical notes until they are re-run in order.
 
+Restart note 2:
+The review was restarted from the beginning again after later Stage 6/7 work. Current baseline for this pass is `585cce1 Preserve person identity across capture`. Earlier review sections remain useful evidence, but each stage must be re-confirmed from current `Code.gs` before being treated as complete.
+
 ## Stage 0 - Product And User Modes (Restarted)
 
 Required output:
@@ -37,6 +40,22 @@ Stage 0 evidence map from current code:
 | Setup and reset safety | `runSetupInterview`, `completeSetupFromPopup`, `resetPlannerDataForOnboarding`, backup copy path | New-user and redo-setup flows are designed with backup-before-clear | Needs Stage 3 destructive-action inventory and live popup test |
 | Weekly/restart support | `readMaintenanceHealth`, `weeklyReviewImpl`, `dailyMaintenance`, Home maintenance messaging | The system has heartbeat and stale-maintenance signals | Does not yet create a named missed-days recovery experience |
 | Guide-last | Final checklist source-of-truth rule plus existing `rewriteGuide` presence | Guide is recognized as documentation surface | Guide content may still lag; update only at Stage 14 |
+
+Stage 0 re-check from `585cce1`:
+
+| User mode area | Current-code status | Stage 0 decision |
+|---|---|---|
+| New user | `refreshHome` renders trigger-off setup guidance; `runSetupInterview` / `completeSetupFromPopup` offer backup-before-reset when existing rows are present | Covered for now; destructive-action inventory still belongs to Stage 3 |
+| Daily user | `refreshHome` renders Decisions, Capture update, Today state, Open applications, Upcoming, and maintenance status | Covered for code structure; Home/Today truth must be proven in Stage 8 |
+| Low-energy day | `bootstrapToday` exposes Focus, Available minutes, Energy, and notes explaining that refresh re-fits work | Covered for code structure; capacity behaviour must be proven in Stage 7 |
+| Missed-days restart | `readMaintenanceHealth`, Home attention items, Today rebuild, and maintenance menu actions exist, but there is no named recovery mode | Carry forward as the active Stage 0 product gap; decide placement in Stage 8 rather than adding Home noise now |
+| Application sprint | Open applications, response checks, application workflows, and application capture paths exist in code | Needs Stage 4/6 lineage proof before changing application logic |
+| Interview sprint | Interview scheduling/prep/follow-up workflows exist, including task-led prep workflows | Needs Stage 4/6/7 proof that prep is task-visible and Today-ready |
+| Networking day | People and Conversations workflows exist; source-led people capture exists | Needs Stage 5/6 no-task-spam proof |
+| Source-led search day | `Opportunity scan` and `People source scan` workflows exist; completion routes through pending decisions/capture | Needs Stage 6 proof that result capture is clean and not spammy |
+| Weekly review | `weeklyReviewImpl` stores heartbeat/summary and refreshes planning surfaces | Needs Stage 11 observability proof |
+| Repair mode | Home attention items and maintenance menu expose repair paths | Needs Stage 3 lifecycle inventory and Stage 11 audit proof |
+| Long-running search | No Stage 0-only performance proof; helper scans and Home collections exist | Needs Stage 15 scale review |
 
 Stage 0 questions:
 
