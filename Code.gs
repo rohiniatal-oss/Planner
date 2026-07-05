@@ -11731,6 +11731,8 @@ function repairAllTabsImpl() {
   repairSectorTaskLinks();
   detectSectorOrphans();
   syncJobsPeopleHealthFlags();
+  checkDomainReadinessFlags();
+  checkInterviewRoundHealthFlags();
   removeOpenDeadlineReminderTasks();
   repairOrganisationsFormulas();
   syncOrgReviewSchedules();
@@ -11790,6 +11792,7 @@ function dailyMaintenance() {
     repairSectorTaskLinks();
     detectSectorOrphans();
     syncJobsPeopleHealthFlags();
+    refreshLinkedContactsDisplay();
     checkDomainReadinessFlags();
     checkInterviewRoundHealthFlags();
     refreshInteractionPersonDropdown();
