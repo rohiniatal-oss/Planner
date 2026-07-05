@@ -757,7 +757,7 @@ Tasks.Ready for Today
 Decisions.Decision
 Jobs.Application status
 Jobs.Application result
-People.Relationship status
+People.Relationship step
 Interviews.Status
 Interviews.Official outcome
 Organisations.Status
