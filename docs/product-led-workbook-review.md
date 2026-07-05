@@ -148,6 +148,28 @@ Representative risks from current schema:
 
 ## Pass 11 - Data Lifecycle And Recovery
 
+Core distinction for this pass:
+
+| Concept | Meaning | User promise |
+|---|---|---|
+| Refresh derived data | Recompute helpers, Home, Today, counts, warnings, readiness, and summaries | Source records are preserved |
+| Repair data/tabs | Reapply structure, headers, dropdowns, formulas, helper fields, and row-level repair flags | Data is not intentionally cleared |
+| Reset all planner data | Clear planner records and start over | Destructive, protected, and recoverable via snapshot copy |
+| Save planner snapshot | Create a timestamped full workbook backup | User has a fallback before risky actions |
+| Restore from snapshot | Replace data bodies from a chosen backup | Phase 2; requires schema/version checks before build |
+
+Required questions for every function or menu action in this category:
+- Can it clear, delete, overwrite, migrate, or rebuild user data?
+- Is it refreshing derived surfaces, repairing malformed state, resetting source records, taking a snapshot, or restoring data?
+- Which tabs and rows are affected?
+- Does the user see a clear warning before destructive work?
+- Is a snapshot offered or required before destructive work?
+- Is the action logged through document properties or Home/menu status?
+- Can the user recover, and is the recovery path understandable?
+
+Product rule:
+No destructive action may run without a clear warning, explicit confirmation, snapshot option, audit note, and recovery instruction. Refresh and repair must stay clearly separate from reset.
+
 | Action/function | Type | Destructive? | Data affected | Backup before action? | Confirmation? | Restore path? | Risk | Fix |
 |---|---|---:|---|---:|---:|---:|---|---|
 | `refreshHome` / Home checkbox | Refresh derived surface | No | Home only | n/a | No | n/a | Low | Keep non-destructive |

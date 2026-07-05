@@ -207,6 +207,20 @@ Severity: P1
 User story:
 As a user, before I run setup, reset, repair, or refresh, I need to understand whether my data will be preserved, snapshotted, rebuilt, or cleared, so that I can recover from mistakes.
 
+Category 6 operating rule:
+No destructive action may run without a clear warning, explicit confirmation, snapshot option, audit note, and recovery instruction. Refresh, repair, reset, snapshot, and restore are separate product concepts and must not be blurred in menu copy or implementation.
+
+Category 6 review questions:
+- What actions can destroy user data?
+- What actions can clear source tabs or Today rows?
+- What actions overwrite rows, migrate schema, or rebuild derived surfaces?
+- What happens before destructive actions?
+- Can the user recover without Apps Script knowledge?
+- Can the workbook snapshot itself?
+- Can a reset be undone through a documented path?
+- Can derived data be rebuilt without deleting source data?
+- Is the difference between reset, repair, refresh, snapshot, and restore clear from the UI?
+
 Required Category 6 inventory:
 
 | Action/function | Type | Destructive? | Data affected | Backup before action? | Confirmation? | Restore path? | Risk | Fix |
