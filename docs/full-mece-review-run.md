@@ -514,6 +514,12 @@ Required output:
 | `migrateWorkbookSchema` and migration helpers | Migration | Potentially shape-changing, designed to preserve row data | Sectors, Organisations, Jobs, Conversations schema/data ranges | No | No | No automatic rollback | Defer migration-specific proof to Stage 15 unless a failing scenario appears |
 | Trigger uninstall actions | Automation setup change | No planner data deletion | Installable triggers only | No | Menu action only | Reinstall through Setup & automation | User-facing enough for now; no data lifecycle fix |
 
+Stage 3 lifecycle decision:
+
+| Legacy surface | Current-code evidence | Decision |
+|---|---|---|
+| `Dashboard` tab | Not in `CANONICAL_TAB_ORDER`, not in `SHEET_TO_HEADER_KEY`, not referenced by any workflow; only appears in `hideLegacyUtilityTabs` cleanup | Delete as obsolete legacy surface during repair/refresh cleanup |
+
 Required classifications:
 
 | Action type | User meaning in current code |
