@@ -96,7 +96,7 @@
  *   2. Paste this entire file as Code.gs (replacing everything else).
  *   3. Reload the sheet.
  *   4. In The Planner menu, run Planner setup > Turn on Planner actions.
- *   5. Run Maintenance > Repair all tabs (safe to re-run).
+ *   5. Run Maintenance > Repair sheet layout and dropdowns (safe to re-run).
  *   6. Start from Home, or run The Planner > Set up / add starting facts.
  */
 
@@ -381,7 +381,7 @@ function coerceResult(result, fallbackMessage) {
 
 function popupExceptionResult(context, err) {
   Logger.log(context + ': ' + (err && err.stack ? err.stack : err));
-  return failResult('Something went wrong while saving. Run Maintenance > Repair all tabs, then try again.', '', 'SERVER_ERROR');
+  return failResult('Something went wrong while saving. Run Maintenance > Repair sheet layout and dropdowns, then try again.', '', 'SERVER_ERROR');
 }
 
 // v7.3.1: Serialises covered mutating paths behind a single document lock so
@@ -2027,7 +2027,7 @@ function resolveOpenPopupDecision(ctx) {
   }
   var captureType = sourceUpdateCaptureTypeForDecision(ctx);
   if (captureType) return runDecisionCapturePopup(ctx, captureType);
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision route is not configured; run Repair all tabs, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision route is not configured; run Repair sheet layout and dropdowns, then review this row');
 }
 
 function decisionKeySuffix(key, prefix) {
@@ -2141,7 +2141,7 @@ function resolveCaptureDataDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision capture route is not configured; run Repair all tabs, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision capture route is not configured; run Repair sheet layout and dropdowns, then review this row');
 }
 
 function keepDecisionPendingForMissingRoute(ctx, flag, reason) {
@@ -2184,7 +2184,7 @@ function resolveUpdateSourceDecision(ctx) {
   }
   captureType = sourceUpdateCaptureTypeForDecision(ctx);
   if (captureType) return runDecisionCapturePopup(ctx, captureType);
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision source-update route is not configured; run Repair all tabs, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision source-update route is not configured; run Repair sheet layout and dropdowns, then review this row');
 }
 
 function sourceUpdateCaptureTypeForDecision(ctx) {
@@ -8716,7 +8716,7 @@ function homeAttentionActionHint(items) {
   });
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
   if (hasTaskRecovery) return 'Open Today > Needs planning or Tasks row actions';
-  if (hasRepair) return 'Use Maintenance > Repair all tabs';
+  if (hasRepair) return 'Use Maintenance > Repair sheet layout and dropdowns';
   if (hasMaintenance) return 'Use The Planner > Restart today';
   return 'Review the highlighted planner items';
 }
@@ -9356,7 +9356,7 @@ function buildSetupHtml() {
     ' if(btn)btn.disabled=true;' +
     ' status.textContent="Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status"),btn=document.getElementById("submitButton");if(!res.ok){if(btn)btn.disabled=false;status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
-    ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
+    ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout and dropdowns, then try again.";})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetMode:resetMode,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
@@ -9947,7 +9947,7 @@ function buildCaptureHtml(captureType, decisionId, presetFields) {
     'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout and dropdowns, then try again.";})' +
     '.completeCaptureFromPopup({captureType:cfg.captureType,decisionId:cfg.decisionId,fields:fields});}</script>';
 }
 
@@ -12166,7 +12166,7 @@ function buildBreakdownHtml(todoId, taskTitle) {
     '<form id="form"></form><button class="primary" type="button" onclick="submitBreakdown()">Create child tasks</button><div id="status"></div>' +
     '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.taskTitle;var f=document.getElementById("form");' +
     'for(var i=0;i<6;i++){var r=document.createElement("div");r.className="row";var t=document.createElement("input");t.type="text";t.placeholder="Child task "+(i+1);t.name="text"+i;var s=document.createElement("select");s.name="time"+i;cfg.timeOptions.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);});var step=document.createElement("input");step.type="number";step.min="1";step.value=i+1;step.name="step"+i;var notes=document.createElement("input");notes.type="text";notes.placeholder="Optional notes";notes.name="notes"+i;notes.className="notes";r.appendChild(t);r.appendChild(s);r.appendChild(step);r.appendChild(notes);f.appendChild(r);}' +
-    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}if(!subtasks.length){document.getElementById("status").textContent="Add at least one child task.";return;}document.getElementById("status").textContent="Creating child tasks...";google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(err){document.getElementById("status").textContent="Could not create child tasks. Run Maintenance > Repair all tabs, then try again.";}).completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
+    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}if(!subtasks.length){document.getElementById("status").textContent="Add at least one child task.";return;}document.getElementById("status").textContent="Creating child tasks...";google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(err){document.getElementById("status").textContent="Could not create child tasks. Run Maintenance > Repair sheet layout and dropdowns, then try again.";}).completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
 }
 
 function completeBreakdownFromPopup(parentTodoId, payload) {
@@ -12486,10 +12486,10 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Good to know');
-  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show hidden columns when you need to inspect them.');
+  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show hidden columns for troubleshooting when you need to inspect them.');
   r = writeKV(sheet, r, 'Sectors', 'A parent Sector row names the broad area. A Sub-sector row belongs to that Sector ID. Editing Sector on a parent row renames it; editing Sector on a Sub-sector row moves that child under another sector.');
   r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
-  r = writeKV(sheet, r, 'Backups', 'Use The Planner > Maintenance > Save backup copy to create a timestamped copy of the full spreadsheet in Google Drive.');
+  r = writeKV(sheet, r, 'Backups', 'Use The Planner > Maintenance > Save full backup copy to create a timestamped copy of the full spreadsheet in Google Drive.');
   r = writeKV(sheet, r, 'Start fresh', 'Use The Planner > Maintenance > Start fresh only when you want to clear planner data. It creates a backup copy first, then clears planner rows and rebuilds the tabs.');
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
   r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for multi-step planning, blocking, unblocking, and deferring. Today has row actions for pulling, locking, moving, and topping up the day.');
@@ -12502,8 +12502,8 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Planner setup > Turn on Planner actions (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
-  r = writeKV(sheet, r, 'Coming back after time away', 'Use The Planner > Restart today, then start from Home and Today. If warnings remain after that, run Maintenance > Repair all tabs.');
-  r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
+  r = writeKV(sheet, r, 'Coming back after time away', 'Use The Planner > Restart today, then start from Home and Today. If warnings remain after that, run Maintenance > Repair sheet layout and dropdowns.');
+  r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair sheet layout and dropdowns.');
   r = writeKV(sheet, r, 'Broken source link', 'Tasks with [no-link], [orphaned-link], [orphaned-sector], or [orphaned-org] stay out of Today until the linked source row is repaired.');
   r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
   r++;
@@ -12964,14 +12964,14 @@ function buildMenu() {
       .addItem('Repair daily/weekly refresh', 'installTimeTriggers')
       .addItem('Turn off daily/weekly refresh', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
-      .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
-      .addItem('Refresh due tasks and health checks', 'dailyMaintenance')
-      .addItem('Review active organisations', 'weeklyReview')
-      .addItem('Save backup copy', 'savePlannerSnapshot')
+      .addItem('Repair sheet layout and dropdowns', 'repairAllTabs')
+      .addItem('Catch up due tasks and health checks', 'dailyMaintenance')
+      .addItem('Review active organisations now', 'weeklyReview')
+      .addSeparator()
+      .addItem('Save full backup copy', 'savePlannerSnapshot')
       .addItem('Start fresh (backup, then clear planner data)', 'startFreshPlannerData')
-      .addItem('Refresh links and helper columns', 'refreshAllDerivedData')
-      .addItem('Re-rank Tasks for Today', 'recalculateTaskPriorityFromMenu')
-      .addItem('Show hidden system columns', 'showAllColumns'))
+      .addSeparator()
+      .addItem('Show hidden columns for troubleshooting', 'showAllColumns'))
     .addToUi();
 }
 

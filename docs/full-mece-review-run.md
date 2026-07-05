@@ -261,14 +261,14 @@ Severity: P3
 Stage: 1
 Area: Surface roles and navigation
 Tab/surface: The Planner menu / Maintenance
-Column/function: `buildMenu`, `refreshAllDerivedData`, `recalculateTaskPriorityFromMenu`, `showAllColumns`
+Column/function: `buildMenu`, `repairAllTabs`, `dailyMaintenance`, `weeklyReview`, `savePlannerSnapshot`, `startFreshPlannerData`, `showAllColumns`
 
 Evidence:
 - Code evidence: `buildMenu` exposed `Refresh derived data (safe)`, `Recalculate task priority`, and `Show hidden columns`.
 - User experience evidence: These are valid maintenance actions, but the labels describe internals instead of user outcomes.
 
 Current behaviour:
-The user could run the actions, but would need to infer what "derived data" means and why priority recalculation affects Today.
+The user could run the actions, but would need to infer what "derived data" means, why priority recalculation affects Today, and which Maintenance item to choose when the sheet simply looks wrong.
 
 Expected behaviour:
 Visible maintenance actions should describe the user-facing outcome.
@@ -280,20 +280,25 @@ Workflow impact:
 No workflow change.
 
 Data/integrity impact:
-None; labels only.
+None; labels/menu visibility only.
 
 Automation boundary:
 L1 surface clarity.
 
 Fix implemented:
-- `Refresh derived data (safe)` -> `Refresh links and helper columns`
-- `Recalculate task priority` -> `Re-rank Tasks for Today`
-- `Show hidden columns` -> `Show hidden system columns`
+- Maintenance now keeps visible actions only when the user-facing reason is clear: repair the sheet, catch up due work, review active organisations, save a backup, start fresh, or inspect hidden columns for troubleshooting.
+- `Refresh links and helper columns` and `Re-rank Tasks for Today` were removed from the visible Maintenance menu because `Repair sheet layout and dropdowns`, `Restart today`, and `Build / refresh Today's plan` cover the user outcomes without exposing helper machinery.
+- `Repair all tabs (safe to re-run)` -> `Repair sheet layout and dropdowns`.
+- `Refresh due tasks and health checks` -> `Catch up due tasks and health checks`.
+- `Review active organisations` -> `Review active organisations now`.
+- `Save backup copy` -> `Save full backup copy`.
+- `Show hidden system columns` -> `Show hidden columns for troubleshooting`.
 
 Acceptance tests:
-1. The Planner menu still calls the same functions.
-2. No setup, repair, task-ranking, or hidden-column behaviour changes.
-3. Labels explain user outcomes rather than implementation details.
+1. Visible Maintenance items each have a user reason.
+2. Removed implementation items remain callable by code but are no longer normal user choices.
+3. No setup, repair, backup, reset, daily maintenance, weekly review, or hidden-column behaviour changes.
+4. Failure messages and Guide copy point to the new repair label.
 
 Already verified after restart:
 
@@ -528,7 +533,7 @@ Stage 3 re-check from `a0d8017`:
 | Data body clearing | `clearSheetBody` restores current headers and clears body content, notes, validations, and formatting across the sheet's full used width | Covered; no stale out-of-schema data should survive onboarding reset |
 | Snapshot | `savePlannerSnapshot` copies the spreadsheet and records snapshot properties | Covered; restore remains intentionally manual via backup copy |
 | Repair | `repairAllTabsImpl` rewrites schemas/helpers/generated Home/Today surfaces and now preserves an existing Guide | Covered; Guide content update deferred to Stage 14 |
-| Refresh | `fullRefreshImpl` runs safe maintenance/display refresh and legacy cleanup | Covered; label now says `Refresh links and helper columns` |
+| Refresh | `fullRefreshImpl` runs safe maintenance/display refresh and legacy cleanup | Covered as an internal helper; no longer a visible Maintenance choice because Repair/Restart cover the user outcomes |
 | Legacy tabs | `hideLegacyUtilityTabs` deletes obsolete `Dashboard` and empty spacer tabs, hides non-empty spacer tabs | Covered; Dashboard is not a Planner data surface |
 | Migration | `migrateWorkbookSchema` and migration helpers are schema-preserving by intent | Defer performance/large workbook proof to Stage 15 |
 
@@ -1044,11 +1049,11 @@ Recommended fix:
 - Code change: Add user-facing `savePlannerSnapshot()`.
 - Code change: Add `recordPlannerResetAudit(details)` document-property audit.
 - Code change: Strengthen the setup confirmation copy to name all affected data tabs and recovery from backup.
-- Menu change: Add `Maintenance > Save backup copy`.
+- Menu change: Add `Maintenance > Save full backup copy`.
 - Guide update: Guide-last.
 
 Acceptance tests:
-1. Maintenance menu has a non-destructive `Save backup copy` action.
+1. Maintenance menu has a non-destructive `Save full backup copy` action.
 2. Start-fresh confirmation names Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.
 3. Backup failure aborts before reset, preserving existing behaviour.
 4. Successful reset records `lastPlannerResetAt`, cleared row count, entry point, and backup name/url when present.
@@ -1397,7 +1402,7 @@ Required implementation backlog:
 | Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests |
 |---|---|---|---|---|---|---|
 | Guide is stale after workflow/copy changes | P2 | 14/16 | New users may learn old routines or miss current recovery paths. | Stages 1-13 plus Stage 15 reliability pass complete. | Completed in Guide-last batch | Guide includes setup, daily routine, capture, tab roles, Today planning, Decisions, recovery, and status labels matching current code. |
-| Live sheet visual proof still needs manual Apps Script deploy/run | P2 | 13/16 | Repo code can be correct while bound sheet still shows old surfaces. | User copies Code.gs into Apps Script and runs Repair all tabs. | Manual verification after push | Home/Today/Conversations/Interviews render with current labels/status colours. |
+| Live sheet visual proof still needs manual Apps Script deploy/run | P2 | 13/16 | Repo code can be correct while bound sheet still shows old surfaces. | User copies Code.gs into Apps Script and runs Repair sheet layout and dropdowns. | Manual verification after push | Home/Today/Conversations/Interviews render with current labels/status colours. |
 | Repeat onboarding defaulted too close to destructive reset | P1/P2 | 3/12/16 | User repeating onboarding could reasonably expect to add/update starting facts, not clear the workbook. | Current setup popup and server reset mode. | Live UX safety patch | Existing-data setup shows Add/update vs Start fresh. Only Start fresh clears planner data; backup copy is explained as a separate timestamped Google Sheets file in Drive. |
 | Setup backup/save feedback was too quiet during long backup copy | P2 | 3/12/16 | User can think setup is hung and may click Save again while the spreadsheet backup is still being copied. | Current setup popup backup-before-reset flow. | Live UX safety patch | Backup option says it may take a minute or two; Save disables while running; failure/validation re-enables Save. |
 | Decision helper row-by-row backfill could be optimized later | P3 | 15/16 | Possible slowness only with very large decision history. | Need scale evidence before changing rich-link helper logic. | Later | Large Decisions sheet remains responsive or targeted batching is implemented. |
@@ -1413,7 +1418,7 @@ Gate 1 - Review complete:
 Gate 2 - Batch scope selected:
 - Must fix now: final Guide rewrite to match settled behaviour.
 - Must fix now: setup mode choice, long-save feedback, and double-click guard, because it appeared during live onboarding.
-- Should fix next: live-sheet visual check after Apps Script copy and Repair all tabs.
+- Should fix next: live-sheet visual check after Apps Script copy and Repair sheet layout and dropdowns.
 - Later: optimize decision helper backfill/contact display only if scale evidence appears.
 - Do not change: schemas, dropdown vocabularies, Today selection logic, source cascades, or Home contents during Guide-last.
 
@@ -1454,7 +1459,7 @@ Acceptance test library status:
 | Rejected job cleanup | Jobs result Rejected closes application work. |
 | Closed person cleanup | Close person row action cancels open follow-up work. |
 | Reset/snapshot safety | Backup-before-reset, full physical data-tab reset, and reset audit documented. |
-| Guide documentation | Completed in final Guide-last batch; live render check remains after Apps Script deploy and Repair all tabs. |
+| Guide documentation | Completed in final Guide-last batch; live render check remains after Apps Script deploy and Repair sheet layout and dropdowns. |
 | Performance sanity | Stage 15 completed; `syncOrgReviewSchedules` batched. |
 
 Stage 16 decision:
@@ -1512,7 +1517,7 @@ Product taste findings:
 |---|---|---|---|
 | Setup and destructive reset were mixed in one normal onboarding modal. | P1/P2 | `buildSetupHtml()` showed Add/update and Start fresh side by side; menu/Home said Start or redo setup / Redo setup. | Fixed now: setup is additive; start fresh moves to Maintenance with backup-first confirmation. |
 | User-facing "Capture update" language is accurate but colder than the user's intent. | P2 | Home and menu used Capture update, while the actual user action is adding/updating something that changed. | Fixed now: visible label becomes Add or update. |
-| Maintenance labels sometimes describe machinery, not outcomes. | P2 | Run daily maintenance / weekly review / refresh planner links and display. | Fixed some labels now; deeper maintenance simplification remains backlog. |
+| Maintenance labels sometimes describe machinery, not outcomes. | P2 | Run daily maintenance / weekly review / refresh planner links and display. | Fixed now for the visible Maintenance menu: implementation-only refresh/rank choices are hidden, and remaining actions describe user outcomes. |
 | Home decision copy still sounded like backend queue state. | P2 | Home section said Pending Decisions, which is the data/audit model rather than the user's moment of judgement. | Fixed now: Home says Decisions to make; Decisions tab remains the audit queue. |
 | Home decision overflow still sent the user to the backend queue. | P2 | The fourth pending decision became an "open queue" link to Decisions, even though Home is meant to be self-sufficient for daily judgement. | Fixed now: Home keeps three fixed card slots and pages the pending queue with Prev/Next controls. |
 | Home decisions lacked a non-judgement skip. | P2 | Home offered Yes/No only, but No is a judgement and sometimes the user only wants to move past a card for now. | Fixed now: Skip hides the card from Home until refresh while leaving the Decision pending. |
@@ -1556,10 +1561,10 @@ Guide updates made:
 - Clarified that `Maintenance > Start fresh` is the destructive data-clear path and creates a backup first.
 - Added Home's compact monthly pipeline snapshot to the daily routine and Home tab description.
 - Added backup/start-fresh recovery guidance.
-- Added a simple "coming back after time away" path: start on Home, add what changed, build Today, then Repair all tabs only if warnings remain.
+- Added a simple "coming back after time away" path: start on Home, add what changed, build Today, then Repair sheet layout and dropdowns only if warnings remain.
 
 Stage 14 remaining verification:
-- After copying the pushed `Code.gs` into Apps Script, run `The Planner > Maintenance > Repair all tabs`.
+- After copying the pushed `Code.gs` into Apps Script, run `The Planner > Maintenance > Repair sheet layout and dropdowns`.
 - Confirm the Guide renders with current setup/start-fresh, Home monthly snapshot, decision action, Today, and recovery language.
 
 ## Stage 17 reset follow-up - Full reset means full reset
@@ -1589,8 +1594,28 @@ Product-excellence backlog deliberately not implemented in this small patch:
 - Gradually migrate Notes-tags-as-state: worth doing only tag family by tag family where it has caused bugs.
 - Source-tab redesign: source tabs still feel spreadsheet-like; improving that needs a focused source-tab product pass, not a hidden tweak.
 - Rhythm guidance on Home: Home now has monthly pipeline shape; any stronger pacing or benchmark layer should be designed carefully so Home does not become a dashboard.
-- Maintenance simplification beyond current labels: keep reducing machinery language as concrete labels surface, but avoid hiding genuinely dangerous actions like Start fresh.
+- Maintenance simplification beyond the visible menu: continue reducing machinery language as concrete labels surface, but avoid hiding genuinely dangerous actions like Start fresh.
 
 Remaining verification:
 - Live stale-state check: set or observe stale maintenance state and confirm Home shows one calm `Restart today` path.
 - Run `Restart today` from the menu and confirm Today/Home refresh, weekly review runs when weekly-stale, and the stale cue clears.
+
+## Stage 17 maintenance surface cleanup
+
+Review rule:
+Every visible Maintenance item must answer: why does a normal user need to see this, what outcome does it support, and what happens if it is removed?
+
+Implemented:
+- Kept `Repair sheet layout and dropdowns`: visible because users need one safe repair action when formatting, dropdowns, links, or generated surfaces look wrong.
+- Kept `Catch up due tasks and health checks`: visible because it manually runs the daily catch-up job when automation has not run.
+- Kept `Review active organisations now`: visible because it manually runs the weekly organisation review loop.
+- Kept `Save full backup copy`: visible because it is the non-destructive safety action before risky edits.
+- Kept `Start fresh (backup, then clear planner data)`: visible because it is destructive and must be explicit.
+- Kept `Show hidden columns for troubleshooting`: visible because hidden IDs/helpers are sometimes needed for inspection and support.
+- Removed `Refresh links and helper columns` from the visible menu because it exposed implementation machinery; Repair and Restart cover the user-facing outcomes.
+- Removed `Re-rank Tasks for Today` from the visible menu because Build / refresh Today's plan and Restart today cover the user-facing outcomes.
+- Updated Guide and failure copy to point to `Repair sheet layout and dropdowns`.
+
+Remaining verification:
+- Reload the Sheet after Apps Script deploy and confirm the Maintenance menu shows only the cleaned actions.
+- Confirm removed items are not visible in the menu but their functions still parse for internal/back-compat use.
