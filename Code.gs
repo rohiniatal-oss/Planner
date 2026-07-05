@@ -1977,7 +1977,7 @@ function decisionKeySuffix(key, prefix) {
 
 function captureTypeForDecision(ctx) {
   var key = String(ctx.key || '');
-  if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0 || key.indexOf('REFERRAL_SEARCH_DONE:') === 0) return 'Add/update person';
+  if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0) return 'Add/update person';
   if (key.indexOf('ORG_JOBS_FOUND:') === 0 || key.indexOf('INTERACTION_OPP:') === 0) return 'Add/update job';
   if (key.indexOf('ORG_RESEARCH_DONE:') === 0) return 'Add/update organisation';
   if (key.indexOf('MARKET_MAP_DONE:') === 0) return 'Find organisations';
@@ -1985,6 +1985,13 @@ function captureTypeForDecision(ctx) {
 }
 
 function resolveCaptureDataDecision(ctx) {
+  var referralSearchTodoId = decisionKeySuffix(ctx.key, 'REFERRAL_SEARCH_DONE:');
+  if (referralSearchTodoId) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runReferralSearchResultPopup(referralSearchTodoId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
   var sourceScanTodoId = decisionKeySuffix(ctx.key, 'SOURCE_SCAN_DONE:');
   if (sourceScanTodoId) {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
@@ -9180,12 +9187,13 @@ function isApplicationResponseCheckTask(todo) {
   return !!todo && todo.workflow === 'Check application response' && todo.objType === 'Job';
 }
 
-function buildReferralSearchResultHtml(todoId) {
+function buildReferralSearchResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
   var job = todo ? getJobRowById(todo.objId) : null;
   if (!todo || !job || !isReferralSearchContactTask(todo)) return '<p>Referral search task not found.</p>';
   var data = {
     todoId: todo.id,
+    decisionId: decisionId || '',
     title: job.title,
     org: job.org,
     people: knownPeopleForJob(job.id)
@@ -9210,11 +9218,11 @@ function buildReferralSearchResultHtml(todoId) {
     'var person=document.getElementById("personId");data.people.forEach(function(p){var opt=document.createElement("option");opt.value=p.id;opt.textContent=p.name+(p.role?" - "+p.role:"")+(p.stage?" ("+p.stage+")":"");person.appendChild(opt);});' +
     'var result=document.getElementById("result");if(!data.people.length){Array.prototype.forEach.call(result.options,function(o){if(o.value==="known")o.disabled=true;});}function update(){var known=result.value==="known",nw=result.value==="new";document.getElementById("knownBlock").className=known?"":"hidden";document.getElementById("newNameBlock").className=nw?"":"hidden";document.getElementById("newRoleBlock").className=nw?"":"hidden";}' +
     'result.onchange=update;update();' +
-    'function save(){var payload={todoId:data.todoId,result:result.value,personId:person.value,personName:document.getElementById("personName").value,personRole:document.getElementById("personRole").value};var status=document.getElementById("status");if(payload.result==="known"&&!payload.personId){status.textContent="Choose the person.";return;}if(payload.result==="new"&&!String(payload.personName||"").trim()){status.textContent="Add the contact name.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeReferralSearchResultFromPopup(payload);}</script>';
+    'function save(){var payload={todoId:data.todoId,decisionId:data.decisionId,result:result.value,personId:person.value,personName:document.getElementById("personName").value,personRole:document.getElementById("personRole").value};var status=document.getElementById("status");if(payload.result==="known"&&!payload.personId){status.textContent="Choose the person.";return;}if(payload.result==="new"&&!String(payload.personName||"").trim()){status.textContent="Add the contact name.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeReferralSearchResultFromPopup(payload);}</script>';
 }
 
-function runReferralSearchResultPopup(todoId) {
-  var html = HtmlService.createHtmlOutput(buildReferralSearchResultHtml(todoId)).setWidth(520).setHeight(430).setTitle('Referral/contact search');
+function runReferralSearchResultPopup(todoId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildReferralSearchResultHtml(todoId, decisionId || '')).setWidth(520).setHeight(430).setTitle('Referral/contact search');
   SpreadsheetApp.getUi().showModalDialog(html, 'Referral/contact search');
 }
 
@@ -9245,6 +9253,7 @@ function completeReferralSearchResultFromPopup(payload) {
       }
       completeTodo(todo.id, 'Done', { source: 'referral-popup', referralSearchHandled: true });
       refreshLinkedContactsDisplay();
+      resolvePopupDecision(payload.decisionId, '', result === 'none' ? 'Referral search closed without a contact' : 'Referral contact linked');
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
