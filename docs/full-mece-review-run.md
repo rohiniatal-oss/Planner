@@ -661,6 +661,29 @@ Stage 7 Today execution trace:
 Stage 7 decision:
 No new code change in this pass. The current Today engine already addresses the earlier user concerns about spare-capacity pipeline work, no-fit options, direct Option completion, and Today status changes flowing back through Tasks/source cascades.
 
+## Stage 8 - Home Cockpit System
+
+Required output:
+
+| Home section | User question answered | Current behaviour | Gap | Better behaviour | Fix |
+|---|---|---|---|---|---|
+
+Stage 8 Home cockpit trace:
+
+| Home section | User question answered | Current behaviour | Gap | Better behaviour | Fix |
+|---|---|---|---|---|---|
+| Setup / trigger state | Can I use the Planner safely? | Trigger-off banner and setup/onboarding state render first | No code gap found | Keep setup/trust before work sections | None |
+| Needs attention | Is anything broken or unsafe? | Compact line from task/source/decision/dropdown/duplicate/maintenance checks with action hint | No code gap found | Keep compact; repair details stay one layer deeper | None |
+| Pending Decisions | What judgement is needed? | Top decision cards render inline; stale linked-source decisions are hidden from Home and counted as attention | Deeper router review continues in Stage 9 | Cards should explain consequence and route correctly | Defer to Stage 9 |
+| Capture update | What changed? | Single Home dropdown routes to capture popups; trigger-off state says install first | No code gap found | Keep Home as capture entry point | None |
+| Today's plan | What should I do now? | `todayPlanCounts` reads explicit built date, B3 note, visible rows/headline fallback, and unverified state | No code gap found in code-level pass | Home must never say Not built when visible usable Today plan exists | Live visual/state test remains Stage 13 |
+| Open applications | Which applications are active/waiting? | Lists up to 4 In progress/Submitted jobs with deadline/check details | No code gap found | Keep compact, not a Jobs dashboard | None |
+| Upcoming | What scheduled/waiting items are coming? | Shows interviews, scheduled conversations, and application response checks only | No code gap found | Do not flood Home with all people follow-ups | None |
+| Maintenance / refresh | How do I refresh or recover? | Demoted utility checkbox plus stale maintenance/weekly summary messages | Missed-days restart remains a product cue to judge visually | Keep warnings compact and actionable | Defer visual/product placement to Stage 13 unless live test fails |
+
+Stage 8 decision:
+No new code change in this pass. Home is structurally an operating cockpit, not a dense dashboard. The earlier Home/Today contradiction path is addressed in current code by `todayPlanCounts` using verified build-date evidence plus a visible-plan fallback with an unverified warning.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
