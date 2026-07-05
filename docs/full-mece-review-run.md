@@ -613,6 +613,30 @@ Acceptance tests:
 3. Jobs response and People reply/follow-up fields reject values outside Yes/No.
 4. Existing scanInvalidDropdownValues remains as repair/backstop for legacy values.
 
+## Stage 6 - Cross-Tab Workflows
+
+Required output:
+
+| Workflow | Trigger | Source update | Decision? | Task? | Popup? | Today eligible? | Completion effect | Cleanup | Gap | Fix |
+|---|---|---|---:|---:|---:|---:|---|---|---|---|
+
+Stage 6 workflow trace from current code:
+
+| Workflow group | Start event | Decision / task routing | Today eligibility | Completion / cleanup | Stage 6 status |
+|---|---|---|---|---|---|
+| Sector selection / Market mapping | Sectors row or onboarding creates sector/sub-sector branches | Sector-only creates `Sector selection` task; sub-sector creates market-map decision before task | Ready only through Tasks readiness | Retired sector branches skip/cancel sector work and dismiss decisions | No new gap found |
+| Organisation classification / Org research / Org job scan / People sourcing | Org capture/edit/classification/Active status | Classification task only when needed; Active creates decisions for people/job scan, not direct task spam | Tasks enter Today only when ready | Dormant skips org-level work; Archived cancels org-level work; dormant live evidence queues reactivation decision | No new gap found |
+| Opportunity scan / People source scan | Source-led scan task completion | Completion raises capture-data decision/popup; people captured as Identified, no outreach task | Scan task itself can be Today-ready; captured leads do not flood Today | Popup completion resolves task/decision and refreshes Home/Today | No new gap found |
+| Application preparation / blocker / submit / response / offer | Job status In progress/Submitted, application-plan popup, submit/response tasks | In progress queues planning decision; application plan creates concrete prep tasks; submit/response use popups | Only task rows marked Ready can enter Today | Submission updates submitted date/status/check task; rejected/closed cancels stale job/interview work | No new gap found |
+| Referral search | Application planning decision or task | Referral search can create/link Person and outreach task only after result popup/user choice | Referral task can enter Today; outreach follows People workflow | No-contact result keeps submission unblocked | No new gap found |
+| Outreach / Send outreach / Contact follow-up | People relationship status or task completion | To outreach drafts; drafted sends; sent sets follow-up date; reply creates arrange-conversation task | Ready through Tasks only | Closed person cancels open Person work and decisions | No new gap found |
+| Conversation prep / reschedule / thank-you-debrief | People/Conversations date/status changes | Scheduled conversation creates/upserts prep task; completed creates thank-you/debrief task; cancellation creates reschedule task | Prep/debrief tasks can enter Today when ready | Cancelled conversation clears scheduled state and cancels prep; reschedule updates prep due date | No new gap found in this pass |
+| Interview scheduling / prep / day-before / follow-up | Interview date/status/readiness/outcome changes | Scheduled rounds create scheduling/prep planning and prep tasks; prep popup creates detailed tasks | Ready through Tasks; parent/planning tasks are controlled by readiness | Cancelled/completed/outcome states skip/cancel stale interview work and decisions | No new gap found in this pass |
+| Task unblocker / Admin | Row actions or manual one-off task | Explicit user action creates task | Ready through Tasks | Unblocker completion clears blocked state; admin has generic task completion | No new gap found |
+
+Stage 6 decision:
+No new code change in this pass. Earlier restarted work already fixed the cross-tab identity gap where a no-org Person could fork into a duplicate Person ID when later captured with an org. Current cross-tab traces preserve the core model: source tabs hold records, Decisions asks judgement, Tasks owns executable work, and Today pulls only ready tasks.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
