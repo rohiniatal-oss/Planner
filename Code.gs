@@ -1659,7 +1659,11 @@ function findJobByTitleOrg(title, org) {
   var t = normalizeKeyPart(title), o = normalizeKeyPart(org);
   var best = null, bestScore = 0;
   for (var i = 0; i < data.length; i++) {
-    var sameOrg = !o || normalizeKeyPart(data[i][COLS.JOBS.ORG - 1]) === o || normalizeKeyPart(data[i][COLS.JOBS.ORG_ID - 1]) === o;
+    var existingOrg = normalizeKeyPart(data[i][COLS.JOBS.ORG - 1]);
+    var existingOrgId = normalizeKeyPart(data[i][COLS.JOBS.ORG_ID - 1]);
+    var sameOrg = o
+      ? (existingOrg === o || existingOrgId === o)
+      : (!existingOrg && !existingOrgId);
     if (!sameOrg) continue;
     var score = similarity(t, normalizeKeyPart(data[i][COLS.JOBS.OPPORTUNITY - 1]));
     if (score > bestScore) { bestScore = score; best = { row: i + 2, data: data[i], score: score }; }
