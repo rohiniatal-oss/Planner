@@ -45,7 +45,7 @@
  * ARCHITECTURE
  * ------------
  *   Home       = the daily entry point: onboarding status, up to 3 Pending
- *                Decisions (inline, actionable), the Capture update
+ *                Decisions (inline, actionable), the Add or update
  *                dropdown, a Today's-plan summary, an Upcoming feed, and a
  *                demoted utility refresh control. No raw task table here.
  *   Today      = purely the execution surface: priority/focus, available
@@ -61,7 +61,7 @@
  *   Sectors / Organisations / Search Routines / Jobs / People / Conversations / Interviews
  *              = source-of-truth database tabs. Editable directly, but
  *                routine daily capture should happen via Home's
- *                Capture update popups, not by navigating to these tabs.
+ *                Add or update popups, not by navigating to these tabs.
  *
  * OPERATING RHYTHM
  * ----------------
@@ -69,7 +69,7 @@
  *
  * FLOW
  * ----
- *   Capture update popup → writes real source tab → cascades create
+ *   Add or update popup → writes real source tab → cascades create
  *   Decisions (only where judgment is genuinely needed — creating or
  *   classifying an Organisation never floods job/people-search tasks
  *   on its own) → Yes on a Decision creates a Task → Today pulls
@@ -79,7 +79,7 @@
  *
  * ONBOARDING
  * ----------
- *   "Open setup / starting facts" captures facts through popups and
+ *   "Add or update starting facts" captures facts through popups and
  *   keeps existing planner data. Starting fresh is a separate data-safety
  *   action with an explicit backup-first destructive confirmation. Sector
  *   onboarding is 3 explicit stages:
@@ -97,7 +97,7 @@
  *   3. Reload the sheet.
  *   4. In The Planner menu, run Setup & automation > Turn on Planner.
  *   5. Run Data safety & repair > Repair sheet layout (safe to re-run).
- *   6. Start from Home, or run The Planner > Open setup / starting facts.
+ *   6. Start from Home, or run The Planner > Add or update starting facts.
  */
 
 // =============================================================
@@ -348,8 +348,8 @@ var DROPDOWNS = {
   TODAY_PRIORITY: ['Default', 'Applications', 'Networking', 'Interviews', 'Pipeline building', 'Admin / light day'],
   TODAY_UPDATE_TYPES: [
     'No updates', 'Explore sectors', 'Find organisations',
-    'Capture organisation', 'Capture job', 'Application update',
-    'Capture person', 'Capture conversation', 'Capture interview',
+    'Add or update organisation', 'Add or update job', 'Application update',
+    'Add or update person', 'Log conversation', 'Add or update interview',
     'Task completed / blocked'
   ],
 
@@ -3529,12 +3529,12 @@ function handleSourceLedScanCompletion(todo, options) {
   }
   if (isOpportunitySearchWorkflow(todo.workflow)) {
     appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Opportunity search completed',
-      'Add/update jobs or organisations found', 'None', '', todo.workflow,
+      'Add or update jobs or organisations found', 'None', '', todo.workflow,
       'Open the capture flow and add any opportunities or organisations found.' + (todo.notes ? '\n' + todo.notes : ''),
       { actionType: 'Capture data' });
   } else if (isNetworkSearchWorkflow(todo.workflow)) {
     appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Network search completed',
-      'Add/update people found from Network search', 'None', '', todo.workflow,
+      'Add or update people found from Network search', 'None', '', todo.workflow,
       'Add people as Identified contacts. Outreach is a separate choice later.' + (todo.notes ? '\n' + todo.notes : ''),
       { actionType: 'Capture data' });
   }
@@ -3583,7 +3583,7 @@ function handleJobTodoCompletion(todo, options) {
     if (!isReferralSearchContactTask(todo)) return;
     if (options.referralSearchHandled) return;
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
-      'Add/update referral contact found for ' + job.title + ' at ' + job.org,
+      'Add or update referral contact found for ' + job.title + ' at ' + job.org,
       'Job', todo.objId, 'People sourcing',
       'If you found someone, accept this and add/link the person. If not, choose No; the application can still be submitted.' + (todo.notes ? '\n' + todo.notes : ''));
   } else if (todo.workflow === 'Offer decision') {
@@ -3662,10 +3662,10 @@ function handleOrganisationTodoCompletion(todo, options) {
     }
   } else if (todo.workflow === 'People sourcing' || todo.workflow === 'Referral search') {
     appendPendingDecision('ORG_PEOPLE_FOUND:' + todo.id, 'People sourcing completed: ' + org.name,
-      'Add/update people found at ' + org.name, 'Organisation', todo.objId, 'People sourcing', todo.notes || '');
+      'Add or update people found at ' + org.name, 'Organisation', todo.objId, 'People sourcing', todo.notes || '');
   } else if (todo.workflow === 'Org job scan' || todo.workflow === 'Job board scan') {
     appendPendingDecision('ORG_JOBS_FOUND:' + todo.id, 'Job scan completed: ' + org.name,
-      'Add/update jobs found at ' + org.name, 'Organisation', todo.objId, 'Org job scan', todo.notes || '');
+      'Add or update jobs found at ' + org.name, 'Organisation', todo.objId, 'Org job scan', todo.notes || '');
   } else if (todo.workflow === 'Org research') {
     appendPendingDecision('ORG_RESEARCH_DONE:' + todo.id, 'Organisation research completed: ' + org.name,
       'Update notes/tier/status for ' + org.name, 'Organisation', todo.objId, 'Org research', todo.notes || '');
@@ -3679,7 +3679,7 @@ function handleOrganisationTodoCompletion(todo, options) {
 function handleSectorTodoCompletion(todo, options) {
   if (todo.workflow === 'Market mapping' && todo.objType === 'Sector' && todo.objId) {
     appendPendingDecision('MARKET_MAP_DONE:' + todo.id, 'Market mapping completed',
-      'Add/update organisations found from market map', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
+      'Add or update organisations found from market map', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
   }
 }
 
@@ -5733,7 +5733,7 @@ function onEditInteractions(sheet, row, col, newVal) {
     appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, org, 'Contact follow-up', 'Not started', addDays(today(), 3), '15 min', notes || '', 'Auto-triggered');
   } else if (outcome === 'Opportunity created') {
     appendPendingDecision('INTERACTION_OPP:' + interactionId + ':Job', 'Opportunity mentioned by ' + personName,
-      'Add/update job from conversation with ' + personName, 'Person', personId, 'Org job scan', notes || '');
+      'Add or update job from conversation with ' + personName, 'Person', personId, 'Org job scan', notes || '');
   } else if (outcome === 'Referral given') {
     appendPendingDecision('INTERACTION_REFERRAL:' + interactionId + ':Referral search', 'Referral mentioned by ' + personName,
       'Act on referral from ' + personName, 'Person', personId, 'Referral search', notes || '');
@@ -7306,7 +7306,7 @@ function bootstrapToday() {
   // placeholder with the real counts once stagedTodaySelection has run.
   clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3:I3').merge()
-    .setValue("Build today's plan to start.")
+    .setValue("Build / refresh today's plan to start.")
     .setFontWeight('bold')
     .setFontColor(HEADER_COLOR)
     .setWrap(true);
@@ -8890,7 +8890,7 @@ function homeWhatNowText(planCounts, attentionItems, decisionCount) {
   if (!planCounts.built) return 'Open Today and build today\'s plan.';
   if (planCounts.commit > 0) return 'Open Today and work the committed list.';
   if (planCounts.options > 0) return 'Open Today, add time, or pull in an option.';
-  return 'Capture an update from Home, or adjust Today focus and capacity.';
+  return 'Add or update from Home, or adjust Today focus and capacity.';
 }
 
 function hardResetHomeSheet(sheet) {
@@ -9205,8 +9205,8 @@ function refreshHome() {
   resetHomeSkippedDecisionIds();
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
-  // --- Capture update (§1.3) — the primary capture surface now ---
-  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Capture update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  // --- Add or update (§1.3) — the primary source-update surface now ---
+  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add or update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   if (editReady) {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
@@ -9527,7 +9527,7 @@ function buildSetupHtml() {
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation, if relevant",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
-    ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
+    ' orgs:{title:"Add organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' routines:{title:"Create recurring search routines",fields:[{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -10076,7 +10076,7 @@ function completeSetupFromPopup(payload) {
 }
 
 // =============================================================
-// TODAY — Capture update intake popups (non-destructive, ongoing capture)
+// TODAY — Add or update intake popups (non-destructive, ongoing capture)
 // =============================================================
 
 function todayUpdateTypeToCapture(updateType) {
@@ -10088,6 +10088,11 @@ function todayUpdateTypeToCapture(updateType) {
     'Capture person': 'Add/update person',
     'Capture conversation': 'Add/update conversation',
     'Capture interview': 'Add/update interview',
+    'Add or update organisation': 'Add/update organisation',
+    'Add or update job': 'Add/update job',
+    'Add or update person': 'Add/update person',
+    'Log conversation': 'Add/update conversation',
+    'Add or update interview': 'Add/update interview',
     'Add/update organisation': 'Add/update organisation',
     'Add/update job': 'Add/update job',
     'Application update': 'Application update',
@@ -10109,13 +10114,13 @@ function captureConfig(captureType) {
       { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated', req: true }]
     },
     'Add/update organisation': {
-      title: 'Capture organisation',
+      title: 'Add or update organisation',
       fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
       { k: 'sector', l: 'Sector (leave blank to classify later)', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
       { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
-      title: 'Capture job',
+      title: 'Add or update job / application',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'deadline', l: 'Deadline, if any', t: 'date' }, { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, defaultValue: 'Not started' },
       { k: 'appliedDate', l: 'Submitted date, if already submitted', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' }]
@@ -10128,7 +10133,7 @@ function captureConfig(captureType) {
       { k: 'outcome', l: 'Application result', t: 'select', o: jobOutcomes, blank: true, showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }]
     },
     'Add/update person': {
-      title: 'Capture person',
+      title: 'Add or update person',
       fields: [{ k: 'name', l: 'Name', t: 'text', req: true }, { k: 'org', l: 'Organisation, if relevant', t: 'text' }, { k: 'role', l: 'Role/title, if known', t: 'text' },
       { k: 'relType', l: 'Source / relationship', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
       { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
@@ -10137,13 +10142,13 @@ function captureConfig(captureType) {
       { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date', showIfAny: [{ k: 'whereNow', v: 'Conversation scheduled' }, { k: 'whereNow', v: 'Already spoke' }] }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
     },
     'Add/update conversation': {
-      title: 'Capture conversation',
+      title: 'Log conversation',
       fields: [{ k: 'person', l: 'Person', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
       { k: 'status', l: 'Interaction status', t: 'select', o: DROPDOWNS.INTERACTION_STATUS, defaultValue: 'Completed' },
       { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true, showIf: { k: 'status', v: 'Completed' } }]
     },
     'Add/update interview': {
-      title: 'Capture interview',
+      title: 'Add or update interview',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes, blank: true },
       { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'status', l: 'Round status', t: 'select', o: DROPDOWNS.ROUND_STATUS, defaultValue: 'Scheduled', showIfSet: 'interviewDate' },
@@ -12740,7 +12745,7 @@ function selectedTimingContext() {
     if (row <= 1) return failResult('Select a search routine row first.', '', 'NO_ROUTINE_ROW');
     var routineId = String(sheet.getRange(row, COLS.SEARCH.ID).getValue() || '');
     if (!routineId) routineId = ensureSearchRoutineId(sheet, row);
-    if (!routineId) return failResult('That routine row does not have a Routine ID yet. Add a Routine or Sources first, or use Add / update records > Add/update search routine.', '', 'NO_ROUTINE');
+    if (!routineId) return failResult('That routine row does not have a Routine ID yet. Add a Routine or Sources first, or use Add or update > Add or edit sourcing routine.', '', 'NO_ROUTINE');
     var values = sheet.getRange(row, 1, 1, HEADERS['Search Routines'].length).getValues()[0];
     var routine = normalizeSearchRoutineType(values[COLS.SEARCH.ROUTINE - 1]);
     if (!routine) return failResult('Choose Opportunity search or Network search on this routine row first.', '', 'NO_ROUTINE_TYPE');
@@ -13307,7 +13312,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here');
   r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Setup & automation > Turn on Planner. This is the one-time step that lets popups, dropdowns, checkboxes, and automation respond.');
-  r = writeKV(sheet, r, '2. Add starting facts', 'Use The Planner > Open setup / starting facts. Setup adds or updates facts; it does not clear planner data.');
+  r = writeKV(sheet, r, '2. Add starting facts', 'Use The Planner > Add or update starting facts. Setup adds or updates facts; it does not clear planner data.');
   r = writeKV(sheet, r, '3. Start from Home', 'Home is the cockpit: decide, capture what changed, check the month shape, then move into Today.');
   r = writeKV(sheet, r, '4. Work from Today', 'Today is the execution surface. It pulls ready work from Tasks and preserves same-day notes, Done/Blocked status, and locked or pulled rows.');
   r = writeKV(sheet, r, 'Starting fresh', 'Only use The Planner > Data safety & repair > Start fresh when you really want to clear planner data. It creates a full backup copy first.');
@@ -13323,11 +13328,11 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Returning after days away', 'Use The Planner > Catch up after time away. It catches up due work and gives you one calm path back into Home and Today.');
   r++;
 
-  r = writeH2(sheet, r, 'Capturing updates');
+  r = writeH2(sheet, r, 'Adding updates');
   r = writeKV(sheet, r, 'Use Home first', 'The Add or update dropdown opens the right popup, writes the source tab, links IDs, then refreshes Home and Today.');
-  r = writeKV(sheet, r, 'Use the menu when needed', 'The Planner > Add / update records opens the same safe popups if you are already working from the menu. These popups run the normal linking, cascade, and refresh logic.');
-  r = writeKV(sheet, r, 'Jobs', 'Capture the opportunity and organisation. Set Application status to In progress when you are ready to plan the application work.');
-  r = writeKV(sheet, r, 'People', 'Capture the person, source, organisation if relevant, and Relationship step. People found from Network search are saved as Identified; outreach is not automatic.');
+  r = writeKV(sheet, r, 'Use the menu when needed', 'The Planner > Add or update opens the same safe popups if you are already working from the menu. These popups run the normal linking, cascade, and refresh logic.');
+  r = writeKV(sheet, r, 'Jobs', 'Add the opportunity and organisation. Set Application status to In progress when you are ready to plan the application work.');
+  r = writeKV(sheet, r, 'People', 'Add the person, source, organisation if relevant, and Relationship step. People found from Network search are saved as Identified; outreach is not automatic.');
   r = writeKV(sheet, r, 'Conversations', 'Use this for scheduled or completed relationship interactions. Completed conversations can route follow-up, referral, or opportunity work.');
   r = writeKV(sheet, r, 'Interviews', 'Add rounds when they exist. Scheduled rounds create prep planning; completed rounds use Official outcome and expected response dates.');
   r = writeKV(sheet, r, 'Direct edits', 'Direct tab edits are allowed for correction and repair. They trigger follow-up logic only after The Planner > Setup & automation > Turn on Planner has been run.');
@@ -13388,7 +13393,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Menu missing', 'Run Extensions > Apps Script > onOpen, then reload the sheet.');
   r = writeKV(sheet, r, 'Popups or checkboxes do nothing', 'Run The Planner > Setup & automation > Turn on Planner.');
   r = writeKV(sheet, r, 'Home looks stale', 'Use The Planner > Refresh Home, or tick the Home refresh checkbox.');
-  r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build today's plan.");
+  r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh today's plan.");
   r = writeKV(sheet, r, 'Returning after time away', 'Use The Planner > Catch up after time away before working the plan.');
   r = writeKV(sheet, r, 'Formatting or dropdowns look wrong', 'Use The Planner > Data safety & repair > Repair sheet layout.');
   r = writeKV(sheet, r, 'Broken links or flags', 'Rows with repair flags stay visible for correction. Fix the linked source row or run Repair if the issue is structural.');
@@ -13827,14 +13832,14 @@ function uninstallTimeTriggers() {
 function buildMenu() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('The Planner')
-    .addItem('Open setup / starting facts', 'runSetupInterview')
-    .addItem("Build today's plan", 'populateToday')
+    .addItem('Add or update starting facts', 'runSetupInterview')
+    .addItem("Build / refresh today's plan", 'populateToday')
     .addItem('Refresh Home', 'refreshHome')
     .addItem('Catch up after time away', 'restartToday')
     .addItem('Add one-off task', 'addAdHocTodo')
     .addSeparator()
     .addSubMenu(ui.createMenu('Today')
-      .addItem("Build today's plan", 'populateToday')
+      .addItem("Build / refresh today's plan", 'populateToday')
       .addItem('Add time to Today', 'topUpToday')
       .addSeparator()
       .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
@@ -13842,15 +13847,15 @@ function buildMenu() {
       .addItem('Let selected Today row re-rank', 'unlockTodayRow')
       .addItem('Move selected Today row up', 'moveTodayRowUp')
       .addItem('Move selected Today row down', 'moveTodayRowDown'))
-    .addSubMenu(ui.createMenu('Add / update records')
-      .addItem('Add/update broad sectors', 'addNewSector')
-      .addItem('Add organisations found', 'addExplorationOrganisations')
-      .addItem('Add/update organisation', 'addNewOrganisation')
-      .addItem('Add/update person', 'addNewPerson')
-      .addItem('Add/update job', 'addNewJob')
-      .addItem('Add/update search routine', 'runSearchRoutinePopup')
+    .addSubMenu(ui.createMenu('Add or update')
+      .addItem('Add broad sector', 'addNewSector')
+      .addItem('Add organisations from research', 'addExplorationOrganisations')
+      .addItem('Add or update organisation', 'addNewOrganisation')
+      .addItem('Add or update person', 'addNewPerson')
+      .addItem('Add or update job / application', 'addNewJob')
+      .addItem('Add or edit sourcing routine', 'runSearchRoutinePopup')
       .addItem('Log conversation', 'addNewInteraction')
-      .addItem('Add/update interview round', 'addNewInterview'))
+      .addItem('Add or update interview', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Selected row')
       .addItem('Start pursuing selected Organisation', 'rowActionStartPursuingSelectedOrg')
       .addItem('Find people at selected Organisation', 'rowActionFindPeopleAtSelectedOrg')
