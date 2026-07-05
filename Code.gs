@@ -621,6 +621,28 @@ function normalizeJobOutcome(value) {
   return legacyMap[v] !== undefined ? legacyMap[v] : (DROPDOWNS.JOB_OUTCOME.indexOf(v) !== -1 ? v : '');
 }
 
+// Rewrites any Jobs.Outcome cells still holding a legacy label (e.g. the old
+// "Interview invite" canonical value) to the current DROPDOWNS.JOB_OUTCOME
+// wording. Needed because the Outcome column's data validation disallows
+// invalid entries (allowInvalid: false) — normalizeJobOutcome() alone only
+// fixes what the app reads back, not what's still sitting in the cell.
+function backfillJobsOutcomeLabels() {
+  var sheet = getSheet('Jobs');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var rowCount = sheet.getLastRow() - 1;
+  var range = sheet.getRange(2, COLS.JOBS.OUTCOME, rowCount, 1);
+  var values = range.getValues();
+  var changed = 0;
+  for (var i = 0; i < values.length; i++) {
+    var raw = String(values[i][0] || '');
+    if (!raw) continue;
+    var normalized = normalizeJobOutcome(raw);
+    if (normalized && normalized !== raw) { values[i][0] = normalized; changed++; }
+  }
+  if (changed) range.setValues(values);
+  return changed;
+}
+
 function normalizePersonStage(value) {
   var v = String(value || '').trim();
   var legacyMap = {
@@ -3232,7 +3254,7 @@ function createJobResponseOutcomeDecision(jobId, reason) {
   if (status !== 'Submitted') return '';
   return appendPendingDecision('JOB_RESPONSE_OUTCOME:' + jobId, reason || 'Job response received: ' + job.title,
     'Record response outcome for ' + job.title + ' at ' + job.org, 'Job', jobId, 'Admin',
-    'Choose the result on Jobs: waiting / interview invite / rejected.');
+    'Choose the result on Jobs: waiting / in interview process / rejected.');
 }
 
 function isJobSubmittedForResponseTracking(jobId) {
@@ -3267,10 +3289,10 @@ function routeJobOutcome(jobId, outcome, opts) {
     inviteSheet.getRange(job.row, COLS.JOBS.RESPONSE).setValue('Yes');
     inviteSheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue('In interview process');
     inviteSheet.getRange(job.row, COLS.JOBS.REVIEW_DATE).clearContent();
-    appendNoteFlag(inviteSheet, job.row, COLS.JOBS.NOTES, '[interview-invite] Interview workflow opened.');
+    appendNoteFlag(inviteSheet, job.row, COLS.JOBS.NOTES, '[interview-process] Interview workflow opened.');
     setJobStatus(jobId, 'Submitted', { source: opts.source || 'job-outcome', realDate: opts.realDate || job.appliedDate || today() });
-    autoDismissPendingForTarget('Job', jobId, 'Interview invite recorded');
-    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Interview invite received', ['Check application response']);
+    autoDismissPendingForTarget('Job', jobId, 'In interview process recorded');
+    setOpenTodosForTarget('Job', jobId, 'Skipped', 'Interview process started', ['Check application response']);
     if (!jobHasRounds(jobId) || opts.forceRound) createInterviewRoundForJob(jobId, opts);
     showInterviewsTab();
     return true;
@@ -10671,6 +10693,7 @@ function repairAllTabs() {
 function repairAllTabsImpl() {
   migrateLegacyTabs();
   migrateWorkbookSchema();
+  backfillJobsOutcomeLabels();
 
   CANONICAL_TAB_ORDER.forEach(function (name) {
     var headerKey = SHEET_TO_HEADER_KEY[name];
@@ -10729,6 +10752,7 @@ function dailyMaintenance() {
   // interleave with a user edit mid-cascade.
   withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
+    backfillJobsOutcomeLabels();
     var migratedJobs = migrateJobsDeadlineStatusSchema();
     var migratedInteractions = migrateInteractionsStatusSchema();
     if (migratedJobs || migratedInteractions) {
