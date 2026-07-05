@@ -684,6 +684,42 @@ Stage 8 Home cockpit trace:
 Stage 8 decision:
 No new code change in this pass. Home is structurally an operating cockpit, not a dense dashboard. The earlier Home/Today contradiction path is addressed in current code by `todayPlanCounts` using verified build-date evidence plus a visible-plan fallback with an unverified warning.
 
+## Stage 9 - Decisions vs Tasks Separation
+
+Required output:
+
+| Trigger/output | Should be Decision? | Should be Task? | Should be Popup? | Current behaviour | Fix |
+|---|---:|---:|---:|---|---|
+
+Stage 9 decision/work trace:
+
+| Trigger/output | Should be Decision? | Should be Task? | Should be Popup? | Current behaviour | Fix |
+|---|---:|---:|---:|---|---|
+| Org marked Active | Yes | No direct task | No | `fireOrgActiveCascade` creates People sourcing / Org job scan decisions; Yes creates/reuses Tasks | None |
+| Sector sub-sector added | Yes | Only after Yes | No | `fireSubsectorAddedDecision` asks whether to market-map; Yes creates Market mapping task | None |
+| Source-led scan completed | Yes | No direct child until decision/popup | Yes | `handleSourceLedScanCompletion` creates Capture data decision; Yes opens result popup and stays Pending until save | None |
+| Referral search completed | Yes | Outreach task only after contact result | Yes | Completion creates Capture data decision; result popup links/adds person or closes without blocking submit | None |
+| Application needs planning | Yes | Tasks from plan | Yes | Application-plan decision opens planning popup; `completeApplicationPlanFromPopup` resolves only after successful save | None |
+| Job/application/interview outcome | Yes | Follow-up tasks after source update | Yes | Update-source decisions route to outcome popups; popup save updates source and resolves decision | None |
+| Useful/referral/opportunity conversation outcome | Yes where judgement/capture is needed | Yes only after Yes or direct follow-up outcome | Sometimes | Interaction outcome creates decisions for opportunity/referral/useful follow-up; direct Contact follow-up only for explicit Follow-up needed | None |
+| User chooses No on a decision | Yes audit trail | No | No | Status/decided date were recorded, but Notes did not explain why | Add `[no] User chose No` note in shared router |
+| User manually Auto-dismisses a decision | Yes audit trail | No | No | Status/decided date were recorded, but Notes did not explain why | Add `[auto-dismissed] Set manually by user` note in shared router |
+
+Stage 9 checks:
+
+| Check | Result |
+|---|---|
+| Judgement goes to Decisions | Pass. Strategic/social/source-update choices enter `appendPendingDecision`. |
+| Executable work goes to Tasks | Pass. `acceptPendingDecision` is the Create task path; Today never owns task creation. |
+| Nuanced capture goes to popup | Pass. Capture/update action types route through popup handlers and stay Pending until popup save. |
+| Decision Yes clearly says what it will do | Mostly pass. Home shows timing + action type + linked target; deeper copy can be improved in Stage 12. |
+| Decision No resolves cleanly | Fixed in this stage with explicit audit note. |
+| Accepting decision creates/reuses one task or route | Pass by router shape and `TODO_ID`/existing-task guards. |
+| Tasks have enough context to be done from Today | Pass for routed tasks inspected here; broader task-note clarity remains Stage 12/13. |
+
+Stage 9 implementation:
+Added audit notes for user-driven `No` and manual `Auto-dismissed` decisions in `resolveDecisionAction`, so Decisions remains a judgement trail and not only a status table.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3

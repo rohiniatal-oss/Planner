@@ -2165,6 +2165,8 @@ function resolveDecisionAction(ctx) {
   if (ctx.action === 'No' || ctx.action === 'Auto-dismissed') {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue(ctx.action);
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES,
+      ctx.action === 'No' ? '[no] User chose No' : '[auto-dismissed] Set manually by user');
     if (isApplicationPlanDecisionKey(ctx.key)) {
       var job = getJobRowById(ctx.targetId);
       if (job) clearNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
