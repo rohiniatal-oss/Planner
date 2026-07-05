@@ -58,6 +58,7 @@ Category 0 acceptance standard:
 - A workflow is not done until its product flow is understandable, not merely executable.
 - Do not add complexity unless it reduces cognitive burden or improves trust.
 - Defer Guide updates until behavior is settled, but record Guide implications.
+- User-facing menus must be audited action by action. For each visible action, ask: does the user need this action directly, or is it an internal helper? If the user does not need it, remove it from the visible surface or fold it into Repair. If the user does need it, keep it and rename it so the label describes the user outcome, not the internal mechanism.
 
 Category 0 first implementation slice:
 
@@ -77,7 +78,7 @@ Category 0 first implementation slice:
 | Home Today-plan action follows plan state | Home said Start working even when the plan was not built, and nudged Guide reading instead of the next operating action | L1 navigation copy | If Today is not built, Home says Open Today to build plan; if built with no committed work, it says Open Today and explains options/available minutes |
 | Workbook header hints use user-facing ownership language | Column hints exposed backend phrases like system link, master queue, and auto/manual | L1/L2 orientation copy | Headers across data and work tabs explain what is filled automatically, what the user owns, and which surface owns the work |
 | Jobs response column hints explain the actual path | Response received and Application result can look like duplicate states | L2 workflow copy | Response received explains that Yes records a result; Application result says it belongs after submission |
-| Maintenance menu uses user concepts | Legacy migration, commitment classes, and show all columns exposed implementation language | L2 trust/navigation copy | Menu says Clean up old tab names, Recalculate task priority, and Show hidden columns; priority recalc refreshes Today/Home with feedback |
+| Maintenance menu uses user concepts | Legacy migration, commitment classes, and show all columns exposed implementation language | L2 trust/navigation copy | Legacy tab cleanup is internal to Repair all tabs; menu says Recalculate task priority and Show hidden columns; priority recalc refreshes Today/Home with feedback |
 
 Product architecture to preserve:
 

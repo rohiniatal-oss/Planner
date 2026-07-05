@@ -96,6 +96,7 @@ Category 0 acceptance standard:
 - Home must remain an operating cockpit, not a dashboard.
 - Today must remain an execution surface, not a backlog.
 - Source tabs must remain records, not daily operating surfaces.
+- Every visible action must pass the user-action test: why does the user need to see this, what choice or outcome does it support, and what happens if it is removed? If it is not needed, remove it from the user surface. If it is needed, keep it and label it in user outcome language. Legacy migrations, schema cleanup, and implementation helpers belong inside Repair unless the user truly needs to choose them directly.
 
 Category 0 current workbook scan:
 

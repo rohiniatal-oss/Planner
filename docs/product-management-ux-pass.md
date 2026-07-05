@@ -98,6 +98,63 @@ Grounded in current `HEADERS` / `MANUAL_COLUMNS` from `Code.gs`.
 | Jobs response columns read like duplicate states | Workflow / Trust | P2 | User may not know whether to edit Response received or Application result | Phase 1/3 |
 | Maintenance menu exposes implementation terms | Navigation / Trust | P2 | User must translate legacy migration, commitment classes, and all columns into planner actions | Phase 1 |
 
+## Pass 6 - Trust and Transparency
+
+| Trust issue | Where | Current behaviour | Why it harms trust | Fix | User-facing copy |
+|---|---|---|---|---|---|
+| Home can contradict Today | Home / Today | Home reads Today summary and build state | A mismatch makes the planner feel stale | State-aware Home Today action; visual retest still needed | Open Today to build plan / Start working only when committed work exists |
+| Broken source links can look executable | Tasks / Today / Home | Helper checks mark broken/terminal links as Needs planning | False-ready work wastes daily capacity | Keep Today exclusion and Home attention | Needs attention / source repair |
+| Decisions can hide real action | Home / Decisions | Decision action type and router say what Yes does | Generic Yes creates anxiety | Keep action-specific cards and router | What Yes will do |
+| Source tabs can look like backend tables | All data tabs | Header hints and hidden fields explain ownership | Users may edit helper state or avoid tabs entirely | Header guidance copy pass | Filled automatically / Prefer Home capture / work from Today |
+| Repair/refresh/reset can blur together | Maintenance / setup | Some safe actions now labelled safe; reset has backup option | Users may fear losing data or skip repair | Category 6 data lifecycle pass | Refresh derived data (safe), backup before clear |
+| Popups can fail silently | Capture / planning popups | Validation returns inline messages | Silent failure loses confidence | Keep popup validation; later live retest | Could not save / required field copy |
+
+## Pass 7 - Continuous Product Metrics
+
+| Product metric | Why it matters | How to observe in workbook | Improvement lever |
+|---|---|---|---|
+| Tabs needed for daily use | Daily user should not need source tabs to know what to do | Home/Today route completeness | Keep Home and Today as operating surfaces |
+| Ambiguous visible labels | Ambiguity creates hesitation | Menu/header/cell copy scans | Category 0/5 copy passes |
+| Ready vs blocked task count | Today should show executable work only | Tasks Ready for Today, Today Needs planning | Category 2 daily execution checks |
+| Pending decisions with stale/missing source | Home must not ask impossible decisions | Decision helper backfill and Home queue | Category 1 trust checks |
+| Open applications waiting | User should know what is waiting | Jobs response fields, Home open applications/upcoming | Category 4 Home cockpit checks |
+| Upcoming interviews/conversations | Scheduled work should not be missed | Home Upcoming, Interviews, People conversation dates | Category 4 surfacing checks |
+| Invalid dropdown / duplicate ID rows | Data health affects all routing | Repair/maintenance scans and Home attention | Category 1 trust/data safety |
+| Manual fields per popup | Capture should ask only what matters now | Popup definitions and conditional sections | Category 3 workflow/capture review |
+| Context switches per core journey | Too many tab hops break flow | Journey maps | Product-led acceptance tests |
+
+Product review cadence:
+
+| Cadence | Review focus | Owner surface |
+|---|---|---|
+| Daily | Home/Today trust, decisions, executable work, blocked recovery | Home / Today |
+| Weekly | waiting applications, interviews, networking, active org review | Home / Tasks / source tabs |
+| Monthly | source mix, dormant/active orgs, stale tags, large-sheet performance | Source tabs / Maintenance |
+| After each feature | Journey regression and UX copy review | Product docs + code checks |
+
+## Pass 8 - Implementation Readiness Gates
+
+| Improvement | Target experience | Code/sheet changes | Guide changes | Acceptance tests | Non-goals |
+|---|---|---|---|---|---|
+| Home Today state | User knows whether to build/open/start Today | `refreshHome` copy/link logic | Later Guide wording if needed | no-plan, zero-commit, committed-work states | Do not make Home run scripts by hyperlink |
+| Header hints | Every tab explains field ownership | `HEADER_GUIDANCE`, `userFacingHeaderHint` | Later column dictionary | guidance coverage, rendered-hint scan | Do not change schemas/visibility |
+| Jobs response clarity | Submitted application response columns are understandable | Jobs header copy | Later application workflow section | Response received and result hints | Do not rename columns yet |
+| Maintenance menu clarity | Safe maintenance actions are understandable | menu labels, toasts, menu wrapper | Later troubleshooting section | menu labels, parse, duplicate function check | Do not change priority rules |
+| Data lifecycle | Snapshot/reset/repair/refresh/restore are distinct | Category 6 safety layer | Guide repair/recovery section | destructive guard, snapshot, status | Do not blur reset and refresh |
+| Source-tab workflow clarity | Source tabs stay records, not daily surfaces | Category 3/5 by-tab review | Guide examples last | column-flow review per tab | Do not add dashboard columns without action |
+
+Category 0 readiness rule:
+No further code change should be accepted only because it is technically correct. It must identify user problem, target experience, acceptance tests, and non-goals first.
+
+Visible-action readiness rule:
+For every menu item, checkbox, link, row action, popup entry, and visible helper action, run the same product test:
+1. Why would the user need to see this?
+2. What decision, recovery path, or outcome does it support?
+3. If it is removed from the surface, does anything important become impossible?
+4. If it stays, is the label written in user outcome language?
+
+If the action is not needed directly, remove it from the user surface or fold it into Repair all tabs / automation. If it is needed, keep it and rename it until a first-time user can infer what will happen.
+
 ## Current Improvement: Home Today State
 
 User story:
@@ -177,20 +234,20 @@ User story:
 As a user opening Maintenance, I need the actions to say what they do in planner terms, so that I can repair or inspect the workbook without guessing whether an action is safe.
 
 Current pain:
-Labels like "Migrate legacy tab names" and "Recalculate commitment classes" expose implementation language. "Show all columns" is also less precise than the actual intent: reveal hidden helper columns for inspection.
+Labels like "Migrate legacy tab names" and "Recalculate commitment classes" expose implementation language. A user should not need to run old-tab-name migration directly; repair can do that internally. "Show all columns" is also less precise than the actual intent: reveal hidden helper columns for inspection.
 
 Target experience:
-Maintenance uses user concepts: clean up old tab names, recalculate task priority, and show hidden columns. The task-priority action confirms that Today and Home were refreshed.
+Maintenance uses user concepts: repair all tabs, recalculate task priority, and show hidden columns. Old-tab-name cleanup is hidden inside Repair all tabs. The task-priority action confirms that Today and Home were refreshed.
 
 Implementation:
-Menu-label and toast changes only, plus a menu-only `recalculateTaskPriorityFromMenu()` wrapper so scheduled maintenance can continue recalculating quietly.
+Menu-label and toast changes, removal of the standalone legacy-tab cleanup menu item, plus a menu-only `recalculateTaskPriorityFromMenu()` wrapper so scheduled maintenance can continue recalculating quietly.
 
 Acceptance tests:
-1. The Maintenance menu uses the new user-facing labels.
+1. The Maintenance menu does not expose legacy-tab migration as a standalone user action.
 2. Recalculate task priority refreshes task helpers, Today, and Home, then shows a confirmation.
 3. Daily maintenance and repair can still call `recalculateCommitmentClasses()` without extra user toasts.
 
 Non-goals:
 - Do not change priority rules.
 - Do not change hidden-column lists.
-- Do not change migration behavior.
+- Do not change migration behavior; it still runs inside Repair all tabs.

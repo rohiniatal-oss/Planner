@@ -12394,7 +12394,6 @@ function buildMenu() {
       .addItem('Turn off daily/weekly automation', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
-      .addItem('Clean up old tab names', 'migrateLegacyTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')
       .addItem('Run weekly review now', 'weeklyReview')
       .addItem('Refresh derived data (safe)', 'refreshAllDerivedData')
