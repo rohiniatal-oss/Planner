@@ -4,16 +4,60 @@ Baseline: current `main` after `62b685e` (`Keep people follow-ups out of Home Up
 
 Scope: apply the automation/workflow and product/UX review plans across the workbook. Guide edits remain deferred until the workbook behavior is settled.
 
+Product-led source of truth:
+This pass must explicitly follow `product_led_codex_planner_review_playbook.md`, not just the engineering workflow notes. The review weighting is 40% product experience, 30% workflow/job-hunt logic, 20% engineering/data integrity, and 10% performance/migration/testing.
+
+Product-led checks to run before each implementation batch:
+- What is the user trying to understand or accomplish here?
+- What is currently confusing, hidden, repetitive, or anxiety-inducing?
+- What can the system infer safely?
+- Where does judgement belong?
+- What should be a task, a decision, a popup, a warning, or a confirmation?
+- Does the change reduce cognitive load without reducing control?
+
+Required product issue format:
+
+| Field | Requirement |
+|---|---|
+| Product impact | What user confusion, anxiety, or broken expectation does this create? |
+| Workflow impact | Which job-hunt flow is affected? |
+| Code/data area | Which functions, columns, or tabs prove the issue? |
+| Expected behavior | What should happen from a user's point of view? |
+| Automation level | L1 helper, L2 flag, L3 decision, L4 task, L5 popup, or L6 confirmation |
+| Acceptance test | How we prove the fix works |
+
 ## MECE Review Categories
 
 | Category | Scope | Status |
 |---|---|---|
+| 0. Product-led experience and navigation | Job-hunt operating partner lens, cognitive load, first impression, navigation, clarity, delight, product severity scoring | In progress |
 | 1. Trust and data safety | Repair surfacing, invalid values, duplicate IDs, source-link trust, destructive-action guardrails | Mostly done |
 | 2. Daily execution and recovery | Today readiness, task completion, blockers, deferrals, end-of-day wrap-up | In progress |
 | 3. Workflow and column-flow logic | Tab-by-tab field ownership, direct edit vs popup parity, source -> Decision -> Task -> Today -> source updates | In progress |
 | 4. Home cockpit and cross-tab surfacing | Home as operating cockpit, not dashboard; cross-tab status accuracy and compact attention | Pending |
 | 5. Orientation, copy, labels, Guide-last | Header hints, legacy labels, tag dictionary, Guide refresh after behavior settles | Pending |
 | 6. Data lifecycle and recovery | Snapshot, reset, refresh, repair, restore, destructive-action inventory, audit and recovery status | Pending |
+
+## Category 0 - Product-Led Experience And Navigation
+
+This category is the product-led review lane from `product_led_codex_planner_review_playbook.md`.
+
+| Review area | What Codex must check | Why it matters |
+|---|---|---|
+| First impression | Can the user understand each tab's purpose, editable fields, ignored fields, and next step in 10 seconds? | Prevents the workbook feeling like backend storage |
+| Cognitive load | Count visible fields, dropdowns, manual inputs, decisions, and hidden consequences | Reduces thinking, not just clicks |
+| Navigation | Check Home/Today/source-tab paths for unnecessary context switching | Keeps daily work starting from Home or Today |
+| Workflow fit | Test whether each flow follows the natural job-hunt order | Avoids tasks before intent and decisions that are really tasks |
+| Trust and control | Verify explanations, repair paths, undo/snapshot paths, and no silent no-ops | Keeps automation trustworthy |
+| Automation boundary | Classify each automation as L1 helper, L2 warning, L3 decision, L4 task, L5 popup, or L6 confirmation | Preserves judgement and prevents task spam |
+| Visual hierarchy | Check whether important fields, warnings, and helper fields have the right visual weight | Makes rows scannable in seconds |
+| Delight | Look for small copy/feedback improvements that reduce anxiety | Makes the planner feel like a partner |
+
+Category 0 acceptance standard:
+- A code fix must be tied to a user-facing product problem.
+- A workflow is not done until its product flow is understandable, not merely executable.
+- Do not add complexity unless it reduces cognitive burden or improves trust.
+- Defer Guide updates until behavior is settled, but record Guide implications.
 
 Product architecture to preserve:
 

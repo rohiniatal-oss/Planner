@@ -4,16 +4,98 @@ Current implementation pass through: current workbook-wide product-led batch aft
 
 Scope: full workbook review using the product-led, exhaustive, and cohesive manuals. Guide changes are intentionally deferred until workbook behavior settles.
 
+Source playbooks incorporated:
+- `product_led_codex_planner_review_playbook.md`
+- `exhaustive_codex_worksheet_review_and_improvement_playbook.md`
+- `codex_planner_cohesive_review_and_implementation_manual.md`
+- The Home operating-cockpit guidance and the automation/workflow improvement plans shared in this review batch.
+
+## Product-Led Operating Standard
+
+The controlling lens for this pass is the product-led playbook: The Planner should feel like a competent job-search operating partner, not a spreadsheet the user has to manage.
+
+Review weighting:
+
+| Lens | Weight | Meaning for this pass |
+|---|---:|---|
+| Product experience, cognitive design, usability, clarity, navigation | 40% | Does the workbook reduce thinking, remembering, anxiety, context switching, and ambiguity? |
+| Workflow and job-hunt logic | 30% | Do workflows match the natural order of a real job hunt? |
+| Engineering, automation, intelligence, data integrity | 20% | Does the system automate mechanics, preserve judgement, and avoid lying? |
+| Performance, migration, testing, maintenance | 10% | Will this remain stable and usable after months of use? |
+
+Before every change, ask:
+- Does this reduce thinking, remembering, anxiety, context switching, or repetitive work?
+- Does this preserve user agency, transparency, trust, and recovery?
+- Does this scale to months of job-search use?
+- Would the user actually want to open this every day?
+
+Product principle:
+Minimise thinking, not just clicks. Fewer clicks only help if there are also fewer ambiguities, hidden rules, and ways to get lost.
+
+Required product-led deliverables for each major tab/workflow pass:
+- Product purpose statement.
+- User journey map.
+- Current friction map.
+- Tab and column clarity review.
+- Workflow logic review.
+- Automation boundary review using the L1-L6 ladder.
+- Data integrity and trust review.
+- UX issue backlog using P0-P3 product severity.
+- Implementation plan and acceptance tests.
+- Guide/documentation update notes, deferred until the Guide-last phase.
+
+Product-led scoring rubric:
+
+| Dimension | Question |
+|---|---|
+| Clarity | Does the user understand what this is? |
+| Cognitive load | Does it reduce thinking? |
+| Navigation | Does it help the user know where to go next? |
+| Workflow fit | Does it match the natural job-hunt flow? |
+| Trust | Does it explain itself and avoid contradictions? |
+| Control | Can the user override and recover? |
+| Automation quality | Does it automate mechanics without overreach? |
+| Scalability | Does it stay usable after months? |
+| Visual hierarchy | Are important things obvious? |
+| Delight | Does it reduce anxiety? |
+
 ## MECE Review Categories
 
 | Category | Scope | Status |
 |---|---|---|
+| 0. Product-led experience and navigation | Job-hunt operating partner lens, cognitive load, first impression, navigation, clarity, delight, product severity scoring | In progress |
 | 1. Trust and data safety | Repair surfacing, invalid values, duplicate IDs, source-link trust, destructive-action guardrails | Mostly done |
 | 2. Daily execution and recovery | Today readiness, task completion, blockers, deferrals, end-of-day wrap-up | In progress |
 | 3. Workflow and column-flow logic | Tab-by-tab field ownership, direct edit vs popup parity, source -> Decision -> Task -> Today -> source updates | In progress |
 | 4. Home cockpit and cross-tab surfacing | Home as operating cockpit, not dashboard; cross-tab status accuracy and compact attention | Pending |
 | 5. Orientation, copy, labels, Guide-last | Header hints, legacy labels, tag dictionary, Guide refresh after behavior settles | Pending |
 | 6. Data lifecycle and recovery | Snapshot, reset, refresh, repair, restore, destructive-action inventory, audit and recovery status | Pending |
+
+## Category 0 - Product-Led Experience And Navigation
+
+This category is run across every tab and workflow before treating code-level fixes as sufficient.
+
+North-star question:
+Does this make the job hunt easier to understand, continue, and trust?
+
+| Review area | Question | Evidence to inspect | Output |
+|---|---|---|---|
+| First impression | Does a new user understand the tab in 10 seconds? | rendered tab, header guidance, visible columns, empty state | tab risk + fix |
+| Cognitive load | How many visible choices, fields, hidden consequences, and remembered rules exist? | tab columns, popups, status/dropdown options, row actions | friction map |
+| Navigation | Does the user know where to start and where to go next? | Home, Today, row actions, links, empty states | next-step clarity gap |
+| Workflow fit | Does the sequence match the natural job-hunt order? | source -> Decision -> Task -> Today -> source flows | workflow issue |
+| Trust and control | Does the planner explain itself, avoid contradictions, and allow recovery? | Home warnings, Today reasons, helper columns, repair/reset paths | trust issue |
+| Automation boundary | Is each action correctly L1-L6: helper, warning, decision, task, popup, or confirmation? | cascades, decisions, popups, destructive actions | automation correction |
+| Visual hierarchy | Are the important fields and warnings visually obvious? | colors, hidden columns, helper styling, frozen columns | UX/layout issue |
+| Delight and anxiety reduction | Does the surface make progress feel clearer and safer? | feedback copy, empty states, success messages | wording/flow fix |
+
+Category 0 acceptance standard:
+- Every major workbook pass must include a product-purpose statement and user journey map.
+- Every implementation batch must state which product-led category problem it reduces.
+- A technically correct change is not complete if it makes the workbook harder to understand or more anxiety-inducing.
+- Home must remain an operating cockpit, not a dashboard.
+- Today must remain an execution surface, not a backlog.
+- Source tabs must remain records, not daily operating surfaces.
 
 Implemented after this review began:
 - Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
