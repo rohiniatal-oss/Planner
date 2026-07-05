@@ -7328,7 +7328,7 @@ function bootstrapToday() {
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
   setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
   sheet.getRange('B5').setNote("Today focus is a preference, not a hard filter. Changing it rebuilds Today now.");
-  sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Matching active-pursuit work is preferred first. If time remains, other ready work can still appear. Existing Done/Blocked status changes are not overwritten.");
+  sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Matching active-pursuit work is preferred first. If time remains, other ready work can still appear. Admin / light day only fills with small/admin work; heavier items stay as Options.");
 
   sheet.getRange('B6').setValue('Available minutes').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(90).setNumberFormat('0');
@@ -7672,6 +7672,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   pool.forEach(function (p) { byId[p.todoId] = p; });
   var currentStateById = buildCurrentTaskStateForToday();
   var energyLow = energy === 'Low';
+  var adminLightDay = focus === 'Admin / light day';
 
   var commit = [];
   var options = [];
@@ -7699,6 +7700,11 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
       minimumCount++;
       minimumMin += item.estMin || 0;
     }
+  }
+
+  function flexibleFillAllowed(item) {
+    if (!adminLightDay) return true;
+    return item.workflow === 'Admin' || item.effort === 'Shallow' || (item.estMin || 0) <= 15;
   }
 
   // Stage 1 — manually pulled-in tasks (locked or explicitly pulled)
@@ -7769,7 +7775,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // §2.2: Tier now comes before age (was pure FIFO) — same comparator as
   // Active pursuit, so a newly-important Tier-A item no longer waits
   // behind an older Tier-C one. §5: Low energy still sinks Deep-effort.
-  var pipelineCandidates = pool.filter(function (p) { return p.cls === 'Pipeline-building' && !usedIds[p.todoId]; })
+  var pipelineCandidates = pool.filter(function (p) { return p.cls === 'Pipeline-building' && !usedIds[p.todoId] && flexibleFillAllowed(p); })
     .sort(compareForStage(energyLow));
   pipelineCandidates.forEach(function (p) {
     if (minutesUsed + p.estMin <= capacity) addCommit(p, 'pipeline-building — fits today');
@@ -7779,7 +7785,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // pursuit work that Focus excluded rather than leaving capacity idle.
   // Soft preference, not a hard filter — labeled distinctly so it reads
   // as a fill, not a focus match.
-  pool.filter(function (p) { return p.cls === 'Active pursuit' && !usedIds[p.todoId]; })
+  pool.filter(function (p) { return p.cls === 'Active pursuit' && !usedIds[p.todoId] && flexibleFillAllowed(p); })
     .sort(compareForStage(energyLow))
     .forEach(function (p) {
       usedIds[p.todoId] = true;
@@ -7792,7 +7798,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // sit empty just because what's left is ad-hoc/Admin-class Backlog.
   // Items that don't fit fall through to Stage 9's options fallback below
   // like anything else, rather than being permanently hidden.
-  pool.filter(function (p) { return p.cls === 'Backlog' && !usedIds[p.todoId]; })
+  pool.filter(function (p) { return p.cls === 'Backlog' && !usedIds[p.todoId] && flexibleFillAllowed(p); })
     .sort(compareForStage(energyLow))
     .forEach(function (p) {
       if (minutesUsed + p.estMin <= capacity) { usedIds[p.todoId] = true; addCommit(p, 'backlog — filling spare capacity'); }
@@ -7802,7 +7808,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // usable capacity, include it rather than leaving time idle. This keeps
   // the buffer intact while avoiding the frustrating "there was room, why
   // didn't it pull something?" failure mode.
-  pool.filter(function (p) { return !usedIds[p.todoId]; })
+  pool.filter(function (p) { return !usedIds[p.todoId] && flexibleFillAllowed(p); })
     .sort(compareForStage(energyLow))
     .forEach(function (p) {
       if (minutesUsed + p.estMin <= capacity) addCommit(p, 'spare capacity — fits today');
@@ -7852,7 +7858,7 @@ function todayCapacityHeadline(selection, availableMinutes) {
 function populateTodayImpl() {
   var sheet = ensureTodaySheet();
   if (sheet.getMaxRows() < TODAY_ENDOFDAY_ROW || !sheet.getRange(1, 1).getValue()) bootstrapToday();
-  materializeDueSearchRoutines(today());
+  materializeDueTasks();
   var previousState = collectPreviousTodayState(sheet);
 
   var availableMinutes = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10);
@@ -8311,7 +8317,7 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
 // -------------------------------------------------------------
 
 function onEditToday(sheet, row, col, newVal) {
-  if ((row === 4 || row === 5 || row === 6) && col === 4) { populateToday(); return; }
+  if ((row === 5 || row === 6 || row === 7) && col === 4) { populateToday(); return; }
   if (row === TODAY_REFRESH_ROW && col === TODAY_REFRESH_COL && newVal === true) {
     sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false);
     populateToday();
@@ -12187,6 +12193,8 @@ function applySheetDropdowns(canonicalName) {
     case 'Today':
       // v7.4: per-row, not blanket — Option rows need the smaller
       // 'Deferred'/'Pull in' list, not the full Commit-row status list.
+      setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
+      setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
       applyTodayRowStatusDropdowns(sheet);
       break;
     case 'Decisions':
