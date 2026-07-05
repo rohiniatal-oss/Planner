@@ -4,6 +4,17 @@ Current implementation pass through: current workbook-wide product-led batch aft
 
 Scope: full workbook review using the product-led, exhaustive, and cohesive manuals. Guide changes are intentionally deferred until workbook behavior settles.
 
+## MECE Review Categories
+
+| Category | Scope | Status |
+|---|---|---|
+| 1. Trust and data safety | Repair surfacing, invalid values, duplicate IDs, source-link trust, destructive-action guardrails | Mostly done |
+| 2. Daily execution and recovery | Today readiness, task completion, blockers, deferrals, end-of-day wrap-up | In progress |
+| 3. Workflow and column-flow logic | Tab-by-tab field ownership, direct edit vs popup parity, source -> Decision -> Task -> Today -> source updates | In progress |
+| 4. Home cockpit and cross-tab surfacing | Home as operating cockpit, not dashboard; cross-tab status accuracy and compact attention | Pending |
+| 5. Orientation, copy, labels, Guide-last | Header hints, legacy labels, tag dictionary, Guide refresh after behavior settles | Pending |
+| 6. Data lifecycle and recovery | Snapshot, reset, refresh, repair, restore, destructive-action inventory, audit and recovery status | Pending |
+
 Implemented after this review began:
 - Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
 - Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
@@ -90,7 +101,7 @@ Representative risks from current schema:
 | People.Relationship status | People | Identified -> Closed | Yes | Yes | Mostly | Scheduled conversations show on Home; follow-up tasks stay in Today/Tasks | Keep |
 | Interviews.Status | Interviews | To schedule/Scheduled/Completed/Cancelled/Reschedule | Yes | Yes | Yes | Reschedule is temp | Keep, ensure cleanup |
 | Interviews.Official outcome | Interviews | Waiting/Next round/Declined/Offer/Parked | Yes | Yes | Yes | None | Keep |
-| Tasks.Ready for Today | Tasks helper | Ready/Waiting/Blocked/Parent/Needs planning/Done | Script | Yes | Yes | Terminal source/missing source handling needed for decisions too | Fix decisions |
+| Tasks.Ready for Today | Tasks helper | Ready/Waiting/Blocked/Parent/Needs planning/Done | Script | Yes | Yes | Terminal source/missing source handling verified for Tasks and pending Decisions | Keep |
 | Decisions.Decision action type | Decisions/Home | Create task/Open popup/Update source/Capture data/Dismiss only | Yes | Yes | Yes if router covers all | Missing route falls Pending | Keep |
 
 ## Pass 6 - Workflow Lineage Review
@@ -133,6 +144,21 @@ Representative risks from current schema:
 | Destructive onboarding reset | setup popup | optional backup copy + full body clear | Good | setup reset | popup confirmation and backup checkbox | Done |
 | Duplicate IDs | repair/maintenance duplicate scan | row notes + Home count | Good | repair/manual | Home attention + row notes | Done |
 | End-of-day unfinished work | Today wrap-up popup | one batch action table | Good | Today end-of-day checkbox | modal summary | Done |
+| Full data lifecycle | reset/repair/refresh/menu actions | backup copy exists for onboarding reset only | Missing productised snapshot/restore/refresh distinction | data safety pass | Home/status/menu eventually | P1 Category 6 |
+
+## Pass 11 - Data Lifecycle And Recovery
+
+| Action/function | Type | Destructive? | Data affected | Backup before action? | Confirmation? | Restore path? | Risk | Fix |
+|---|---|---:|---|---:|---:|---:|---|---|
+| `refreshHome` / Home checkbox | Refresh derived surface | No | Home only | n/a | No | n/a | Low | Keep non-destructive |
+| `populateToday` | Refresh derived surface | No | Today plan rows | n/a | No | n/a | Low | Keep non-destructive |
+| `dailyMaintenance` | Repair/refresh derived data | No | helpers, flags, due tasks, Home/Today | n/a | No | n/a | Medium if stale | Keep; status surfaced |
+| `repairAllTabs` | Repair/schema refresh | Mostly no | headers, formulas, dropdowns, helpers, Today/Home/Guide | n/a | Menu action | n/a | Medium if misunderstood | Clarify as repair, not reset |
+| `fullRefresh` | Refresh/repair wrapper | No | derived surfaces and formatting | n/a | Menu action | n/a | Medium naming confusion | Consider rename to Refresh derived data |
+| `completeSetupFromPopup` / redo onboarding | Destructive reset + capture | Yes | Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, Decisions | Yes, checked backup copy option | Yes | Manual via backup copy | High | Partial done; Category 6 needs productised snapshot/status |
+| Dedicated snapshot function | Snapshot | No | whole workbook copy | n/a | Menu action | Backup is output | Low | Add `savePlannerSnapshot` |
+| Dedicated reset all planner data | Destructive reset | Yes | user data tabs and Today rows | Should require/recommend snapshot | Two-step | Manual via snapshot | High | Add only through shared safety layer |
+| Restore from snapshot | Restore | Yes | data bodies restored from selected backup | n/a | Two-step | Snapshot source | High/complex | Phase 2, plan before build |
 
 ## Pass 9 - Home and Today Cockpit Review
 
@@ -168,6 +194,7 @@ Representative risks from current schema:
 | Source-led scan no-results path | P2 | Done | Better UX, not integrity | source result popup |
 | Weekly review summary not visible enough | P2 | Done | Reduces "what happened?" anxiety | Home warning/snapshot |
 | End-of-day unfinished workflow is too modal-heavy | P2 | Done | Heavy days should not become a popup gauntlet | batch Today wrap-up popup |
+| Missing data lifecycle and recovery pass | P1 | Category 6 | Reset/repair/refresh/snapshot/restore are not productised as distinct user concepts | data safety layer |
 | Notes/tag logic undocumented | P2 | Guide last | User cannot self-serve repair | Guide dictionary |
 | Legacy interview prep workflows still visible | P3 | Guide/header later | May confuse but current routing works | Guide/header pass |
 

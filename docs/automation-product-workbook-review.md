@@ -4,6 +4,17 @@ Baseline: current `main` after `62b685e` (`Keep people follow-ups out of Home Up
 
 Scope: apply the automation/workflow and product/UX review plans across the workbook. Guide edits remain deferred until the workbook behavior is settled.
 
+## MECE Review Categories
+
+| Category | Scope | Status |
+|---|---|---|
+| 1. Trust and data safety | Repair surfacing, invalid values, duplicate IDs, source-link trust, destructive-action guardrails | Mostly done |
+| 2. Daily execution and recovery | Today readiness, task completion, blockers, deferrals, end-of-day wrap-up | In progress |
+| 3. Workflow and column-flow logic | Tab-by-tab field ownership, direct edit vs popup parity, source -> Decision -> Task -> Today -> source updates | In progress |
+| 4. Home cockpit and cross-tab surfacing | Home as operating cockpit, not dashboard; cross-tab status accuracy and compact attention | Pending |
+| 5. Orientation, copy, labels, Guide-last | Header hints, legacy labels, tag dictionary, Guide refresh after behavior settles | Pending |
+| 6. Data lifecycle and recovery | Snapshot, reset, refresh, repair, restore, destructive-action inventory, audit and recovery status | Pending |
+
 Product architecture to preserve:
 
 | Surface | Product role | Boundary |
@@ -100,6 +111,7 @@ Recent product decision:
 | Redo onboarding can destroy data | Setup popup | User may want to save existing planner state before reseeding. | Implemented: checked backup-copy option before clearing; backup failure aborts reset. | L5 | Done |
 | Duplicate IDs | Hidden ID columns | Links can silently point to wrong row. | Implemented: repair scan counts/flags duplicate IDs and Home attention surfaces it. | L2 | Done |
 | End-of-day unfinished work | Today | One modal per unfinished task is heavy. | Implemented: one batch popup with carry/block/defer/skip choices. | L5 | Done |
+| Data lifecycle and recovery | Reset/repair/refresh paths | Reset, repair, refresh, snapshot, and restore are separate product concepts. | Add a dedicated Category 6 inventory and safety layer. | L5/L6 | P1 |
 | Notes tag meanings | Tasks/source tabs | Tags drive logic but are not self-serve. | Guide tag dictionary later. | Documentation | P2 Guide-last |
 | Legacy interview prep workflows | Tasks dropdown | New model uses generic `Interview prep` parent/children; legacy labels can confuse. | Header/Guide clarify legacy, or retire from fresh creation if safe. | P3 | P3 |
 
@@ -144,6 +156,7 @@ Recent product decision:
 | Redo onboarding lacks a save-before-clear path | Trust/Recovery | Done | Existing data could be wiped before the user had a fallback copy. | Phase 1 |
 | Duplicate IDs are not top-level enough | Trust/Recovery | Done | Hidden duplicate IDs can break links and make actions hit the wrong source row. | Phase 1 |
 | End-of-day unfinished workflow is too modal-heavy | Execution/Recovery | Done | Heavy days become a popup gauntlet. | Phase 2 |
+| Missing data lifecycle and recovery pass | Trust/Recovery | P1 | Destructive reset exists, but snapshot/refresh/repair/restore are not productised as distinct flows. | Category 6 |
 | Legacy interview prep labels remain in dropdowns | Orientation/Workflow | P3 | Users may see two prep models. | Phase 4/5 |
 | Guide/tag dictionary missing | Documentation | P2 | User cannot self-serve automation tags. | Guide-last |
 
@@ -186,3 +199,27 @@ Acceptance tests:
 Do not do:
 - Do not silently map unknown values to defaults.
 - Do not add new Home sections.
+
+## Issue: Missing data lifecycle and recovery pass
+
+Severity: P1
+
+User story:
+As a user, before I run setup, reset, repair, or refresh, I need to understand whether my data will be preserved, snapshotted, rebuilt, or cleared, so that I can recover from mistakes.
+
+Required Category 6 inventory:
+
+| Action/function | Type | Destructive? | Data affected | Backup before action? | Confirmation? | Restore path? | Risk | Fix |
+|---|---|---:|---|---:|---:|---:|---|---|
+| Refresh derived data | Non-destructive refresh | No | helpers/Home/Today | n/a | No | n/a | Low | Productise `refreshAllDerivedData` |
+| Repair data/tabs | Repair | No/mostly no | schema, helpers, flags | n/a | Menu action | n/a | Medium | Keep separate from reset |
+| Reset all planner data | Destructive reset | Yes | source/work data tabs | Required/offered | Yes | Snapshot copy | High | Shared safety layer |
+| Save planner snapshot | Snapshot | No | full spreadsheet copy | n/a | Menu action | Snapshot itself | Low | Add menu action |
+| Restore from snapshot | Restore | Yes | data bodies | n/a | Yes | Selected snapshot | High | Phase 2 |
+
+Acceptance tests:
+1. Snapshot creates a timestamped workbook copy and records last snapshot time.
+2. Destructive reset cannot silently run without warning and snapshot option.
+3. Refresh derived data never clears source rows.
+4. Repair all tabs is clearly non-reset behavior.
+5. Home or menu can show last snapshot/reset/repair status.
