@@ -7673,6 +7673,9 @@ function syncTodayRowForTodo(todoRow, status) {
     if (String(planSheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
       var mapped = todayStatusFromTodoStatus(status);
       planSheet.getRange(r, COLS.TODAY.STATUS).setValue(mapped);
+      if (mapped === 'Done' && !planSheet.getRange(r, COLS.TODAY.ACTUAL_MIN).getValue()) {
+        planSheet.getRange(r, COLS.TODAY.ACTUAL_MIN).setValue(planSheet.getRange(r, COLS.TODAY.EST_MIN).getValue() || '');
+      }
       updateTodayProgress(planSheet);
       return;
     }
