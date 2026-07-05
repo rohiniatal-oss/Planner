@@ -7,6 +7,7 @@ Scope: full workbook review using the product-led, exhaustive, and cohesive manu
 Implemented after this review began:
 - Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
 - Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
+- Source-led scan completion opens a capture popup, and now has a direct "Nothing useful found" completion path.
 
 ## Pass 1 - User Journey Review
 
@@ -15,8 +16,8 @@ Implemented after this review began:
 | First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Medium | Onboarding can keep showing next checklist work after useful seed rows exist | What "complete" means vs generated next tasks | Complete onboarding after seed facts; route next exploration as Tasks/Decisions | P2 |
 | Daily use | Know what to do now | Home -> Today -> mark work | Low/medium | Home has plan, decisions, apps, upcoming, but critical warnings are not clearly first-class | Why something needs repair | Home warning strip + Today needs-planning details | P1 |
 | Weekly review | Keep stale search alive | time trigger -> org review decisions/tasks | Medium | Review output is mostly notes/tasks, not a visible weekly summary | What weekly review did | Home maintenance/weekly status summary | P2 |
-| Source-led opportunity discovery | Run flexible scans and capture findings | Task -> Done -> Decision -> capture popup | Medium | Extra decision after completing scan may feel indirect | Empty/no-finding path | Completion popup with "jobs/orgs/nothing" choices | P2 |
-| Source-led people discovery | Capture people without outreach spam | Task -> Done -> Decision -> people capture | Medium | Good anti-spam model, but source result capture still indirect | "Identified means no outreach yet" | Completion popup saves Identified people directly | P2 |
+| Source-led opportunity discovery | Run flexible scans and capture findings | Task -> Done -> result popup | Low | Completion is now direct, with no-results path | None major | Keep | Keep |
+| Source-led people discovery | Capture people without outreach spam | Task -> Done -> result popup | Low | Good anti-spam model | "Identified means no outreach yet" in Guide later | Keep | Keep |
 | Targeted sector/org mapping | Grow target universe | Sectors/Orgs -> Decisions -> Tasks | Medium | Parent/sub-sector model is clearer now but still hard from sheet alone | Examples | Keep source rows clear; Guide later | P3 |
 | Job capture and triage | Store opportunity and decide intent | Home popup or Jobs row -> Decision/app status | Low/medium | Direct Jobs edit vs popup parity remains cognitively heavy | Which columns are required | Popup-first for normal capture; direct row repair only | P2 |
 | Application planning | Break application into executable work | In progress -> Home Decision -> popup -> Tasks | Low | Strong current model | What completion updates | Keep | Keep |
@@ -95,8 +96,8 @@ Representative risks from current schema:
 | Interview scheduling | Interview invite/round | No | Yes | Yes | User sets date | Scheduled skips scheduling task | Notes | Good | Keep |
 | Plan interview prep | Scheduled interview | No | Yes | Yes | Popup creates prep tasks | Retires changed prep | Notes | Good | Keep |
 | Interview follow-up | Completed/waiting interview | Yes | Yes | Yes | Decision records outcome | Outcome cleans work | Decision result | Good | Keep |
-| People source scan | Manual/source-led | Yes after done | Yes | Yes | Capture people Identified | No outreach spam | Decision result | Indirect | Later popup-first |
-| Opportunity scan | Manual/source-led | Yes after done | Yes | Yes | Capture jobs/orgs | No spam | Decision result | Indirect | Later popup-first |
+| People source scan | Manual/source-led | Optional audit decision/result popup | Yes | Yes | Capture people Identified or close with no results | No outreach spam | Decision/result note | Good | Keep |
+| Opportunity scan | Manual/source-led | Optional audit decision/result popup | Yes | Yes | Capture jobs/orgs or close with no results | No spam | Decision/result note | Good | Keep |
 | Org Active | Org status Active | Yes | After Yes | Yes | Queues people/job scan decisions | Dormant/Archived clean | Decisions | Good but Home summary weak | Later |
 | Market mapping | Sub-sector decision | Yes | Yes | Yes | Capture organisations found | Sector retired skips tasks | Decision/notes | Good | Keep |
 
@@ -106,7 +107,7 @@ Representative risks from current schema:
 |---|---|---|---|---|---|---|
 | Hide stale terminal/missing-source Decisions from Home | Medium | L2 safe warning/repair | Home should not ask on dead links | Low | Decisions audit remains | Yes |
 | Home critical warning strip | Medium | L2 surface issue | Reduces anxiety and repair hunting | Low | Menu repair | Next |
-| Source scan result popup | Medium | L5 popup | Requires capture details | Medium | Cancel popup | Later |
+| Source scan result popup | Medium | L5 popup | Requires capture details | Medium | No-results button/cancel popup | Done |
 | People outreach from Identified | Medium | L3 decision | Social judgement | High | Manual status/Decision | Do not automate silently |
 | Offer decision | Medium | L5 popup | High consequence | High | Still deciding path | Keep |
 | Guide dictionaries | Low/medium | Documentation | Self-serve | Low | n/a | Last |
@@ -155,7 +156,7 @@ Representative risks from current schema:
 |---|---|---|---|---|
 | Missing-source pending Decisions can still appear on Home | P1 | Must fix now | Home should not ask user to decide on an orphaned source | none |
 | Home critical warnings are not first-class | P1/P2 | Should fix next | Product cockpit should surface broken/stale/maintenance before work | warning summary helper |
-| Source-led scan completion is indirect | P2 | Later | Better UX, not integrity | source result popup |
+| Source-led scan no-results path | P2 | Done | Better UX, not integrity | source result popup |
 | Weekly review summary not visible enough | P2 | Later | Reduces "what happened?" anxiety | Home warning/snapshot |
 | Notes/tag logic undocumented | P2 | Guide last | User cannot self-serve repair | Guide dictionary |
 | Legacy interview prep workflows still visible | P3 | Guide/header later | May confuse but current routing works | Guide/header pass |

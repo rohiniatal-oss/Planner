@@ -9619,13 +9619,13 @@ function buildSourceScanResultHtml(todoId, decisionId) {
   var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
-    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FBFBF9;color:#1B474D;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
     '<h2>Capture scan results</h2><p id="intro"></p>' +
     '<div id="peopleBlock" class="hidden"><label>People found<textarea id="personNames" placeholder="One per line, or comma-separated"></textarea></label><label>Relationship source<select id="relType"></select></label><label>Organisation, if relevant<input id="personOrg"></label><label>Notes/source<textarea id="peopleNotes"></textarea></label><div class="hint">People are saved as Identified. Outreach is not created automatically.</div></div>' +
     '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
-    '<button class="primary" type="button" onclick="save()">Save results</button><div id="status"></div>' +
+    '<button class="primary" type="button" onclick="save(false)">Save results</button><button class="secondary" type="button" onclick="save(true)">Nothing useful found</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});' +
-    'function save(){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or close this and skip the task.";return;}if(!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or close this and skip the task.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    'function save(noResults){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or use Nothing useful found.";return;}if(!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or use Nothing useful found.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
 function runSourceScanResultPopup(todoId, decisionId) {
@@ -9661,7 +9661,11 @@ function completeSourceScanResultFromPopup(payload) {
       var todo = getTodoById(payload.todoId);
       if (!todo || !isSourceLedScanTask(todo)) return failResult('I could not find that source-scan task.', '', 'TASK_NOT_FOUND');
       var result;
-      if (todo.workflow === 'People source scan') {
+      var noResults = payload.noResults === true || String(payload.noResults || '') === 'true';
+      if (noResults) {
+        appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[no-results] Source scan completed without useful rows found.');
+        result = okResult('Closed source scan with no new rows.');
+      } else if (todo.workflow === 'People source scan') {
         result = processSourceLedPeopleCapture(payload);
       } else {
         var captured = [];
@@ -9680,7 +9684,7 @@ function completeSourceScanResultFromPopup(payload) {
       }
       if (!result.ok) return result;
       completeTodo(todo.id, 'Done', { source: 'source-scan-popup', sourceScanHandled: true });
-      resolvePopupDecision(payload.decisionId, '', 'Captured source-scan results');
+      resolvePopupDecision(payload.decisionId, '', noResults ? 'No source-scan results captured' : 'Captured source-scan results');
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
