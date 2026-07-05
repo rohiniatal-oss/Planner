@@ -1827,7 +1827,8 @@ function inferDecisionActionType(key, targetType, workflow, task) {
   key = String(key || '');
   if (isApplicationPlanDecisionKey(key)) return 'Open popup';
   if (key.indexOf('JOB_RESPONSE_OUTCOME:') === 0 || key.indexOf('INTERVIEW_OUTCOME:') === 0 ||
-      key.indexOf('PERSON_REPLY_OUTCOME:') === 0 || key.indexOf('OFFER_DECISION_DONE:') === 0) return 'Update source';
+      key.indexOf('PERSON_REPLY_OUTCOME:') === 0 || key.indexOf('OFFER_DECISION_DONE:') === 0 ||
+      key.indexOf('ORG_DORMANT_LIVE:') === 0 || key.indexOf('ORG_REVIEW_DUE:') === 0) return 'Update source';
   if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('ORG_JOBS_FOUND:') === 0 ||
       key.indexOf('ORG_RESEARCH_DONE:') === 0 || key.indexOf('MARKET_MAP_DONE:') === 0 ||
       key.indexOf('INTERACTION_OPP:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0 ||
@@ -2071,6 +2072,13 @@ function resolveUpdateSourceDecision(ctx) {
   if (String(ctx.key || '').indexOf('OFFER_DECISION_DONE:') === 0 && ctx.targetType === 'Job') {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
     runOfferDecisionPopup(ctx.targetId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  if ((String(ctx.key || '').indexOf('ORG_DORMANT_LIVE:') === 0 ||
+      String(ctx.key || '').indexOf('ORG_REVIEW_DUE:') === 0) && ctx.targetType === 'Organisation') {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runCapturePopup('Add/update organisation', ctx.id, captureDefaultsForDecision(ctx, 'Add/update organisation'));
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
@@ -5432,6 +5440,24 @@ function interviewDebriefTemplate() {
     'Learning for next round:';
 }
 
+function interviewDebriefLooksCompleted(notes) {
+  var text = String(notes || '');
+  if (text.indexOf('[debrief-completed]') !== -1) return true;
+  var marker = text.indexOf('[interview-debrief]');
+  if (marker === -1) return false;
+  var body = text.slice(marker + '[interview-debrief]'.length);
+  var nextTag = body.search(/\n\[[^\]]+\]/);
+  if (nextTag !== -1) body = body.slice(0, nextTag);
+  body = body
+    .replace(/What they asked:/g, '')
+    .replace(/What landed:/g, '')
+    .replace(/What was weak:/g, '')
+    .replace(/Follow-up promised:/g, '')
+    .replace(/Learning for next round:/g, '')
+    .trim();
+  return body.length > 0;
+}
+
 function interviewerTemplate() {
   return '[interviewers]\nName:\nRole:\nOrganisation:\nPerson ID, if known:\nNotes:';
 }
@@ -6295,7 +6321,7 @@ function checkInterviewRoundHealthFlags() {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome]');
     }
 
-    if (status === 'Completed' && notes.indexOf('[debrief-completed]') === -1) {
+    if (status === 'Completed' && !interviewDebriefLooksCompleted(notes)) {
       appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief] Add substantive debrief notes');
       createInterviewDebriefTask(roundId);
       flagged++;
