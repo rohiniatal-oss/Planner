@@ -18,7 +18,7 @@ Required output:
 
 | User mode | User need | Primary surface | Current friction | Required improvement | Priority |
 |---|---|---|---|---|---|
-| New user | Turn the Planner on, understand setup, and avoid accidental data loss | Home, Setup & automation menu, onboarding popup | `refreshHome` has a trigger banner and `runSetupInterview` has backup-before-reset UI, but the live sheet may lag repo code until Apps Script is updated | Verify first-run Home state, trigger-off state, setup popup, and reset/backup path before declaring onboarding solved | P1 |
+| New user | Turn the Planner on, understand setup, and avoid accidental data loss | Home, Planner setup menu, setup popup | `refreshHome` has a trigger banner; `runSetupInterview` is additive; destructive start-fresh is separate under Maintenance | Verify first-run Home state, trigger-off state, setup popup, and start-fresh backup path before declaring onboarding solved | P1 |
 | Daily user | See what needs attention and start work without visiting source tabs | Home -> Today | `refreshHome` gives Decisions, capture, Today state, open applications, upcoming, and utility refresh; still needs live Home/Today consistency proof | Stage 8 must prove Home never says Not built when Today has a current usable plan | P1 |
 | Low-energy day | Adjust the plan to a realistic day | Today | `bootstrapToday` now explains Focus, Available minutes, Energy, and build/refresh effects; low-energy/minimum-day cue needs rendered-sheet review | Stage 7 must test whether low capacity/low energy creates clear enough Today feedback without adding dashboard noise | P2 |
 | Missed-days restart | Regain control after not using the Planner for a few days | Home, Today, Maintenance | `readMaintenanceHealth` can surface stale daily/weekly automation and Today can rebuild, but the product path is not named as a recovery mode | Decide after Stage 8/11 whether Home needs a compact "restart today" cue or whether existing maintenance/Today cues are enough | P2 |
@@ -512,7 +512,7 @@ Required output:
 | `fullRefresh` / `refreshAllDerivedData` | Refresh | No planner data deletion; deletes obsolete `Dashboard` if present | Derived data, dropdowns, Home/Today helpers, obsolete legacy tabs | No | No | N/A | Current menu says safe; Dashboard is not a Planner data surface |
 | `dailyMaintenance` / `weeklyReview` | Scheduled maintenance | No intended data deletion | Derived helpers, due tasks, review summaries, Home/Today | No | No | N/A | Defer deeper cadence/observability to Stage 11 |
 | `migrateWorkbookSchema` and migration helpers | Migration | Potentially shape-changing, designed to preserve row data | Sectors, Organisations, Jobs, Conversations schema/data ranges | No | No | No automatic rollback | Defer migration-specific proof to Stage 15 unless a failing scenario appears |
-| Trigger uninstall actions | Automation setup change | No planner data deletion | Installable triggers only | No | Menu action only | Reinstall through Setup & automation | User-facing enough for now; no data lifecycle fix |
+| Trigger uninstall actions | Automation setup change | No planner data deletion | Installable triggers only | No | Menu action only | Reinstall through Planner setup | User-facing enough for now; no data lifecycle fix |
 
 Stage 3 lifecycle decision:
 
@@ -853,10 +853,10 @@ Stage 12 copy trace:
 |---|---|---|---|---|
 | Decisions column 13 | `Decision action type` | Backend wording on a visible helper column | `What Yes does` | `HEADERS['Pending decisions']`, `HEADER_GUIDANCE`, `userFacingHeaderHint`, dropdown integrity label |
 | Home refresh checkbox | `Refresh Home status` | Does not say what state is being reread | `Refresh Home from Tasks, Today, and Decisions` | `refreshHome` |
-| Top menu refresh | `Refresh Home status` | Same ambiguity in menu | `Refresh Home from planner state` | `buildMenu` |
-| Setup automation menu | `Repair edit actions` | Users do not think in trigger/edit-action terms | `Fix dropdowns, popups, and checkboxes` | `buildMenu` |
+| Top menu refresh | `Refresh Home status` | Same ambiguity in menu | `Refresh Home` | `buildMenu` |
+| Planner setup menu | `Repair edit actions` | Users do not think in trigger/edit-action terms | `Repair dropdowns, popups, and checkboxes` | `buildMenu` |
 | Setup automation menu | `Turn off edit actions` | Same backend wording | `Turn off dropdowns, popups, and checkboxes` | `buildMenu` |
-| Setup automation menu | `Repair daily/weekly automation` | Outcome is daily/weekly refresh, not abstract automation | `Fix daily/weekly refresh` | `buildMenu` |
+| Planner setup menu | `Repair daily/weekly automation` | Outcome is daily/weekly refresh, not abstract automation | `Repair daily/weekly refresh` | `buildMenu` |
 | Setup automation menu | `Turn off daily/weekly automation` | Same | `Turn off daily/weekly refresh` | `buildMenu` |
 | Guide text | Several already-improved lines but Guide is intentionally preserved | User asked Guide last | Defer final rewrite to Stage 14 | No code change in Stage 12 |
 
@@ -1513,6 +1513,8 @@ Product taste findings:
 | Setup and destructive reset were mixed in one normal onboarding modal. | P1/P2 | `buildSetupHtml()` showed Add/update and Start fresh side by side; menu/Home said Start or redo setup / Redo setup. | Fixed now: setup is additive; start fresh moves to Maintenance with backup-first confirmation. |
 | User-facing "Capture update" language is accurate but colder than the user's intent. | P2 | Home and menu used Capture update, while the actual user action is adding/updating something that changed. | Fixed now: visible label becomes Add or update. |
 | Maintenance labels sometimes describe machinery, not outcomes. | P2 | Run daily maintenance / weekly review / refresh planner links and display. | Fixed some labels now; deeper maintenance simplification remains backlog. |
+| Home decision copy still sounded like backend queue state. | P2 | Home section said Pending Decisions, which is the data/audit model rather than the user's moment of judgement. | Fixed now: Home says Decisions to make; Decisions tab remains the audit queue. |
+| Setup menu copy still exposed automation as the product concept. | P2 | User-facing paths said Setup & automation even when the user goal is simply turning the Planner on. | Fixed now: visible menu/path says Planner setup; repair actions say Repair rather than Fix. |
 | Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user has warnings and refreshes, not a calm "restart today" flow. | Structural redesign candidate after Home/Today review. |
 | Source tabs are powerful but still feel spreadsheet-like. | P2/P3 | Direct editable tables, row actions, hidden helper columns, header hints. | Backlog: stronger inspect/repair framing, filters/views, or fewer daily-visible source mechanics. |
 
@@ -1522,6 +1524,8 @@ Immediate Stage 17 implementation:
 - Rename Home/menu setup labels away from "redo setup".
 - Rename visible capture surface to Add or update.
 - Rename the most exposed maintenance actions by user outcome.
+- Rename Home's decision section to Decisions to make while preserving Decisions as the audit queue.
+- Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.
 
 Stage 17 decision:
 This stage is now the product-taste gate before Guide-last. It should not stop at correctness. Bigger structural ideas stay as redesign candidates unless the current code has a low-risk product-model fix, like setup/reset separation.
