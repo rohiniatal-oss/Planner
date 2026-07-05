@@ -4089,6 +4089,7 @@ function routePersonConversationCancelled(personId) {
   setOpenTodosForTarget('Person', personId, 'Cancelled', 'Conversation cancelled', ['Conversation prep']);
   if (normalizePersonStage(person.stage) === 'Conversation scheduled') {
     sheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue('Replied');
+    sheet.getRange(person.row, COLS.PEOPLE.CONVERSATION_DATE).clearContent();
     appendNoteFlag(sheet, person.row, COLS.PEOPLE.NOTES, '[conversation-cancelled] Conversation cancelled; arrange a new time, keep warm, or close.');
     appendTodoOnceForWorkflow('Reschedule conversation with ' + person.name + (person.org ? ' at ' + person.org : ''),
       'Person', personId, person.org, 'Reschedule conversation', 'Not started', '', '15 min',
@@ -5889,6 +5890,7 @@ function scheduleInterviewRound(roundId, dateValue) {
   var interviewDate = parseDateOr(dateValue, '');
   sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).setValue(interviewDate);
   sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Scheduled');
+  clearNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[missing-date]');
   var roundType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
   setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview scheduled', ['Interview scheduling']);
   sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(interviewDate, REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
@@ -6393,6 +6395,22 @@ function onEditRounds(sheet, row, col, newVal) {
     return;
   }
   if (col === COLS.ROUNDS.STATUS) {
+    if (String(newVal) === 'To schedule') {
+      sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).clearContent();
+      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).clearContent();
+      appendTodoOnceForWorkflow('Schedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Set Interview date on the Interviews row when known.', 'Auto-triggered');
+      pauseInterviewPrepForReschedule(roundId);
+      syncOpenInterviewTaskDates(roundId);
+    }
+    if (String(newVal) === 'Scheduled') {
+      var statusInterviewDate = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
+      if (statusInterviewDate) {
+        scheduleInterviewRound(roundId, statusInterviewDate);
+      } else {
+        appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-date] Add Interview date before marking this round Scheduled.');
+        appendTodoOnceForWorkflow('Schedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Set Interview date on the Interviews row when known.', 'Auto-triggered');
+      }
+    }
     if (String(newVal) === 'Completed') {
       markInterviewRoundCompleted(roundId, {});
     }

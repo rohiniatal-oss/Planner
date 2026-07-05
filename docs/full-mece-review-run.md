@@ -552,3 +552,122 @@ Verification:
 - Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
 - HEADERS/COLS schema check clean
 - Stage 4 column config bounds check clean
+
+## Stage 5 - State Machines And Dropdown Semantics
+
+Required dropdown output:
+
+| Dropdown | Used in | Values | Strict? | Drives code? | Missing values | Legacy values | Fix |
+|---|---|---|---:|---:|---|---|---|
+| People relationship status | People column 7 | Identified, To outreach, Outreach drafted, Outreach sent, Replied, Conversation scheduled, Conversation completed, Keep warm, Closed | Yes | Yes, `firePersonStageChanged` | None in this slice | Normalized by `normalizePersonStage` | Cleanup cancelled scheduled conversations |
+| Conversations interaction status | Conversations column 7 | Scheduled, Completed, Cancelled | Yes | Yes, `routeInteractionStatusForPerson` | None in this slice | Migrated by interaction schema migration | Ensure Cancelled cleans the People scheduled date |
+| Interview round status | Interviews column 8 | To schedule, Scheduled, Completed, Cancelled, Reschedule | Yes | Partially before this batch | `To schedule` and `Scheduled` direct edits lacked explicit transition handling | N/A | Add direct status handling for `To schedule` and `Scheduled` |
+
+Required state-machine output:
+
+| State field | State | Meaning | Active/terminal/temp | Valid next states | Downstream effects | Cleanup required |
+|---|---|---|---|---|---|---|
+| People.Relationship status | Conversation scheduled | Conversation exists on a specific date | Temp active | Conversation completed, Replied via cancellation, Keep warm, Closed | Creates/updates Conversation prep task and Home upcoming item | If cancelled, clear Conversation date and cancel prep |
+| Conversations.Interaction status | Cancelled | Scheduled conversation did not happen | Terminal event log | N/A | Routes Person from Conversation scheduled back to Replied and creates reschedule task | Clear stale Person conversation date |
+| Interviews.Status | To schedule | Round exists but no date is set | Temp active | Scheduled, Cancelled | Creates scheduling task; removes scheduled-date timing | Clear Interview date/Expected response and pause prep |
+| Interviews.Status | Scheduled | Round has an Interview date | Active | Completed, Reschedule, Cancelled | Creates prep-planning task, expected response date, skips scheduling task | Requires Interview date; clear missing-date flag once scheduled |
+
+Stage 5 findings:
+
+## Issue: Cancelled conversations left stale scheduled dates on People
+
+Severity: P2
+
+Stage: 5
+Area: State machines and dropdown semantics
+Tab/surface: People / Conversations / Home Upcoming
+Column/function: `routeInteractionStatusForPerson`, `routePersonConversationCancelled`, `COLS.PEOPLE.CONVERSATION_DATE`
+
+Evidence:
+- Code evidence: `routePersonConversationCancelled` moved a scheduled person back to `Replied` and cancelled `Conversation prep`, but did not clear `COLS.PEOPLE.CONVERSATION_DATE`.
+- Code evidence: `collectUpcomingItems` correctly filters People upcoming items to `stage === 'Conversation scheduled'`, so Home was protected, but the source row still carried stale date state.
+
+Current behaviour:
+Cancelling a scheduled conversation changes the relationship status but leaves the old conversation date on the People row.
+
+Expected behaviour:
+The scheduled date belongs to the temporary `Conversation scheduled` state. Cancelling should clear that date and create/keep the reschedule task.
+
+User impact:
+The People row no longer looks like a conversation is still scheduled after cancellation.
+
+Workflow impact:
+Conversation cancellation cleanly returns the person to `Replied` with a reschedule task, without stale scheduling residue.
+
+Data/integrity impact:
+Medium. Home was not polluted, but source data was misleading.
+
+Automation boundary:
+L2 cleanup. Do not change the People/Conversations schema.
+
+Recommended fix:
+- Code change: Clear `COLS.PEOPLE.CONVERSATION_DATE` in `routePersonConversationCancelled` when the person was `Conversation scheduled`.
+
+Acceptance tests:
+1. Cancelling a scheduled conversation changes People status to `Replied`.
+2. The People `Conversation date` is cleared.
+3. Open `Conversation prep` is cancelled.
+4. A `Reschedule conversation` task is created/reused.
+
+## Issue: Interview status direct edits did not define To schedule/Scheduled transitions
+
+Severity: P1
+
+Stage: 5
+Area: State machines and dropdown semantics
+Tab/surface: Interviews / Tasks / Home Upcoming
+Column/function: `onEditRounds`, `scheduleInterviewRound`, `pauseInterviewPrepForReschedule`
+
+Evidence:
+- Code evidence: `DROPDOWNS.ROUND_STATUS` includes `To schedule` and `Scheduled`, but `onEditRounds` only handled `Completed`, `Reschedule`, and `Cancelled` when the Status column changed.
+- Code evidence: Date edits ran the scheduling cascade, but direct status edits could silently leave stale Interview date / Expected response / prep tasks.
+
+Current behaviour:
+Changing Status to `To schedule` did not clear old scheduling state. Changing Status to `Scheduled` did not validate or run the scheduling cascade.
+
+Expected behaviour:
+`To schedule` clears schedule-specific dates and creates/reuses a scheduling task. `Scheduled` either runs `scheduleInterviewRound` when an Interview date exists or flags `[missing-date]` and creates/reuses the scheduling task.
+
+User impact:
+Interview status now says what the row actually means; direct dropdown edits no longer create contradictory state.
+
+Workflow impact:
+Interview scheduling/prep tasks stay aligned with round status.
+
+Data/integrity impact:
+High. Interview date, expected response, prep work, and Home upcoming all depend on this state.
+
+Automation boundary:
+L2 state cleanup. Do not change interview outcome semantics or prep-plan structure.
+
+Recommended fix:
+- Code change: Add `To schedule` handling in `onEditRounds`.
+- Code change: Add `Scheduled` handling in `onEditRounds`.
+- Code change: Clear `[missing-date]` inside `scheduleInterviewRound`.
+
+Acceptance tests:
+1. Status `To schedule` clears Interview date and Expected response/follow-up date.
+2. Status `To schedule` creates/reuses an Interview scheduling task and pauses prep.
+3. Status `Scheduled` with a date runs `scheduleInterviewRound`.
+4. Status `Scheduled` without a date adds `[missing-date]` and creates/reuses scheduling work.
+5. Scheduling with a date clears `[missing-date]`.
+
+Do not do:
+- Do not change Interview official outcome values.
+- Do not change prep-plan task schema.
+- Do not make Home Upcoming show cancelled/rescheduled rounds.
+
+Result:
+Implemented in current batch.
+
+Verification:
+- `git diff --check`
+- Apps Script syntax check with bundled Node
+- Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
+- HEADERS/COLS schema check clean
+- Stage 5 column config bounds check clean
