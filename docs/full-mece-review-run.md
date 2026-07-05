@@ -1386,3 +1386,76 @@ Required output:
 
 Stage 15 decision:
 Fix the confirmed avoidable row-write loop now. Do not rewrite broader helper/link routines unless scale evidence shows they are actually slow; several row-level writes are tied to notes, rich links, or repair flags and are safer left correctness-first at the current workbook scale.
+
+## Stage 16 - Implementation Planning, Gates, and Tests
+
+Guide-last ordering note:
+Stage 16 is the final implementation/test gate before rewriting Guide. This keeps Guide as documentation for settled behaviour, not a substitute for unresolved UI.
+
+Required implementation backlog:
+
+| Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests |
+|---|---|---|---|---|---|---|
+| Guide is stale after workflow/copy changes | P2 | 14/16 | New users may learn old routines or miss current recovery paths. | Stages 1-13 plus Stage 15 reliability pass complete. | Final Guide-last batch | Guide includes setup, daily routine, capture, tab roles, Today planning, Decisions, recovery, and status labels matching current code. |
+| Live sheet visual proof still needs manual Apps Script deploy/run | P2 | 13/16 | Repo code can be correct while bound sheet still shows old surfaces. | User copies Code.gs into Apps Script and runs Repair all tabs. | Manual verification after push | Home/Today/Conversations/Interviews render with current labels/status colours. |
+| Repeat onboarding defaulted too close to destructive reset | P1/P2 | 3/12/16 | User repeating onboarding could reasonably expect to add/update starting facts, not clear the workbook. | Current setup popup and server reset mode. | Live UX safety patch | Existing-data setup shows Add/update vs Start fresh. Only Start fresh clears planner data; backup copy is explained as a separate timestamped Google Sheets file in Drive. |
+| Setup backup/save feedback was too quiet during long backup copy | P2 | 3/12/16 | User can think setup is hung and may click Save again while the spreadsheet backup is still being copied. | Current setup popup backup-before-reset flow. | Live UX safety patch | Backup option says it may take a minute or two; Save disables while running; failure/validation re-enables Save. |
+| Decision helper row-by-row backfill could be optimized later | P3 | 15/16 | Possible slowness only with very large decision history. | Need scale evidence before changing rich-link helper logic. | Later | Large Decisions sheet remains responsive or targeted batching is implemented. |
+| Contact display row-level note writes could be optimized later | P3 | 15/16 | Possible slowness if many jobs have many contacts. | Need scale evidence; row notes are correctness-sensitive. | Later | Repair still flags orphan/mismatch contacts accurately. |
+
+Gate 1 - Review complete:
+- Stage tables through Stage 13 are documented in this run log.
+- Stage 15 performance/reliability table is documented.
+- Stage 14 Guide was intentionally deferred until after Stage 16.
+- Issues are classified by severity and stage where a scoped fix exists.
+- Acceptance tests are included in each issue block and summarized below.
+
+Gate 2 - Batch scope selected:
+- Must fix now: final Guide rewrite to match settled behaviour.
+- Must fix now: setup mode choice, long-save feedback, and double-click guard, because it appeared during live onboarding.
+- Should fix next: live-sheet visual check after Apps Script copy and Repair all tabs.
+- Later: optimize decision helper backfill/contact display only if scale evidence appears.
+- Do not change: schemas, dropdown vocabularies, Today selection logic, source cascades, or Home contents during Guide-last.
+
+Gate 3 - Regression risk check for Guide-last:
+- Schema: no.
+- Dropdowns: no.
+- onEdit routing: no.
+- Today selection: no.
+- Home summary: no.
+- Task completion: no.
+- Source-tab cascades: no.
+- Migration/backfill: no.
+- Guide updates: yes, `rewriteGuide()` only.
+
+Gate 4 - Implementation report template for final Guide batch:
+- Files changed: `Code.gs`, `docs/full-mece-review-run.md`.
+- Functions changed: `rewriteGuide()` only, unless verification finds a syntax-only cleanup.
+- Interim live issue exception: `buildSetupHtml()` and `completeSetupFromPopup()` were changed before Guide-last to separate add/update setup from destructive start-fresh setup, explain backup location/timing, and guard against double-click saves.
+- Schema changed: no.
+- Dropdowns changed: no.
+- Repair/backfill added: no.
+- Guide updated: yes.
+- Tests run/specified: parse check, duplicate function check, schema check, diff check.
+- Known remaining risks: live visual proof requires the bound Apps Script/sheet to be updated and repaired.
+
+Acceptance test library status:
+
+| Test | Current evidence |
+|---|---|
+| First-use orientation | Home banner/setup copy and Guide-last section required. |
+| Daily-use Home/Today trust | Home reads Today state defensively; Today refresh copy explains capacity/focus/energy. |
+| Broken-link readiness | Tasks/row Notes/Home attention repair flags exist. |
+| Application planning | Jobs/Application status/result and application-plan decision flow documented in code/run log. |
+| Source-led people scan | Source-led people workflow creates Identified people without outreach flood. |
+| Source-led opportunity scan | Opportunity scan routes to job/org capture. |
+| Interview prep | Interview prep plan flows into Tasks; Interviews status/outcome columns documented. |
+| Cancelled interview cleanup | Existing cleanup reviewed in prior stages; live sheet check remains after deploy. |
+| Rejected job cleanup | Jobs result Rejected closes application work. |
+| Closed person cleanup | Close person row action cancels open follow-up work. |
+| Reset/snapshot safety | Backup-before-reset, full body clear, and reset audit documented. |
+| Guide documentation | To be completed in final Guide-last batch. |
+| Performance sanity | Stage 15 completed; `syncOrgReviewSchedules` batched. |
+
+Stage 16 decision:
+Proceed to the Guide-last batch. The only intended code behaviour change remaining is the generated Guide content; any new functional issue found during Guide writing must be recorded as a later/backlog item unless it is a correctness blocker.

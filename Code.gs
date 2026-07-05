@@ -8971,8 +8971,8 @@ function runSetupInterview() {
 function buildSetupHtml() {
   var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE;
   var existingRows = plannerDataRowCount();
-  var setupIntro = existingRows ? 'Redoing setup will clear existing planner data first, then capture your starting facts and write them to the right tabs.' : 'This captures your starting facts and writes them to the right tabs.';
-  var setupButton = existingRows ? 'Save (clears existing planner data first)' : 'Save setup';
+  var setupIntro = existingRows ? 'Use setup to add or update starting facts, or choose Start fresh if you really want to clear existing planner data first.' : 'This captures your starting facts and writes them to the right tabs.';
+  var setupButton = 'Save setup';
   return '' +
     '<style>' +
     'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
@@ -8987,12 +8987,15 @@ function buildSetupHtml() {
     'textarea{min-height:64px;resize:vertical;}' +
     '.back,.skip{margin-top:12px;font-size:12px;color:#5F625E;text-decoration:underline;cursor:pointer;background:none;border:none;padding:0;}' +
     '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.primary:disabled{opacity:.65;cursor:wait;}' +
     '#status{font-size:12px;color:#5F625E;margin-top:10px;}' +
     '.warn{font-size:11px;color:#964219;margin-top:4px;}' +
     '.backup{display:block;margin-top:14px;font-size:12px;font-weight:normal;color:#5F625E;}.backup input{width:auto;margin:0 7px 0 0;vertical-align:middle;}' +
+    '.mode{padding:10px 12px;margin:8px 0;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#28251D;font-weight:normal;}.mode input{width:auto;margin:0 8px 0 0;vertical-align:middle;}.mode small{display:block;color:#6E716C;margin:4px 0 0 25px;line-height:1.35;}' +
     '</style>' +
     '<h2>Set up your planner</h2>' +
     '<p>' + setupIntro + '</p>' +
+    (existingRows ? '<div id="setupMode"><label class="mode"><input type="radio" name="resetMode" value="append" checked>Add or update setup facts<small>Keeps existing Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.</small></label><label class="mode"><input type="radio" name="resetMode" value="reset">Start fresh<small>Clears planner data first. You can save a full spreadsheet backup copy before clearing.</small></label></div>' : '') +
     '<div id="q1" class="step active">' +
     '  <p><strong>1 of 3</strong> Where are you starting from?</p>' +
     '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Start with a broad sector, then sub-sectors, then organisations.</small></button>' +
@@ -9006,8 +9009,8 @@ function buildSetupHtml() {
     '<div id="q3" class="step">' +
     '  <p id="q3title"><strong>3 of 3</strong></p>' +
     '  <form id="captureForm"></form>' +
-    (existingRows ? '  <label class="backup"><input id="backupBeforeReset" type="checkbox" checked>Save a backup copy before clearing existing data</label>' : '') +
-    '  <button class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
+    (existingRows ? '  <label id="backupLabel" class="backup" style="display:none"><input id="backupBeforeReset" type="checkbox" checked>Save a backup copy before clearing existing data <span class="warn">(creates a separate spreadsheet copy in your Google Drive; safer, but can take a minute or two)</span></label>' : '') +
+    '  <button id="submitButton" class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
     '  <button class="back" type="button" onclick="showStep(2)">Back</button>' +
     '  <button class="skip" type="button" onclick="skipSetup()">Skip setup</button>' +
     '  <div id="status"></div>' +
@@ -9025,7 +9028,10 @@ function buildSetupHtml() {
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
-    'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
+    'function selectedResetMode(){var el=document.querySelector("input[name=resetMode]:checked");return el?el.value:"append";}' +
+    'function resetSelected(){return existingRows>0&&selectedResetMode()==="reset";}' +
+    'function updateSetupModeUi(){var backup=document.getElementById("backupLabel"),btn=document.getElementById("submitButton");if(backup)backup.style.display=resetSelected()?"block":"none";if(btn)btn.textContent=resetSelected()?"Save (clears existing planner data first)":"Save setup";}' +
+    'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");updateSetupModeUi();}' +
     'function pickGoal(g){goal=g;' +
     ' if(g==="explore_space"){entryPoint="sectors";renderForm("sectors");return;}' +
     ' document.getElementById("q2title").innerHTML="<strong>2 of 3</strong> What should we capture first?";' +
@@ -9048,14 +9054,16 @@ function buildSetupHtml() {
     '  else{input=document.createElement("input");input.type=field.t||"text";}' +
     '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});Array.prototype.forEach.call(f.elements,function(el){el.onchange=function(){updateConditional(f,cfg);};});updateConditional(f,cfg);' +
     ' showStep(3);}' +
-    'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
+    'Array.prototype.forEach.call(document.querySelectorAll("input[name=resetMode]"),function(el){el.onchange=updateSetupModeUi;});updateSetupModeUi();' +
+    'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),btn=document.getElementById("submitButton"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s) from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Use the backup copy if you need to recover cleared data. Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
+    ' var resetMode=selectedResetMode();var resetConfirmed=resetSelected()&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Start fresh will clear "+existingRows+" existing planner row(s) from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Use the backup copy if you need to recover cleared data. Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' var backupBeforeReset=resetConfirmed&&document.getElementById("backupBeforeReset")&&document.getElementById("backupBeforeReset").checked;' +
-    ' status.textContent=resetConfirmed?(backupBeforeReset?"Creating backup copy, then clearing data...":"Clearing existing data and saving..."):"Saving setup...";' +
-    ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
-    ' .withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
-    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
+    ' if(btn)btn.disabled=true;' +
+    ' status.textContent=resetConfirmed?(backupBeforeReset?"Creating backup copy. This can take a minute or two; do not click Save again. Then setup will clear data and rebuild Today.":"Clearing existing data and saving..."):"Saving setup...";' +
+    ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status"),btn=document.getElementById("submitButton");if(!res.ok){if(btn)btn.disabled=false;status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
+    ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
+    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetMode:resetMode,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -9486,7 +9494,8 @@ function completeSetupFromPopup(payload) {
   var fields = payload.fields || {};
   var validation = validateOnboardingPayload(goal, entryPoint, fields);
   if (!validation.ok) return validation;
-  var shouldReset = goal !== 'skipped' && entryPoint !== 'skip';
+  var resetRequested = payload.resetMode === 'reset' || (!payload.resetMode && payload.resetConfirmed === true);
+  var shouldReset = goal !== 'skipped' && entryPoint !== 'skip' && resetRequested;
   var rowsBeforeReset = shouldReset ? plannerDataRowCount() : 0;
   if (shouldReset && rowsBeforeReset > 0 && payload.resetConfirmed !== true) {
     var resp = SpreadsheetApp.getUi().alert(
@@ -9528,7 +9537,7 @@ function completeSetupFromPopup(payload) {
 
       var todaySheet = getSheet('Today');
       if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
-      var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
+      var suffix = shouldReset ? ' Existing planner data was cleared first.' : (goal !== 'skipped' && entryPoint !== 'skip' ? ' Existing planner data was kept.' : '');
       if (backup) suffix += ' Backup copy created: ' + backup.name + '. Use that copy if you need to recover cleared data.';
       result.message = (result.message || 'Onboarding saved.') + suffix;
       return result;
