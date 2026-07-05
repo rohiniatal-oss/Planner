@@ -11969,6 +11969,39 @@ function migrateInteractionsStatusSchema() {
   return true;
 }
 
+function migrateSearchRoutineTimingSchema() {
+  var sheet = getSheet('Search Routines');
+  if (!sheet || sheet.getLastRow() < 1) return false;
+  var changed = false;
+  if (sheet.getMaxColumns() < HEADERS['Search Routines'].length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), HEADERS['Search Routines'].length - sheet.getMaxColumns());
+    changed = true;
+  }
+  var currentHeader = String(sheet.getRange(1, COLS.SEARCH.TIME_EST).getValue() || '');
+  if (currentHeader !== HEADERS['Search Routines'][COLS.SEARCH.TIME_EST - 1]) {
+    sheet.getRange(1, COLS.SEARCH.TIME_EST).setValue(HEADERS['Search Routines'][COLS.SEARCH.TIME_EST - 1]);
+    changed = true;
+  }
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (rowCount > 0) {
+    var values = sheet.getRange(2, COLS.SEARCH.TIME_EST, rowCount, 1).getValues();
+    var needsWrite = false;
+    for (var i = 0; i < values.length; i++) {
+      var normalized = normalizeRoutineTimeEstimate(values[i][0]);
+      if (!values[i][0] || String(values[i][0]) !== normalized) {
+        values[i][0] = normalized;
+        needsWrite = true;
+      }
+    }
+    if (needsWrite) {
+      sheet.getRange(2, COLS.SEARCH.TIME_EST, rowCount, 1).setValues(values);
+      changed = true;
+    }
+  }
+  if (changed) styleHeader(sheet, HEADERS['Search Routines'].length);
+  return changed;
+}
+
 function migrateSectorIdSchema() {
   var migratedSectors = migrateSectorsTwoIdSchema();
   var migratedOrgs = migrateOrganisationSectorIdSchema();
@@ -11979,7 +12012,8 @@ function migrateWorkbookSchema() {
   var migratedSectorsOrOrgs = migrateSectorIdSchema();
   var migratedJobs = migrateJobsDeadlineStatusSchema();
   var migratedInteractions = migrateInteractionsStatusSchema();
-  return migratedSectorsOrOrgs || migratedJobs || migratedInteractions;
+  var migratedSearchRoutines = migrateSearchRoutineTimingSchema();
+  return migratedSectorsOrOrgs || migratedJobs || migratedInteractions || migratedSearchRoutines;
 }
 
 // =============================================================
@@ -12650,9 +12684,11 @@ function selectedTimingContext() {
   if (name === 'Search Routines') {
     if (row <= 1) return failResult('Select a search routine row first.', '', 'NO_ROUTINE_ROW');
     var routineId = String(sheet.getRange(row, COLS.SEARCH.ID).getValue() || '');
-    if (!routineId) return failResult('That routine row does not have a Routine ID yet. Use Add / update records > Add/update search routine, or edit the row after turning on Planner.', '', 'NO_ROUTINE');
+    if (!routineId) routineId = ensureSearchRoutineId(sheet, row);
+    if (!routineId) return failResult('That routine row does not have a Routine ID yet. Add a Routine or Sources first, or use Add / update records > Add/update search routine.', '', 'NO_ROUTINE');
     var values = sheet.getRange(row, 1, 1, HEADERS['Search Routines'].length).getValues()[0];
     var routine = normalizeSearchRoutineType(values[COLS.SEARCH.ROUTINE - 1]);
+    if (!routine) return failResult('Choose Opportunity search or Network search on this routine row first.', '', 'NO_ROUTINE_TYPE');
     return okResult('Timing context found.', {
       kind: 'Search routine',
       id: routineId,
@@ -13234,13 +13270,13 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Capturing updates');
   r = writeKV(sheet, r, 'Use Home first', 'The Add or update dropdown opens the right popup, writes the source tab, links IDs, then refreshes Home and Today.');
-  r = writeKV(sheet, r, 'Use the menu when needed', 'The Planner > Add / update records opens the same safe popups if you are already working from the menu.');
+  r = writeKV(sheet, r, 'Use the menu when needed', 'The Planner > Add / update records opens the same safe popups if you are already working from the menu. These popups run the normal linking, cascade, and refresh logic.');
   r = writeKV(sheet, r, 'Jobs', 'Capture the opportunity and organisation. Set Application status to In progress when you are ready to plan the application work.');
   r = writeKV(sheet, r, 'People', 'Capture the person, source, organisation if relevant, and Relationship step. People found from Network search are saved as Identified; outreach is not automatic.');
   r = writeKV(sheet, r, 'Conversations', 'Use this for scheduled or completed relationship interactions. Completed conversations can route follow-up, referral, or opportunity work.');
   r = writeKV(sheet, r, 'Interviews', 'Add rounds when they exist. Scheduled rounds create prep planning; completed rounds use Official outcome and expected response dates.');
   r = writeKV(sheet, r, 'Direct edits', 'Direct tab edits are allowed for correction and repair. They trigger follow-up logic only after The Planner > Setup & automation > Turn on Planner has been run.');
-  r = writeKV(sheet, r, 'Timing', 'Select a row on Today, Tasks, or Search Routines, then use The Planner > Selected row > Change selected Task/routine timing.');
+  r = writeKV(sheet, r, 'Timing', 'Select a row on Today, Tasks, or Search Routines, then use The Planner > Selected row > Change selected Task/routine timing. Search Routine timing is the default for each future run; Task timing changes the selected task.');
   r++;
 
   r = writeH2(sheet, r, 'What each tab is for');
@@ -13269,13 +13305,14 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Not now', 'Not now records No and dismisses the decision.');
   r = writeKV(sheet, r, 'Skip', 'Skip does not decide. It keeps the decision pending and hides it from Home until Home is refreshed.');
   r = writeKV(sheet, r, 'Ready for Today', 'Ready work can appear on Today. Waiting, Blocked, Parent, Needs planning, and Done stay out until fixed or advanced.');
+  r = writeKV(sheet, r, 'Time estimates', 'Known workflows get sensible defaults. Unknown or blank estimates stay Needs planning instead of pretending to be 30 minutes. Change timing from the selected-row menu.');
   r = writeKV(sheet, r, 'Blocked work', 'Blocked tasks need a clear blocker and, when useful, an unblocker task. Today surfaces recovery items instead of silently hiding them.');
   r++;
 
   r = writeH2(sheet, r, 'Source tabs');
   r = writeKV(sheet, r, 'Sectors', 'A broad Sector row has Sector filled and Sub-sector blank. A Sub-sector row has the same Sector and a narrower Sub-sector. Renaming a Sector updates linked rows.');
   r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector if known, optionally choose Sub-sector after Sector, set Tier and Status. Active organisations can suggest people-search or job-scan work.');
-  r = writeKV(sheet, r, 'Search Routines', 'Set recurring Opportunity search or Network search habits. The routine creates the next due task; completing that task captures results and advances the next run.');
+  r = writeKV(sheet, r, 'Search Routines', 'Set recurring Opportunity search or Network search habits. How often controls the next due date; Time estimate controls how much Today reserves for each due run.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
   r = writeKV(sheet, r, 'People', 'Relationship source is how you found or know the person. Relationship step is the outreach/conversation state: Identified, outreach, reply, conversation, keep warm, or Closed.');
   r = writeKV(sheet, r, 'Conversations', 'Use this as the interaction log. Scheduled and completed conversations update People and can create follow-up work.');
