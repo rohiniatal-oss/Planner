@@ -2988,6 +2988,7 @@ function completeTodoRow(sheet, row, status, options) {
       sheet.getRange(row, COLS.TODO.STATUS).setValue('In progress');
       sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
       appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-open] Finish child tasks, or review skipped/cancelled children, before completing the parent.');
+      syncTodayRowForTodo(row, 'In progress');
       syncTaskPlanningHelpers();
       requestHomeRefresh();
       return false;
@@ -6635,7 +6636,7 @@ function ensureTodaySheet() {
 }
 
 function hardResetTodaySheet(sheet) {
-  var maxRows = Math.max(sheet.getMaxRows(), TODAY_TABLE_LAST_ROW);
+  var maxRows = Math.max(sheet.getMaxRows(), TODAY_ENDOFDAY_ROW);
   var maxCols = Math.max(sheet.getMaxColumns(), HEADERS["Today's plan"].length);
   try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
   try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
@@ -7179,7 +7180,7 @@ function todayCapacityHeadline(selection, availableMinutes) {
 
 function populateTodayImpl() {
   var sheet = ensureTodaySheet();
-  if (sheet.getMaxRows() < TODAY_TABLE_LAST_ROW || !sheet.getRange(1, 1).getValue()) bootstrapToday();
+  if (sheet.getMaxRows() < TODAY_ENDOFDAY_ROW || !sheet.getRange(1, 1).getValue()) bootstrapToday();
   var previousState = collectPreviousTodayState(sheet);
 
   var availableMinutes = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10);
@@ -7241,6 +7242,10 @@ function populateTodayImpl() {
 function applyTodayRowStatusDropdowns(sheet) {
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var slot = String(sheet.getRange(r, COLS.TODAY.SLOT).getValue() || '');
+    if (!slot) {
+      sheet.getRange(r, COLS.TODAY.STATUS).clearDataValidations();
+      continue;
+    }
     var values = slot.indexOf('O') === 0 ? DROPDOWNS.TODAY_STATUS_OPTION : DROPDOWNS.TODAY_STATUS;
     setDropdown(sheet.getRange(r, COLS.TODAY.STATUS), values);
   }
@@ -7482,6 +7487,7 @@ function syncTodayRowForTodo(todoRow, status) {
     if (String(planSheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
       var mapped = todayStatusFromTodoStatus(status);
       planSheet.getRange(r, COLS.TODAY.STATUS).setValue(mapped);
+      updateTodayProgress(planSheet);
       return;
     }
   }
@@ -7512,6 +7518,7 @@ function syncTodayEstMinForTodo(todoSheet, todoRow) {
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     if (String(planSheet.getRange(r, COLS.TODAY.TODO_ID).getValue()) === todoId) {
       planSheet.getRange(r, COLS.TODAY.EST_MIN).setValue(mins == null ? '' : mins);
+      updateTodayProgress(planSheet);
       return;
     }
   }
@@ -7671,7 +7678,9 @@ function swapTodayRows(sheet, a, b) {
   var rangeA = sheet.getRange(a, 1, 1, HEADERS["Today's plan"].length);
   var rangeB = sheet.getRange(b, 1, 1, HEADERS["Today's plan"].length);
   var valsA = rangeA.getValues(), valsB = rangeB.getValues();
+  var notesA = rangeA.getNotes(), notesB = rangeB.getNotes();
   rangeA.setValues(valsB); rangeB.setValues(valsA);
+  rangeA.setNotes(notesB); rangeB.setNotes(notesA);
   applyTodayRowStatusDropdowns(sheet);
 }
 
