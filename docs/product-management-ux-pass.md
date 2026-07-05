@@ -251,3 +251,28 @@ Non-goals:
 - Do not change priority rules.
 - Do not change hidden-column lists.
 - Do not change migration behavior; it still runs inside Repair all tabs.
+
+## Current Improvement: Setup And Automation Language
+
+User story:
+As a new or returning user, I need setup controls to tell me what Planner capability they turn on, so that I do not have to understand Apps Script trigger mechanics to make the workbook respond.
+
+Current pain:
+The visible menu said "Triggers & setup", "Set up / verify triggers", and "Show trigger status". That is accurate to the implementation but not to the user's job. The Today submenu also offered "Show all Today columns" while calling the global hidden-column action for every tab.
+
+Target experience:
+The menu says "Setup & automation", "Turn on Planner actions", and "Check Planner setup status". Home first-run prompts use the same wording. Hidden-column inspection stays in Maintenance as a global action.
+
+Implementation:
+Copy/menu changes only, plus removal of the misleading Today submenu item. Trigger creation, deletion, repair, and scheduling logic are unchanged.
+
+Acceptance tests:
+1. No visible setup path says "Triggers & setup", "Set up / verify triggers", or "Show trigger status".
+2. The setup status dialog describes edit actions/popups and daily/weekly automation without listing handler names.
+3. The Today submenu does not expose a global hidden-column action.
+4. Maintenance still exposes "Show hidden columns" for whole-workbook inspection.
+
+Non-goals:
+- Do not change Apps Script trigger mechanics.
+- Do not remove the ability to inspect hidden columns.
+- Do not rewrite the Guide beyond keeping the active menu path accurate.

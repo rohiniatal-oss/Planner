@@ -34,7 +34,7 @@
  *     do a single bulk getValues() instead of per-field reads.
  *   - Triggers: all trigger wiring flows through ONE idempotent,
  *     check-before-create engine (ensureTriggersInstalled). A dedicated
- *     "Triggers & setup" menu (setUpTriggers + showTriggerStatus) lets you
+ *     "Setup & automation" menu (setUpTriggers + showTriggerStatus) lets you
  *     attach and verify wiring explicitly; repairAllTabs/fullRefresh force
  *     a trigger check on every run; and onOpen reports — rather than
  *     blindly nags about — the installable edit trigger's status. Simple
@@ -96,7 +96,7 @@
  *   1. Back up the sheet (File → Make a copy).
  *   2. Paste this entire file as Code.gs (replacing everything else).
  *   3. Reload the sheet.
- *   4. In The Planner menu, run Triggers & setup > Set up / verify triggers.
+ *   4. In The Planner menu, run Setup & automation > Turn on Planner actions.
  *   5. Run Maintenance > Repair all tabs (safe to re-run).
  *   6. Start from Home, or run The Planner > Start or redo setup.
  */
@@ -6837,18 +6837,17 @@ function showTriggerStatus() {
   var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
   var lines = [];
   lines.push('Edit actions and popups: ' + (editOn ? '\u2705 on' : '\u274c off'));
-  if (!editOn) lines.push('   \u2192 Run "Triggers & setup \u2192 Set up / verify triggers" to make Home, Today, and Capture update respond.');
+  if (!editOn) lines.push('   \u2192 Run "Setup & automation \u2192 Turn on Planner actions" to make Home, Today, and Capture update respond.');
   lines.push('');
   lines.push('Daily/weekly automation:');
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     var on = triggerExists(spec.handler, ScriptApp.EventType.CLOCK);
-    lines.push('   ' + (on ? '\u2705' : '\u274c') + ' ' + spec.handler + ' (' + spec.desc + ')');
+    lines.push('   ' + (on ? '\u2705' : '\u274c') + ' ' + spec.desc);
   });
   lines.push('');
   lines.push('Timezone: ' + plannerTimeZone());
-  lines.push('Note: the always-on simple onEdit/onOpen triggers need no setup;');
-  lines.push('only the installable ones above require this one-time attach.');
-  SpreadsheetApp.getUi().alert('The Planner \u2014 trigger status', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
+  lines.push('Note: the basic menu loader needs no setup; edit actions and scheduled automation require this one-time setup.');
+  SpreadsheetApp.getUi().alert('The Planner \u2014 setup status', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 function checkTriggerHealth() {
@@ -6887,7 +6886,7 @@ function installEditTrigger() {
 
 function uninstallEditTrigger() {
   var removed = deleteTriggersFor(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
-  SpreadsheetApp.getActiveSpreadsheet().toast('Removed ' + removed + ' installable edit trigger(s). The simple onEdit(e) trigger still runs.', 'The Planner', 5);
+  SpreadsheetApp.getActiveSpreadsheet().toast('Turned off edit actions (' + removed + ' setup item(s) removed). The menu still loads normally.', 'The Planner', 5);
 }
 
 function onEditTasks(sheet, row, col, newVal, e) {
@@ -8628,7 +8627,7 @@ function refreshHome() {
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
   if (!editReady) {
     sheet.getRange(3, 2, 1, 7).merge()
-      .setValue('⚠ One-time setup needed: open The Planner → Triggers & setup → Set up / verify triggers, or nothing on this page will respond.')
+      .setValue('⚠ One-time setup needed: open The Planner → Setup & automation → Turn on Planner actions, or dropdowns, popups, and checkboxes will not respond.')
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
   }
 
@@ -8641,10 +8640,10 @@ function refreshHome() {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
     }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue(editReady ? 'Start onboarding' : 'Install triggers to start onboarding')
+      .setValue(editReady ? 'Start onboarding' : 'Turn on Planner actions to start')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue(editReady ? 'Use the checkbox above or The Planner → Start or redo setup. The popup writes source rows and refreshes Today.' : 'Run The Planner > Triggers & setup > Set up / verify triggers, then come back here.')
+      .setValue(editReady ? 'Use the checkbox above or The Planner → Start or redo setup. The popup writes source rows and refreshes Today.' : 'Run The Planner > Setup & automation > Turn on Planner actions, then come back here.')
       .setWrap(true).setFontColor('#5F625E');
   } else if (shouldShowSetupCard(profile)) {
     if (editReady) {
@@ -8653,10 +8652,10 @@ function refreshHome() {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
     }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue(editReady ? 'Continue onboarding' : 'Install triggers to continue onboarding')
+      .setValue(editReady ? 'Continue onboarding' : 'Turn on Planner actions to continue')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     var nextItem = nextIncompleteChecklistItem(profile);
-    var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Triggers & setup > Set up / verify triggers, then continue onboarding.';
+    var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Setup & automation > Turn on Planner actions, then continue onboarding.';
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue(detail).setWrap(true).setFontColor('#5F625E');
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
@@ -11892,7 +11891,7 @@ function rewriteGuide() {
   sheet.getRange(r, 2).setValue('The Planner - Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
 
   r = writeH2(sheet, r, 'Start here (once)');
-  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Triggers & setup > Set up / verify triggers. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
+  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Setup & automation > Turn on Planner actions. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
   r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Start or redo setup. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
   r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
   r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
@@ -11954,7 +11953,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'If something breaks');
   r = writeKV(sheet, r, 'Menu missing', 'Extensions > Apps Script > run onOpen. Reload the sheet.');
-  r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Triggers & setup > Set up / verify triggers (one-time, grants full authorization for modal dialogs).');
+  r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Setup & automation > Turn on Planner actions (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
   r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
@@ -12324,7 +12323,7 @@ function installTimeTriggers() {
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     deleteTriggersFor(spec.handler, ScriptApp.EventType.CLOCK);
     spec.build(tz).create();
-    created.push(spec.handler + ' (' + spec.desc + ')');
+    created.push(spec.desc);
   });
   SpreadsheetApp.getActiveSpreadsheet().toast('Daily/weekly automation installed (' + tz + '): ' + created.join(', ') + '.', 'The Planner', 6);
 }
@@ -12334,7 +12333,7 @@ function uninstallTimeTriggers() {
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     removed += deleteTriggersFor(spec.handler, ScriptApp.EventType.CLOCK);
   });
-  SpreadsheetApp.getActiveSpreadsheet().toast('Turned off ' + removed + ' daily/weekly automation trigger(s). Edit actions are untouched — use "Triggers & setup" for those.', 'The Planner', 5);
+  SpreadsheetApp.getActiveSpreadsheet().toast('Turned off daily/weekly automation (' + removed + ' setup item(s) removed). Edit actions are untouched — use Setup & automation for those.', 'The Planner', 5);
 }
 
 // =============================================================
@@ -12356,8 +12355,7 @@ function buildMenu() {
       .addItem('Keep selected Today row in place', 'lockTodayRow')
       .addItem('Let selected Today row move again', 'unlockTodayRow')
       .addItem('Move selected row up', 'moveTodayRowUp')
-      .addItem('Move selected row down', 'moveTodayRowDown')
-      .addItem('Show all Today columns', 'showAllColumns'))
+      .addItem('Move selected row down', 'moveTodayRowDown'))
     .addSubMenu(ui.createMenu('Capture update')
       .addItem('Explore broad sectors', 'addNewSector')
       .addItem('Organisations found from exploration', 'addExplorationOrganisations')
@@ -12384,13 +12382,13 @@ function buildMenu() {
       .addItem('Link contact to selected Job row', 'linkContactToJob')
       .addItem('Log conversation for selected row', 'logInteractionForRow')
       .addItem('Close selected Person/Job row', 'softCloseRow'))
-    .addSubMenu(ui.createMenu('Triggers & setup')
-      .addItem('\u2605 Set up / verify triggers (run this first)', 'setUpTriggers')
-      .addItem('Show trigger status', 'showTriggerStatus')
+    .addSubMenu(ui.createMenu('Setup & automation')
+      .addItem('\u2605 Turn on Planner actions (run this first)', 'setUpTriggers')
+      .addItem('Check Planner setup status', 'showTriggerStatus')
       .addSeparator()
-      .addItem('Repair edit actions only', 'installEditTrigger')
+      .addItem('Repair edit actions', 'installEditTrigger')
       .addItem('Turn off edit actions', 'uninstallEditTrigger')
-      .addItem('Repair daily/weekly automation only', 'installTimeTriggers')
+      .addItem('Repair daily/weekly automation', 'installTimeTriggers')
       .addItem('Turn off daily/weekly automation', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
@@ -12420,6 +12418,6 @@ function onOpen() {
   if (editReady) {
     ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
-    ss.toast('The Planner loaded, but edit actions are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Capture update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
+    ss.toast('The Planner loaded, but edit actions are not on yet. Run \u201cThe Planner \u2192 Setup & automation \u2192 Turn on Planner actions\u201d once so onboarding and Capture update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
 }
