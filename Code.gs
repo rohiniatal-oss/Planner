@@ -2944,7 +2944,7 @@ function handleJobTodoCompletion(todo, options) {
   } else if (todo.workflow === 'Interview follow-up') {
     createJobResponseOutcomeDecision(todo.objId, 'Response check completed: ' + job.title);
   } else if (todo.workflow === 'Referral search') {
-    if (String(todo.task || '').indexOf('Find referral contact:') !== 0) return;
+    if (!isReferralSearchContactTask(todo)) return;
     if (options.referralSearchHandled) return;
     appendPendingDecision('REFERRAL_SEARCH_DONE:' + todo.id, 'Referral search completed: ' + job.title,
       'Add/update referral contact found for ' + job.title + ' at ' + job.org,
@@ -5779,10 +5779,18 @@ function onEditTasks(sheet, row, col, newVal, e) {
     completeTodoRow(sheet, row, newVal, { source: 'tasks' });
     return;
   }
-  if ([COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.COMMITMENT_CLASS,
-    COLS.TODO.PARENT_ID, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP,
-    COLS.TODO.BLOCKER, COLS.TODO.BLOCKED_BY_ID].indexOf(col) !== -1) {
+  var todayAffectingCols = [
+    COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.COMMITMENT_CLASS,
+    COLS.TODO.PARENT_ID, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP,
+    COLS.TODO.BLOCKER, COLS.TODO.BLOCKED_BY_ID
+  ];
+  var helperAffectingCols = todayAffectingCols.concat([COLS.TODO.NOTES, COLS.TODO.PLAN_CATEGORY]);
+  if (helperAffectingCols.indexOf(col) !== -1) {
     syncTaskPlanningHelpers();
+    if (todayAffectingCols.indexOf(col) !== -1) {
+      populateToday();
+      return;
+    }
     requestHomeRefresh();
   }
 }
@@ -8058,8 +8066,7 @@ function completeApplicationPlanFromPopup(payload) {
 }
 
 function isReferralSearchContactTask(todo) {
-  return !!todo && todo.workflow === 'Referral search' && todo.objType === 'Job' &&
-    String(todo.task || '').indexOf('Find referral contact:') === 0;
+  return !!todo && todo.workflow === 'Referral search' && todo.objType === 'Job';
 }
 
 function isApplicationResponseCheckTask(todo) {
