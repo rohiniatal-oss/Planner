@@ -150,5 +150,34 @@ Do not do:
 | Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Batch 2 or 5, depending on finding | Home stale-state scenario has one clear next action |
 | Home/Today live visual retest still pending | P1/P2 | 1/8/13 | Trust depends on rendered state matching code | Live sheet or Apps Script sync | Batch 2 | Home ready/not-built/stale states verified |
 
+## Selected Implementation Batch - Batch 5 UX/Copy
+
+Implementation item: Today row movement menu labels are too context-dependent.
+
+User story:
+As a user using the Planner menu, when I want to move work within Today's plan, I need the menu action to say it moves a Today row, so that I do not have to infer the target from submenu context.
+
+Current pain:
+The menu labels say `Move selected row up` and `Move selected row down`, which are technically inside the Today submenu but still rely on context.
+
+Target experience:
+The labels say `Move selected Today row up` and `Move selected Today row down`.
+
+Automation level:
+L1/L4 visible execution control copy. No automation behaviour changes.
+
+Implementation scope:
+Change only the two labels in `buildMenu`.
+
+Acceptance test:
+1. The Today submenu labels include `Today row`.
+2. The functions called remain `moveTodayRowUp` and `moveTodayRowDown`.
+3. No schema, dropdown, onEdit, or Today selection logic changes.
+
+Non-goals:
+- Do not change row movement behaviour.
+- Do not add new menu items.
+- Do not update the Guide yet.
+
 Next required stage before broader code:
 Stage 2 data integrity, identity, and trust, unless the user chooses to implement the tiny P3 Today menu copy item as a scoped Batch 5 fix.
