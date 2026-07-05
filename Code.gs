@@ -1906,6 +1906,7 @@ function applyDecisionHelperColumns(sheet, row) {
 function backfillDecisionHelperColumns() {
   var sheet = ensureDecisionsTab();
   if (!sheet || sheet.getLastRow() < 2) return;
+  autoDismissPendingDecisionsForTerminalSources('Linked source is closed, parked, or retired');
   for (var r = 2; r <= sheet.getLastRow(); r++) applyDecisionHelperColumns(sheet, r);
 }
 
@@ -2276,6 +2277,31 @@ function autoDismissPendingDecisionPrefixForTarget(prefix, targetType, targetId,
   return count;
 }
 
+function decisionLinkedSourceIsTerminal(row) {
+  var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+  var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+  if (!targetType || targetType === 'None' || !targetId) return false;
+  return isSourceObjectTerminal(targetType, targetId);
+}
+
+function autoDismissPendingDecisionsForTerminalSources(reason) {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
+    if (!decisionLinkedSourceIsTerminal(data[i])) continue;
+    var row = i + 2;
+    sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
+    sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Linked source is no longer active'));
+    applyDecisionHelperColumns(sheet, row);
+    count++;
+  }
+  return count;
+}
+
 function dismissDecisionByKey(key, reason) {
   var found = findPendingDecisionByKey(key);
   if (!found) return false;
@@ -2314,7 +2340,9 @@ function collectPendingDecisionQueue(limit) {
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
   var out = [];
   for (var i = 0; i < data.length; i++) {
-    if (String(data[i][COLS.DECISIONS.DECISION - 1]) === 'Pending') out.push({ row: i + 2, data: data[i] });
+    if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
+    if (decisionLinkedSourceIsTerminal(data[i])) continue;
+    out.push({ row: i + 2, data: data[i] });
   }
   out.sort(function (a, b) {
     var dueDiff = decisionSortDateValue(a.data) - decisionSortDateValue(b.data);
