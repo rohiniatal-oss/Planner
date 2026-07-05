@@ -1453,7 +1453,7 @@ Acceptance test library status:
 | Cancelled interview cleanup | Existing cleanup reviewed in prior stages; live sheet check remains after deploy. |
 | Rejected job cleanup | Jobs result Rejected closes application work. |
 | Closed person cleanup | Close person row action cancels open follow-up work. |
-| Reset/snapshot safety | Backup-before-reset, full body clear, and reset audit documented. |
+| Reset/snapshot safety | Backup-before-reset, full physical data-tab reset, and reset audit documented. |
 | Guide documentation | Completed in final Guide-last batch; live render check remains after Apps Script deploy and Repair all tabs. |
 | Performance sanity | Stage 15 completed; `syncOrgReviewSchedules` batched. |
 
@@ -1538,6 +1538,7 @@ Immediate Stage 17 implementation:
 - Add a compact Home "This month" pipeline section from Conversations, Jobs, and Interviews.
 - Preselect interview prep areas/bands from prior prep history when a round has no saved plan yet.
 - Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.
+- Strengthen destructive reset so Start fresh rebuilds data tabs to the intended schema shape instead of leaving old dropdowns, formatting, or retired columns behind.
 
 Stage 17 decision:
 This stage is now the product-taste gate before Guide-last. It should not stop at correctness. Bigger structural ideas stay as redesign candidates unless the current code has a low-risk product-model fix, like setup/reset separation.
@@ -1559,3 +1560,16 @@ Guide updates made:
 Stage 14 remaining verification:
 - After copying the pushed `Code.gs` into Apps Script, run `The Planner > Maintenance > Repair all tabs`.
 - Confirm the Guide renders with current setup/start-fresh, Home monthly snapshot, decision action, Today, and recovery language.
+
+## Stage 17 reset follow-up - Full reset means full reset
+
+Live issue:
+The destructive reset still cleared data bodies but could leave old sheet shape behind: surplus rows, surplus columns, old validation/formatting surfaces, or retired-column residue could survive visually after reset.
+
+Fix:
+`clearSheetBody()` now resets each destructive-reset data tab to the intended physical shape: header row plus 100 clean blank body rows, exactly the current schema width, no old content, notes, validations, or formatting across the prior used surface. Normal formatting, dropdowns, helper columns, Today, and Home are then reapplied by the existing Start fresh flow.
+
+Acceptance:
+- Start fresh still creates a backup before clearing.
+- Data tabs no longer retain out-of-schema columns or old formatted/validated body rows after reset.
+- Existing setup remains additive unless a legacy guarded reset payload explicitly requests reset.

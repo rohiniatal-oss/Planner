@@ -9138,19 +9138,22 @@ function refreshHomeStatusFromButton() {
 // ONBOARDING — additive setup capture via popups
 // =============================================================
 
+var RESET_BLANK_BODY_ROWS = 100;
+
 function clearSheetBody(sheet, headerKey) {
   if (!sheet || !HEADERS[headerKey]) return;
   var headers = HEADERS[headerKey];
   var cols = HEADERS[headerKey].length;
+  var targetRows = RESET_BLANK_BODY_ROWS + 1;
+  if (sheet.getMaxRows() < targetRows) sheet.insertRowsAfter(sheet.getMaxRows(), targetRows - sheet.getMaxRows());
   if (sheet.getMaxColumns() < cols) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols - sheet.getMaxColumns());
+  var maxRows = sheet.getMaxRows();
+  var maxCols = sheet.getMaxColumns();
+  sheet.getRange(1, 1, maxRows, maxCols).clearContent().clearNote().clearDataValidations().clearFormat();
+  if (maxRows > targetRows) sheet.deleteRows(targetRows + 1, maxRows - targetRows);
+  if (maxCols > cols) sheet.deleteColumns(cols + 1, maxCols - cols);
   sheet.getRange(1, 1, 1, cols).setValues([headers]);
-  if (sheet.getMaxColumns() > cols) {
-    sheet.getRange(1, cols + 1, 1, sheet.getMaxColumns() - cols).clearContent().clearNote().clearDataValidations().clearFormat();
-  }
-  var rows = sheet.getMaxRows() - 1;
-  if (rows > 0) {
-    sheet.getRange(2, 1, rows, sheet.getMaxColumns()).clearContent().clearNote().clearDataValidations().clearFormat();
-  }
+  styleHeader(sheet, cols);
 }
 
 function resetPlannerDataForOnboarding() {
