@@ -286,7 +286,7 @@ Automation boundary:
 L1 surface clarity.
 
 Fix implemented:
-- `Refresh derived data (safe)` -> `Refresh planner links and display (safe)`
+- `Refresh derived data (safe)` -> `Refresh links and helper columns`
 - `Recalculate task priority` -> `Re-rank Tasks for Today`
 - `Show hidden columns` -> `Show hidden system columns`
 
@@ -528,7 +528,7 @@ Stage 3 re-check from `a0d8017`:
 | Data body clearing | `clearSheetBody` restores current headers and clears body content, notes, validations, and formatting across the sheet's full used width | Covered; no stale out-of-schema data should survive onboarding reset |
 | Snapshot | `savePlannerSnapshot` copies the spreadsheet and records snapshot properties | Covered; restore remains intentionally manual via backup copy |
 | Repair | `repairAllTabsImpl` rewrites schemas/helpers/generated Home/Today surfaces and now preserves an existing Guide | Covered; Guide content update deferred to Stage 14 |
-| Refresh | `fullRefreshImpl` runs safe maintenance/display refresh and legacy cleanup | Covered; label now says `Refresh planner links and display (safe)` |
+| Refresh | `fullRefreshImpl` runs safe maintenance/display refresh and legacy cleanup | Covered; label now says `Refresh links and helper columns` |
 | Legacy tabs | `hideLegacyUtilityTabs` deletes obsolete `Dashboard` and empty spacer tabs, hides non-empty spacer tabs | Covered; Dashboard is not a Planner data surface |
 | Migration | `migrateWorkbookSchema` and migration helpers are schema-preserving by intent | Defer performance/large workbook proof to Stage 15 |
 
@@ -1023,10 +1023,10 @@ Evidence:
 - Product evidence: Stage 3 requires destructive actions to list affected data, confirm explicitly, offer snapshot, leave an audit note, and provide a recovery instruction.
 
 Current behaviour:
-Redo setup can safely create a backup and clear the correct data tabs, but the user-facing warning is too compressed for a destructive action and the reset leaves no durable audit record.
+Superseded by Stage 17: normal setup should not be the destructive path. The destructive start-fresh action now belongs in Maintenance, creates a backup copy first, and records reset audit metadata.
 
 Expected behaviour:
-Redo setup names the affected tabs, reminds the user that the backup copy is the recovery path, and records reset metadata after a successful clear. Users can also save a backup copy from Maintenance without starting a reset.
+Start fresh names the affected tabs, creates a backup copy first, reminds the user that the backup copy is the recovery path, and records reset metadata after a successful clear. Normal setup remains additive.
 
 User impact:
 The user has a clearer last chance before data deletion and a visible safety path before experimenting with setup/repair.
@@ -1049,7 +1049,7 @@ Recommended fix:
 
 Acceptance tests:
 1. Maintenance menu has a non-destructive `Save backup copy` action.
-2. Redo-setup confirmation names Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.
+2. Start-fresh confirmation names Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.
 3. Backup failure aborts before reset, preserving existing behaviour.
 4. Successful reset records `lastPlannerResetAt`, cleared row count, entry point, and backup name/url when present.
 5. No restore function is introduced.
@@ -1060,7 +1060,7 @@ Do not do:
 - Do not change the data model.
 
 Result:
-Implemented in current batch. `savePlannerSnapshot()` creates a full spreadsheet backup from Maintenance. Redo setup now shows a tab-specific destructive warning and records reset audit properties after a successful clear.
+Superseded by Stage 17 implementation. `savePlannerSnapshot()` creates a full spreadsheet backup from Maintenance. `startFreshPlannerData()` creates a backup first, then clears planner data and records reset audit properties after a successful clear.
 
 Verification:
 - `git diff --check`
@@ -1459,3 +1459,69 @@ Acceptance test library status:
 
 Stage 16 decision:
 Proceed to the Guide-last batch. The only intended code behaviour change remaining is the generated Guide content; any new functional issue found during Guide writing must be recorded as a later/backlog item unless it is a correctness blocker.
+
+## Stage 17 - Product Excellence Review
+
+Guide-last ordering note:
+The user reframed the next pass as a Product Excellence Review, not a bug/UX polish pass. Guide-last remains deferred until this product-taste and zero-based review is documented and any immediate safe product-model fixes are completed.
+
+Stage 17 review question:
+
+```text
+If this were the best job-search operating system in the world, what would change?
+```
+
+Stage 17 product lenses:
+
+| Lens | Current Planner read | Product excellence gap | Classification |
+|---|---|---|---|
+| Right problem | The workbook solves a real problem: job search state gets scattered across jobs, people, interviews, tasks, and follow-ups. | Some controls still solve implementation problems, especially repair/setup/helper concepts exposed as user actions. | Structural + immediate copy/action placement |
+| Cognitive load | Home/Today/Decisions/Tasks boundaries reduce load, and Today selects work. | The user still has to know when to use setup vs start fresh, row actions vs Home capture, and Maintenance vs Today refresh. | Immediate safe fix for setup/start-fresh; broader backlog |
+| Behaviour guidance | Today, Decisions, application planning, source-led scans, and weekly review guide useful behaviour. | Missed-days recovery and regular networking rhythm are not yet a named product experience. | Structural redesign candidate |
+| Mental model | Home = start, Today = do, Tasks = queue, Decisions = judgement is coherent. | Source tabs are still too close to the daily workflow; the product relies on header hints and Guide to keep them in their place. | Backlog taste improvement |
+| Emotional quality | Home and Today can reduce anxiety by showing a narrow front of work. | Maintenance warnings and helper concepts can make the product feel broken or admin-heavy. | Immediate safe copy/placement + later recovery mode |
+| Subtraction | The system has many tabs because the domain has durable entities. | Conversations/People, Tasks/Today, and Decisions/Home should be periodically challenged for merge or stronger front/back separation. | Structural redesign candidate |
+| Intelligence | The Planner infers Today selection, status cascades, IDs, helper counts, and due work. | It could feel more intelligent by naming recovery modes, summarising why a workstream needs attention, and suggesting next search rhythm without exposing machinery. | Backlog taste improvement |
+| Product scale | Hidden IDs/helpers and Home as cockpit help at scale. | At 6-12 months, source tabs and Tasks may feel archival unless there are stronger filtering/search/review modes. | Structural redesign candidate |
+| Delight | Decision cards, Today waterfall reasons, and automatic capture-to-task routing can feel clever. | Delight is inconsistent; setup/reset, maintenance, and row actions still reveal spreadsheet/admin roots. | Immediate + backlog |
+| Best-in-class comparison | The current model resembles a structured workspace with automation. | Linear would hide maintenance; Motion would make planning feel automatic; Superhuman would make daily capture faster; Notion would simplify source views; Raycast would make actions command-driven. | Structural redesign candidate |
+
+Zero-based product review:
+
+| Ideal product assumption | Current Planner gap | Recommendation type |
+|---|---|---|
+| The user starts each day with one calm cockpit and no admin language. | Home is close, but utility/maintenance/setup language can still leak through. | Immediate safe copy/placement |
+| Setup means "tell the product my starting facts"; reset means "dangerous data lifecycle operation." | These were coupled in setup UI and old labels. | Immediate safe fix |
+| The product nudges weekly search behaviour without the user remembering routines. | Weekly review exists, but the user-facing recovery/restart mode is underdeveloped. | Structural redesign candidate |
+| The product should know the next best action for each active application/interview/person without making the user browse tabs. | Today does this for tasks, but source workstream summaries are uneven. | Backlog taste improvement |
+| Tabs should feel like durable records, not things the user must operate daily. | Header hints say this, but menus and row actions still invite source-tab operation. | Backlog taste improvement |
+
+Remove 30% exercise:
+
+| Candidate to remove/merge/hide | Why it may add less value | Product direction |
+|---|---|---|
+| User-facing migration/repair language | Users want "make it work" or "refresh links", not implementation terms. | Keep behind Maintenance, rename by outcome, avoid normal-flow placement. |
+| Reset inside onboarding/setup | Wrong intent; it adds anxiety and risk to a normal setup path. | Remove from setup; put under explicit Maintenance start-fresh. |
+| Some row actions on source tabs | Powerful, but discoverability and placement are uneven. | Later: consider contextual Home/Today prompts or command palette-style actions. |
+| Helper columns as visible concepts | Some are needed for trust, but many are implementation artifacts. | Keep hidden unless they support user reasoning. |
+| Guide dependence | Guide should explain, not compensate. | Continue Guide-last, but only after UI carries daily action clarity. |
+
+Product taste findings:
+
+| Finding | Severity | Evidence | Fix direction |
+|---|---|---|---|
+| Setup and destructive reset were mixed in one normal onboarding modal. | P1/P2 | `buildSetupHtml()` showed Add/update and Start fresh side by side; menu/Home said Start or redo setup / Redo setup. | Fixed now: setup is additive; start fresh moves to Maintenance with backup-first confirmation. |
+| User-facing "Capture update" language is accurate but colder than the user's intent. | P2 | Home and menu used Capture update, while the actual user action is adding/updating something that changed. | Fixed now: visible label becomes Add or update. |
+| Maintenance labels sometimes describe machinery, not outcomes. | P2 | Run daily maintenance / weekly review / refresh planner links and display. | Fixed some labels now; deeper maintenance simplification remains backlog. |
+| Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user has warnings and refreshes, not a calm "restart today" flow. | Structural redesign candidate after Home/Today review. |
+| Source tabs are powerful but still feel spreadsheet-like. | P2/P3 | Direct editable tables, row actions, hidden helper columns, header hints. | Backlog: stronger inspect/repair framing, filters/views, or fewer daily-visible source mechanics. |
+
+Immediate Stage 17 implementation:
+- Separate setup/add facts from destructive start-fresh.
+- Move start-fresh to Maintenance with backup-first confirmation and no-clear-on-backup-failure.
+- Rename Home/menu setup labels away from "redo setup".
+- Rename visible capture surface to Add or update.
+- Rename the most exposed maintenance actions by user outcome.
+
+Stage 17 decision:
+This stage is now the product-taste gate before Guide-last. It should not stop at correctness. Bigger structural ideas stay as redesign candidates unless the current code has a low-risk product-model fix, like setup/reset separation.

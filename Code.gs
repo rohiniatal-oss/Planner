@@ -79,11 +79,9 @@
  *
  * ONBOARDING
  * ----------
- *   "Start or redo setup" is destructive-then-rebuild: it wipes
- *   existing planner data (Sectors/Organisations/Jobs/People/
- *   Conversations/Interviews/Tasks/Decisions bodies) before writing
- *   anything, then captures starting facts entirely through popups —
- *   the user never has to manually navigate to a backend tab. Sector
+ *   "Set up / add starting facts" captures facts through popups and
+ *   keeps existing planner data. Starting fresh is a separate Maintenance
+ *   action with an explicit backup-first destructive confirmation. Sector
  *   onboarding is 3 explicit stages:
  *     1. Sector-only row      → direct Task: "Add 2-4 sub-sector rows"
  *     2. Sub-sector row       → Decision: "Build an org list here?"
@@ -99,7 +97,7 @@
  *   3. Reload the sheet.
  *   4. In The Planner menu, run Setup & automation > Turn on Planner actions.
  *   5. Run Maintenance > Repair all tabs (safe to re-run).
- *   6. Start from Home, or run The Planner > Start or redo setup.
+ *   6. Start from Home, or run The Planner > Set up / add starting facts.
  */
 
 // =============================================================
@@ -264,7 +262,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.5';
+var SCRIPT_VERSION = 'v7.7.6';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -6895,7 +6893,7 @@ function showTriggerStatus() {
   var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
   var lines = [];
   lines.push('Edit actions and popups: ' + (editOn ? '\u2705 on' : '\u274c off'));
-  if (!editOn) lines.push('   \u2192 Run "Setup & automation \u2192 Turn on Planner actions" to make Home, Today, and Capture update respond.');
+  if (!editOn) lines.push('   \u2192 Run "Setup & automation \u2192 Turn on Planner actions" to make Home, Today, and Add or update respond.');
   lines.push('');
   lines.push('Daily/weekly automation:');
   TIME_TRIGGER_SPECS.forEach(function (spec) {
@@ -8722,7 +8720,7 @@ function refreshHome() {
       .setValue(editReady ? 'Start onboarding' : 'Turn on Planner actions to start')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue(editReady ? 'Use the checkbox above or The Planner → Start or redo setup. The popup writes source rows and refreshes Today.' : 'Run The Planner > Setup & automation > Turn on Planner actions, then come back here.')
+      .setValue(editReady ? 'Use the checkbox above or The Planner > Set up / add starting facts. Existing planner data is kept.' : 'Run The Planner > Setup & automation > Turn on Planner actions, then come back here.')
       .setWrap(true).setFontColor('#5F625E');
   } else if (shouldShowSetupCard(profile)) {
     if (editReady) {
@@ -8741,8 +8739,8 @@ function refreshHome() {
       .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
-      .setValue('Redo setup')
-      .setNote('Reopens onboarding. If existing planner data would be cleared, the setup flow offers a backup copy first.')
+      .setValue('Setup options')
+      .setNote('Reopens setup to add or update starting facts. To clear planner data, use Maintenance > Start fresh.')
       .setFontSize(9).setFontColor('#7A7974');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue('Welcome back. Let’s get you organised for today.').setFontColor('#5F625E');
   }
@@ -8767,7 +8765,7 @@ function refreshHome() {
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
   // --- Capture update (§1.3) — the primary capture surface now ---
-  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Capture update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add or update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   if (editReady) {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
@@ -8814,7 +8812,7 @@ function refreshHome() {
   sheet.getRange(HOME_UPCOMING_HEADER_ROW, 2, 1, 5).merge().setValue('Upcoming').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   var upcoming = collectUpcomingItems(5);
   if (!upcoming.length) {
-    sheet.getRange(HOME_UPCOMING_FIRST_ROW, 2, 1, 5).merge().setValue('Nothing scheduled or waiting. Capture updates as they happen.').setFontColor('#5F625E');
+    sheet.getRange(HOME_UPCOMING_FIRST_ROW, 2, 1, 5).merge().setValue('Nothing scheduled or waiting. Add updates as they happen.').setFontColor('#5F625E');
   } else {
     upcoming.forEach(function (item, idx) {
       var r = HOME_UPCOMING_FIRST_ROW + idx;
@@ -8832,12 +8830,12 @@ function refreshHome() {
 
   var maint = readMaintenanceHealth();
   if (maint.error || maint.stale) {
-    var maintText = maint.error ? ('Maintenance issue: ' + (maint.errorText || maint.error)) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Run daily maintenance now.';
+    var maintText = maint.error ? ('Maintenance issue: ' + (maint.errorText || maint.error)) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Refresh due tasks and health checks.';
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklyStale) {
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
-      .setValue('Weekly review has not run in 8 days. Use The Planner > Maintenance > Run weekly review now.')
+      .setValue('Weekly review has not run in 8 days. Use The Planner > Maintenance > Review active organisations.')
       .setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklySummary) {
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
@@ -8888,7 +8886,7 @@ function refreshHomeStatusFromButton() {
 }
 
 // =============================================================
-// ONBOARDING — destructive-then-rebuild, capture entirely via popups
+// ONBOARDING — additive setup capture via popups
 // =============================================================
 
 function clearSheetBody(sheet, headerKey) {
@@ -8944,6 +8942,46 @@ function savePlannerSnapshot() {
   }
 }
 
+function startFreshPlannerData() {
+  var ui = SpreadsheetApp.getUi();
+  var rows = plannerDataRowCount();
+  var resp = ui.alert(
+    'Start fresh?',
+    'This creates a full backup copy of this spreadsheet in Google Drive, then clears planner data from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Continue?',
+    ui.ButtonSet.YES_NO);
+  if (resp !== ui.Button.YES) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Start fresh cancelled. Existing planner data was not changed.', 'The Planner', 4);
+    return;
+  }
+  var result = withDocumentLock(function () {
+    var backup;
+    try {
+      backup = createPlannerBackupCopy();
+    } catch (backupErr) {
+      recordMaintenanceError('startFreshPlannerData.backup', backupErr && backupErr.message ? backupErr.message : String(backupErr));
+      return null;
+    }
+    resetPlannerDataForOnboarding();
+    recordPlannerResetAudit({ rowsCleared: rows, entryPoint: 'maintenance-start-fresh', backup: backup });
+    refreshAllDropdowns();
+    applyAllRichTextHeaders();
+    setupTasksTabExtras();
+    populateToday();
+    refreshHome();
+    colorCodeManualFields();
+    applyStatusColorCoding();
+    applyColumnLayout();
+    applyColumnWidths();
+    return backup;
+  }, { label: 'startFreshPlannerData', timeoutMs: 30000, failOpen: false });
+  if (!result) {
+    ui.alert('Start fresh could not run. No planner data was cleared. Try again in a minute.');
+    return;
+  }
+  SpreadsheetApp.getActiveSpreadsheet().toast('Backup copy saved: ' + result.name + '. Planner data cleared.', 'The Planner', 8);
+  runSetupInterview();
+}
+
 function recordPlannerResetAudit(details) {
   details = details || {};
   var props = maintenanceProps();
@@ -8971,7 +9009,7 @@ function runSetupInterview() {
 function buildSetupHtml() {
   var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE;
   var existingRows = plannerDataRowCount();
-  var setupIntro = existingRows ? 'Use setup to add or update starting facts, or choose Start fresh if you really want to clear existing planner data first.' : 'This captures your starting facts and writes them to the right tabs.';
+  var setupIntro = existingRows ? 'Add or update starting facts. Existing planner data will be kept.' : 'This captures your starting facts and writes them to the right tabs.';
   var setupButton = 'Save setup';
   return '' +
     '<style>' +
@@ -8995,7 +9033,6 @@ function buildSetupHtml() {
     '</style>' +
     '<h2>Set up your planner</h2>' +
     '<p>' + setupIntro + '</p>' +
-    (existingRows ? '<div id="setupMode"><label class="mode"><input type="radio" name="resetMode" value="append" checked>Add or update setup facts<small>Keeps existing Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.</small></label><label class="mode"><input type="radio" name="resetMode" value="reset">Start fresh<small>Clears planner data first. You can save a full spreadsheet backup copy before clearing.</small></label></div>' : '') +
     '<div id="q1" class="step active">' +
     '  <p><strong>1 of 3</strong> Where are you starting from?</p>' +
     '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Start with a broad sector, then sub-sectors, then organisations.</small></button>' +
@@ -9009,7 +9046,6 @@ function buildSetupHtml() {
     '<div id="q3" class="step">' +
     '  <p id="q3title"><strong>3 of 3</strong></p>' +
     '  <form id="captureForm"></form>' +
-    (existingRows ? '  <label id="backupLabel" class="backup" style="display:none"><input id="backupBeforeReset" type="checkbox" checked>Save a backup copy before clearing existing data <span class="warn">(creates a separate spreadsheet copy in your Google Drive; safer, but can take a minute or two)</span></label>' : '') +
     '  <button id="submitButton" class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
     '  <button class="back" type="button" onclick="showStep(2)">Back</button>' +
     '  <button class="skip" type="button" onclick="skipSetup()">Skip setup</button>' +
@@ -9028,10 +9064,10 @@ function buildSetupHtml() {
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
-    'function selectedResetMode(){var el=document.querySelector("input[name=resetMode]:checked");return el?el.value:"append";}' +
-    'function resetSelected(){return existingRows>0&&selectedResetMode()==="reset";}' +
-    'function updateSetupModeUi(){var backup=document.getElementById("backupLabel"),btn=document.getElementById("submitButton");if(backup)backup.style.display=resetSelected()?"block":"none";if(btn)btn.textContent=resetSelected()?"Save (clears existing planner data first)":"Save setup";}' +
-    'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");updateSetupModeUi();}' +
+    'function selectedResetMode(){return "append";}' +
+    'function resetSelected(){return false;}' +
+    'function updateSetupModeUi(){var btn=document.getElementById("submitButton");if(btn)btn.textContent="Save setup";}' +
+    'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
     'function pickGoal(g){goal=g;' +
     ' if(g==="explore_space"){entryPoint="sectors";renderForm("sectors");return;}' +
     ' document.getElementById("q2title").innerHTML="<strong>2 of 3</strong> What should we capture first?";' +
@@ -9054,13 +9090,13 @@ function buildSetupHtml() {
     '  else{input=document.createElement("input");input.type=field.t||"text";}' +
     '  input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});Array.prototype.forEach.call(f.elements,function(el){el.onchange=function(){updateConditional(f,cfg);};});updateConditional(f,cfg);' +
     ' showStep(3);}' +
-    'Array.prototype.forEach.call(document.querySelectorAll("input[name=resetMode]"),function(el){el.onchange=updateSetupModeUi;});updateSetupModeUi();' +
+    'updateSetupModeUi();' +
     'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),btn=document.getElementById("submitButton"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' var resetMode=selectedResetMode();var resetConfirmed=resetSelected()&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Start fresh will clear "+existingRows+" existing planner row(s) from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Use the backup copy if you need to recover cleared data. Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
-    ' var backupBeforeReset=resetConfirmed&&document.getElementById("backupBeforeReset")&&document.getElementById("backupBeforeReset").checked;' +
+    ' var resetMode="append";var resetConfirmed=false;' +
+    ' var backupBeforeReset=false;' +
     ' if(btn)btn.disabled=true;' +
-    ' status.textContent=resetConfirmed?(backupBeforeReset?"Creating backup copy. This can take a minute or two; do not click Save again. Then setup will clear data and rebuild Today.":"Clearing existing data and saving..."):"Saving setup...";' +
+    ' status.textContent="Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status"),btn=document.getElementById("submitButton");if(!res.ok){if(btn)btn.disabled=false;status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetMode:resetMode,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
@@ -9485,8 +9521,9 @@ function resolvePopupDecision(decisionId, todoId, note) {
   applyDecisionHelperColumns(found.sheet, found.row);
 }
 
-// Called from the popup. Wipes existing data (unless skipped), captures
-// the new facts, rebuilds the checklist, and refreshes Today/Home.
+// Called from the setup popup. Captures starting facts, rebuilds the
+// checklist, and refreshes Today/Home. The normal setup path is additive;
+// legacy reset payloads are still guarded below for backwards compatibility.
 function completeSetupFromPopup(payload) {
   payload = payload || {};
   var goal = payload.goal || 'skipped';
@@ -10342,14 +10379,14 @@ var HEADER_GUIDANCE = {
     'Notes': 'Your context plus repair flags.'
   },
   'Organisations': {
-    'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Capture update for normal entry.',
+    'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Add or update for normal entry.',
     'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the broad sector, or leave blank if it still needs classification.',
     'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional narrower area; choose after Sector.',
     'Tier': 'A/B/C priority for tie-breaks; defaults to B.', 'Status': 'Mapped = known; Active = suggest next moves; Dormant = pause org-level suggestions; Archived = retired.',
     'Known people (count)': 'Updates from linked People rows.', 'Open opportunities (count)': 'Updates from linked open Jobs.', 'Last checked': 'Last org-level review date.', 'Next check date': 'Next planned org review date.', 'Notes': 'Your context plus repair flags.'
   },
   'People': {
-    'Person ID': 'Filled automatically.', 'Name': 'Contact name. Prefer Home > Capture update when adding people.', 'Organisation': 'Link when relevant; blank is okay for broad network leads.', 'Org ID': 'Filled automatically from Organisation.',
+    'Person ID': 'Filled automatically.', 'Name': 'Contact name. Prefer Home > Add or update when adding people.', 'Organisation': 'Link when relevant; blank is okay for broad network leads.', 'Org ID': 'Filled automatically from Organisation.',
     'Role': 'Optional role or relationship context.', 'Relationship source': 'How you found or know them; this does not create outreach by itself.',
     'Relationship status': 'Identified, outreach, reply, conversation, keep-warm, or closed.',
     'Next follow-up date': 'Next relationship follow-up; tasks handle the actual work.',
@@ -10366,7 +10403,7 @@ var HEADER_GUIDANCE = {
     'Notes': 'URL, source, application context, and repair flags.'
   },
   'Interactions': {
-    'Interaction ID': 'Filled automatically.', 'Date': 'Interaction or scheduled conversation date.', 'Person ID': 'Filled automatically from Person.', 'Person': 'Pick or type the person; Home > Capture update is preferred.', 'Organisation': 'Filled from the linked Person when known.',
+    'Interaction ID': 'Filled automatically.', 'Date': 'Interaction or scheduled conversation date.', 'Person ID': 'Filled automatically from Person.', 'Person': 'Pick or type the person; Home > Add or update is preferred.', 'Organisation': 'Filled from the linked Person when known.',
     'Type': 'Call, email, message, referral, interview, or other.', 'Interaction status': 'Scheduled / Completed / Cancelled.', 'Key notes': 'What changed or what to remember.', 'Outcome': 'Use after Completed; can route follow-up, referral, or opportunity work.'
   },
   'To-do': {
@@ -12140,21 +12177,21 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here (once)');
   r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Setup & automation > Turn on Planner actions. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
-  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Start or redo setup. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
+  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Set up / add starting facts. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
   r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
   r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
   r++;
 
   r = writeH2(sheet, r, 'Your daily 10 minutes');
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
-  r = writeKV(sheet, r, '2. Capture what changed', 'Use Capture update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
+  r = writeKV(sheet, r, '2. Capture what changed', 'Use Add or update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed.");
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
   r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
   r++;
 
   r = writeH2(sheet, r, 'How adding things works');
-  r = writeKV(sheet, r, 'Use Home first', 'The Capture update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
+  r = writeKV(sheet, r, 'Use Home first', 'The Add or update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
   r = writeKV(sheet, r, 'You can still type in tabs', 'If you type directly into Jobs or People, fill Organisation too. Without an Organisation, the row is saved but the follow-up work waits until the Organisation is filled.');
   r = writeKV(sheet, r, 'Typing into Sectors', 'For a broad area, fill Sector and leave Sub-sector blank. For a narrower area, add a new row with the same Sector and fill Sub-sector.');
   r = writeKV(sheet, r, 'Cream and grey cells', 'Cream cells are yours to edit. Grey cells are filled in and kept up to date by the planner.');
@@ -12162,7 +12199,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'What each tab is for');
-  r = writeKV(sheet, r, 'Home', 'Start here. Capture updates, resolve Pending Decisions, see what needs attention.');
+  r = writeKV(sheet, r, 'Home', 'Start here. Add updates, resolve Pending Decisions, see what needs attention.');
   r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
   r = writeKV(sheet, r, 'Decisions', 'Judgment queue and audit trail. Action type shows what Yes will do; Review by controls urgency.');
   r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
@@ -12599,7 +12636,7 @@ function uninstallTimeTriggers() {
 function buildMenu() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('The Planner')
-    .addItem('Start or redo setup', 'runSetupInterview')
+    .addItem('Set up / add starting facts', 'runSetupInterview')
     .addItem("Build / refresh Today's plan", 'populateToday')
     .addItem('Refresh Home from planner state', 'refreshHome')
     .addItem('Add one-off task', 'addAdHocTodo')
@@ -12612,7 +12649,7 @@ function buildMenu() {
       .addItem('Let selected Today row move again', 'unlockTodayRow')
       .addItem('Move selected Today row up', 'moveTodayRowUp')
       .addItem('Move selected Today row down', 'moveTodayRowDown'))
-    .addSubMenu(ui.createMenu('Capture update')
+    .addSubMenu(ui.createMenu('Add or update')
       .addItem('Explore broad sectors', 'addNewSector')
       .addItem('Organisations found from exploration', 'addExplorationOrganisations')
       .addItem('Target organisation', 'addNewOrganisation')
@@ -12648,10 +12685,11 @@ function buildMenu() {
       .addItem('Turn off daily/weekly refresh', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
-      .addItem('Run daily maintenance now', 'dailyMaintenance')
-      .addItem('Run weekly review now', 'weeklyReview')
+      .addItem('Refresh due tasks and health checks', 'dailyMaintenance')
+      .addItem('Review active organisations', 'weeklyReview')
       .addItem('Save backup copy', 'savePlannerSnapshot')
-      .addItem('Refresh planner links and display (safe)', 'refreshAllDerivedData')
+      .addItem('Start fresh (backup, then clear planner data)', 'startFreshPlannerData')
+      .addItem('Refresh links and helper columns', 'refreshAllDerivedData')
       .addItem('Re-rank Tasks for Today', 'recalculateTaskPriorityFromMenu')
       .addItem('Show hidden system columns', 'showAllColumns'))
     .addToUi();
@@ -12675,6 +12713,6 @@ function onOpen() {
   if (editReady) {
     ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
-    ss.toast('The Planner loaded, but edit actions are not on yet. Run \u201cThe Planner \u2192 Setup & automation \u2192 Turn on Planner actions\u201d once so onboarding and Capture update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
+    ss.toast('The Planner loaded, but edit actions are not on yet. Run \u201cThe Planner \u2192 Setup & automation \u2192 Turn on Planner actions\u201d once so onboarding and Add or update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
 }

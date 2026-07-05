@@ -102,6 +102,46 @@ recoverability
 long-term usability
 ```
 
+## 1.2A Product Excellence Review
+
+Before treating a stage as complete, Codex must also run a Product Excellence Review.
+
+This is not a bug review, code review, or narrow UX review. Codex must review The Planner as if it were the Head of Product for a world-class job-search operating system. Assume no current implementation is sacred. Challenge workflows, terminology, information architecture, tabs, menus, popups, columns, and whether the user should have to think about the concept at all.
+
+The goal is not to preserve existing workflows. The goal is to make the Planner feel exceptional for someone managing a complex job search.
+
+Required lenses:
+
+| Lens | Question Codex must answer |
+|---|---|
+| 1. Right problem | Is this solving a real user problem, or an implementation problem? Could the feature disappear? |
+| 2. Cognitive load | What does the user still have to remember, decide, or interpret unnecessarily? Where do they pause and wonder what to do next? |
+| 3. Behaviour guidance | Does the Planner naturally encourage good job-search behaviour, or rely on discipline? |
+| 4. Mental model | Could a new user explain Home, Today, Tasks, Decisions, and source tabs after five minutes without the Guide? |
+| 5. Emotional quality | Where does the product reduce anxiety, create momentum, create guilt, or feel overwhelming? |
+| 6. Subtraction | What can merge, disappear, become automatic, become a recommendation, or become one button? |
+| 7. Intelligence | What should the system infer, recommend, explain, or adapt to instead of asking the user? |
+| 8. Product scale | Will the experience still feel usable after 500 tasks, 200 people, 100 organisations, 50 interviews, and a year of history? |
+| 9. Delight | Where does the product anticipate a need, save unexpected time, or feel clever? Where is delight missing? |
+| 10. Best-in-class comparison | What would Notion, Linear, Motion, Superhuman, or Raycast remove, simplify, automate, surface, or rename? |
+
+Codex must also include:
+
+| Exercise | Required output |
+|---|---|
+| Product Reimagination | If rebuilding from scratch, what would the ideal product be? Which current assumptions would not survive? |
+| Remove 30% | Which 30% adds the least value, feels like implementation artifact, or should merge/disappear/be automated? |
+| Product Taste | Would this feel premium, calm, trustworthy, obvious, and worth opening every morning? Where does it still feel like a spreadsheet instead of a product? |
+| Zero-Based Product Review | Compare the ideal job-search operating system against the current Planner and identify structural gaps, not just incremental fixes. |
+
+Product Excellence findings must be separated into:
+
+| Type | Meaning |
+|---|---|
+| Immediate safe fix | Improves the product model without schema or workflow risk. |
+| Structural redesign candidate | Bigger change that may require user approval or staged migration. |
+| Backlog taste improvement | Valuable, but not blocking current correctness or trust. |
+
 ## 1.3 Preserve the core boundaries
 
 Codex must not violate these boundaries:
@@ -210,7 +250,7 @@ Current imported category tracker:
 
 | Category | Current status from repo/docs baseline | Next proof needed |
 |---|---|---|
-| 0 | In progress. Surface placement/order and visible-action rules are now part of this final checklist. Several menu/header/Home/Today labels were already improved. | Complete Stage 0 and Stage 1 tables from current code, not memory. |
+| 0 | In progress. Surface placement/order, visible-action, and Product Excellence rules are now part of this final checklist. Several menu/header/Home/Today labels were already improved. | Complete Stage 0, Stage 1, and Product Excellence tables from current code, not memory. |
 | 1 | Mostly done in prior implementation notes: invalid dropdown flags, duplicate-ID flags, source-link readiness, and maintenance surfacing exist in repo notes. | Verify against current Code.gs and live-sheet behaviour before marking complete. |
 | 2 | In progress. Today control guidance, end-of-day batch flow, and readiness exclusions have prior fixes. | Run Stage 7 Today execution tests, especially capacity/options/locked-row edge cases. |
 | 3 | In progress. Several source tabs were reviewed earlier, but final checklist requires full column lineage tables before more broad implementation. | Build column ownership/lineage table tab by tab from current Code.gs. |
@@ -229,9 +269,9 @@ Imported implementation ledger to verify from current repo:
 | Onboarding | First-run sector onboarding should complete after seed sectors while sub-sector exploration becomes Tasks. | Verify in Stage 0 user modes and Stage 6 sector workflow. |
 | Home Upcoming | People follow-up tasks stay out of Home Upcoming; Home focuses on scheduled conversations, interviews, and application checks. | Preserve unless Stage 8 finds a stronger cockpit reason. |
 | Repair/data trust | Repair/daily maintenance scan strict dropdowns and duplicate IDs, adding row Notes flags and Home counts. | Verify in Stage 2 data integrity. |
-| Reset safety | Redo onboarding can offer backup before clearing data; reset clears full data bodies and retired header cells. | Verify in Stage 3 data lifecycle. |
+| Reset safety | Normal setup should add/update starting facts without clearing data. Destructive start-fresh belongs in Maintenance, creates a backup first, clears full data bodies, and leaves audit metadata. | Verify in Stage 3 data lifecycle. |
 | Today | End-of-day reconcile uses one batch popup instead of one alert per unfinished task. | Verify in Stage 7 daily execution. |
-| Home setup | Completed-onboarding action says Redo setup and explains backup-before-clear behaviour. | Verify in Stage 0/8. |
+| Home setup | Completed-onboarding action should say Setup options and reopen additive setup. It must not imply that reset is part of onboarding. | Verify in Stage 0/8. |
 | Home Today state | Home uses Open Today to build plan / Open Today / Start working depending on Today state. | Verify in Stage 8; live visual retest still required. |
 | Today controls | Today explains Focus, Available minutes, Energy, and build/refresh effects in the control area. | Verify in Stage 7 and visual scan. |
 | Menus/copy | Setup, automation, capture, row actions, maintenance, one-off task, and Today build language were made more user-facing. | Verify in Stage 12 copy review. |
