@@ -121,6 +121,7 @@ Category 0 issue queue:
 | Full workbook first-impression map missing from plan | P2 | Review could drift back into technical fixes without proving user comprehension | 0 | Fixed in this doc |
 | Home Needs attention action is too generic | P1/P2 | Blocked/parent task recovery could incorrectly point users to Repair all tabs | 0 + 4 | Fixed: Home now picks an action hint based on the attention types |
 | Maintenance menu says Full refresh | P1/P2 | Users cannot tell whether refresh is safe or reset-like | 0 + 6 | Fixed: menu says Refresh derived data (safe), and success toast says source rows were not cleared |
+| Menu says Capture update popups | P2 | Exposes implementation instead of the user action | 0 + 5 | Fixed: menu now says Capture update |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -138,6 +139,7 @@ Implemented after this review began:
 - Home's completed-onboarding action now says "Redo setup" instead of "Reset" and explains the backup-before-clear behavior in a note.
 - Home Needs attention now gives a contextual action hint: Today/Tasks for blocked or parent-task recovery, Maintenance for repair/health items.
 - Maintenance now exposes the non-destructive refresh as "Refresh derived data (safe)" and confirms that source rows were not cleared.
+- The menu now uses "Capture update" instead of "Capture update popups" so it describes the user action, not the implementation.
 
 ## Pass 1 - User Journey Review
 

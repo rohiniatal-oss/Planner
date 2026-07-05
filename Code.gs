@@ -12327,7 +12327,7 @@ function buildMenu() {
       .addItem('Move selected row up', 'moveTodayRowUp')
       .addItem('Move selected row down', 'moveTodayRowDown')
       .addItem('Show all Today columns', 'showAllColumns'))
-    .addSubMenu(ui.createMenu('Capture update popups')
+    .addSubMenu(ui.createMenu('Capture update')
       .addItem('Broad sectors', 'addNewSector')
       .addItem('Organisations from exploration', 'addExplorationOrganisations')
       .addItem('Organisation', 'addNewOrganisation')

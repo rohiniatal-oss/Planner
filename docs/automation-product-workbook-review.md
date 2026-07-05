@@ -66,6 +66,7 @@ Category 0 first implementation slice:
 | Home completed-onboarding action now says Redo setup, with a note explaining backup-before-clear behavior | The old Reset label was too vague for a destructive-adjacent setup path | L6 confirmation/supporting copy | Refresh Home after onboarding complete; the checkbox label reads Redo setup and the note explains the backup copy |
 | Home Needs attention action hint is contextual | The old helper always pointed to Repair all tabs, even for blocked-task recovery or parent-review work | L2 warning with next action | Create blocked/parent attention items and repair items separately; Home points to Today/Tasks for recovery and Maintenance for repair |
 | Maintenance menu says Refresh derived data (safe) | The old Full refresh label blurred safe refresh with destructive reset/rebuild concepts | L2 trust copy | Open The Planner > Maintenance; the non-destructive rebuild action is labelled Refresh derived data (safe) and confirms source rows were not cleared |
+| Menu says Capture update | The old Capture update popups label exposed implementation rather than intent | L5 popup entry copy | Open The Planner menu; the capture submenu is labelled Capture update |
 
 Product architecture to preserve:
 
