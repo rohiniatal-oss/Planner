@@ -2707,6 +2707,24 @@ function allChildTodosDone(parentTodoId) {
   return found;
 }
 
+function allChildTodosTerminalInContext(parentTodoId, ctx) {
+  var children = ctx.childrenByParent[parentTodoId] || [];
+  if (!children.length) return false;
+  for (var i = 0; i < children.length; i++) {
+    if (!isTerminalTodoStatus(String(children[i].data[COLS.TODO.STATUS - 1] || ''))) return false;
+  }
+  return true;
+}
+
+function allChildTodosDoneInContext(parentTodoId, ctx) {
+  var children = ctx.childrenByParent[parentTodoId] || [];
+  if (!children.length) return false;
+  for (var i = 0; i < children.length; i++) {
+    if (String(children[i].data[COLS.TODO.STATUS - 1] || '') !== 'Done') return false;
+  }
+  return true;
+}
+
 function syncTaskPlanningHelpers() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return;
@@ -7018,6 +7036,33 @@ function hasSubtasks(todoId) {
 }
 
 // v7.4 §4.1: tasks that need planning before Today can pull them.
+function needsPlanningReasonForRow(row, ctx) {
+  var id = String(row[COLS.TODO.ID - 1] || '');
+  var status = String(row[COLS.TODO.STATUS - 1] || '');
+  var notes = String(row[COLS.TODO.NOTES - 1] || '');
+  var blocker = String(row[COLS.TODO.BLOCKER - 1] || '');
+  var blockedById = String(row[COLS.TODO.BLOCKED_BY_ID - 1] || '');
+  var readyState = deriveReadyForTodayFromRow(row, ctx);
+
+  if (status === 'Blocked') {
+    if (!blocker || blocker === 'Blocked - add reason') return { reason: 'Blocked without a clear reason', suggestedAction: 'Add the blocker, or use Row actions > Unblock selected Task' };
+    if (!blockedById) return { reason: 'Blocked without an unblocker task', suggestedAction: 'Use Row actions > Mark selected Task blocked to add an unblocker, or unblock it' };
+    var blockerTask = ctx.byId[blockedById];
+    if (!blockerTask) return { reason: 'Blocked by a missing task', suggestedAction: 'Clear the stale blocked-by link, or create a new unblocker' };
+    if (isTerminalTodoStatus(String(blockerTask.data[COLS.TODO.STATUS - 1] || ''))) return { reason: 'Unblocker is complete', suggestedAction: 'Use Row actions > Unblock selected Task' };
+    return null;
+  }
+
+  if (status !== 'Not started' && status !== 'In progress') return null;
+  if (readyState === 'Needs planning') return { reason: 'Needs breakdown or a usable time estimate', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
+  if (notes.indexOf('[needs planning]') !== -1) return { reason: 'Flagged for planning', suggestedAction: 'Clarify the next action or break it down' };
+  if (notes.indexOf('[needs breakdown]') !== -1) return { reason: 'Needs breakdown', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
+  if (allChildTodosTerminalInContext(id, ctx) && !allChildTodosDoneInContext(id, ctx)) {
+    return { reason: 'Child tasks are finished, but not all were Done', suggestedAction: 'Review skipped/cancelled children, then close or revise the parent' };
+  }
+  return null;
+}
+
 function collectNeedsPlanningTasks(limit) {
   limit = limit || 5;
   var sheet = getSheet('Tasks');
@@ -7026,11 +7071,14 @@ function collectNeedsPlanningTasks(limit) {
   var ctx = buildTaskPlanningContext(data);
   var out = [];
   for (var i = 0; i < data.length && out.length < limit; i++) {
-    var status = String(data[i][COLS.TODO.STATUS - 1]);
-    if (status !== 'Not started' && status !== 'In progress') continue;
-    var notes = String(data[i][COLS.TODO.NOTES - 1] || '');
-    if (notes.indexOf('[needs planning]') === -1 && notes.indexOf('[needs breakdown]') === -1 && deriveReadyForTodayFromRow(data[i], ctx) !== 'Needs planning') continue;
-    out.push({ todoId: String(data[i][COLS.TODO.ID - 1]), task: String(data[i][COLS.TODO.TASK - 1] || '') });
+    var reason = needsPlanningReasonForRow(data[i], ctx);
+    if (!reason) continue;
+    out.push({
+      todoId: String(data[i][COLS.TODO.ID - 1]),
+      task: String(data[i][COLS.TODO.TASK - 1] || ''),
+      reason: reason.reason,
+      suggestedAction: reason.suggestedAction
+    });
   }
   return out;
 }
@@ -7048,7 +7096,7 @@ function renderNeedsPlanning(sheet) {
   }
   items.forEach(function (item, idx) {
     sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW + idx, 2, 1, 7).merge()
-      .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
+      .setValue(item.task + ' - ' + item.reason + '. ' + item.suggestedAction).setFontColor('#964219');
   });
 }
 
@@ -9271,6 +9319,7 @@ var STATUS_COLOR_MAP = {
 };
 
 var COMMITMENT_CLASS_COLORS = { 'Fixed': '#F6C7C3', 'Blocking': '#FDE9D9', 'Keep-alive': '#D2E3FC', 'Active pursuit': '#CEEAD6', 'Pipeline-building': '#E6F4EA', 'Backlog': '#F1F3F4' };
+var READY_FOR_TODAY_COLORS = { 'Ready': '#CEEAD6', 'Waiting': '#D2E3FC', 'Blocked': '#FDE9D9', 'Parent': '#EAF4F5', 'Needs planning': '#FEF7CD', 'Done': '#F1F3F4' };
 
 // v7.6.3 §4.5: Organisations already has one STATUS_COLOR_MAP entry (its
 // Status column) — Tier is a second, independent column on the same
@@ -9354,6 +9403,13 @@ function applyStatusColorCoding() {
       .setBackground('#FDE9D9')
       .setRanges([fullRowRange]).build());
 
+    var readyRange = todoSheet.getRange(2, COLS.TODO.READY_FOR_TODAY, Math.max(todoSheet.getMaxRows() - 1, 1), 1);
+    ccRules = ccRules.filter(function (r) {
+      return !r.getRanges().some(function (rg) { return rg.getColumn() === COLS.TODO.READY_FOR_TODAY && rg.getRow() === 2; });
+    });
+    Object.keys(READY_FOR_TODAY_COLORS).forEach(function (val) {
+      ccRules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(val).setBackground(READY_FOR_TODAY_COLORS[val]).setRanges([readyRange]).build());
+    });
     todoSheet.setConditionalFormatRules(ccRules);
   }
   var jobsSheet = getSheet('Jobs');
