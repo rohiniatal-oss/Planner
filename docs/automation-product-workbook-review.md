@@ -74,6 +74,7 @@ Category 0 first implementation slice:
 | Top menu says Add one-off task | Ad-hoc was backend-ish wording | L4 capture-lite action copy | Top-level menu, prompt, and toast use one-off task language |
 | Today checkbox matches menu wording | The sheet said tick refresh while the menu said build / refresh | L1/L4 execution-surface copy | Today row 7 says Build / refresh Today's plan |
 | Setup and automation controls use product language | Trigger/install wording made first-run recovery feel technical and easy to mistrust | L2/L6 trust copy | Menu and status alerts say Start or redo setup, edit actions, and daily/weekly automation instead of exposing trigger mechanics |
+| Home Today-plan action follows plan state | Home said Start working even when the plan was not built, and nudged Guide reading instead of the next operating action | L1 navigation copy | If Today is not built, Home says Open Today to build plan; if built with no committed work, it says Open Today and explains options/available minutes |
 
 Product architecture to preserve:
 

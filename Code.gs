@@ -8694,17 +8694,16 @@ function refreshHome() {
   sheet.getRange(HOME_PLAN_STATUS_ROW, 2, 1, 5).merge().setValue(heroText).setFontWeight('bold').setFontColor('#1B474D');
   var todaySheetForLink = getSheet('Today');
   if (todaySheetForLink) {
-    sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","Start working ▸")').setFontColor('#01696F').setFontWeight('bold');
+    var todayAction = planCounts.built && planCounts.commit > 0
+      ? 'Start working ▸'
+      : (planCounts.built ? 'Open Today ▸' : "Open Today to build plan ▸");
+    sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","' + todayAction + '")').setFontColor('#01696F').setFontWeight('bold');
   }
   var planSubline = taskQueueSummary();
   if (planCounts.unverified) planSubline = planSubline + ' Today has a visible plan, but the build date is not verified - refresh Today if this looks stale.';
-  if (!planCounts.built || planCounts.commit === 0) planSubline = planSubline + ' Open the Guide if you need the first-run flow.';
+  if (!planCounts.built) planSubline = planSubline + " On Today, tick Build / refresh Today's plan.";
+  else if (planCounts.commit === 0) planSubline = planSubline + ' Open Today to see options, or add more available minutes.';
   sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(planSubline).setFontSize(9).setFontColor('#8A8D87');
-  if (guideSheetForHome && (!planCounts.built || planCounts.commit === 0)) {
-    sheet.getRange(HOME_PLAN_SUBLINE_ROW, 7)
-      .setFormula('=HYPERLINK("#gid=' + guideSheetForHome.getSheetId() + '","Guide")')
-      .setFontSize(9).setFontColor('#01696F');
-  }
 
   // --- Open applications — current state without turning Home into Jobs ---
   sheet.getRange(HOME_APPLICATIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Open applications').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);

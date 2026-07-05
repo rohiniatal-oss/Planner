@@ -128,6 +128,7 @@ Category 0 issue queue:
 | Today menu uses jargon like Pull/Top up/Lock | P2 | Daily execution controls are harder to understand than they need to be | 0 + 2 + 5 | Fixed: labels now describe adding a task, adding time, and keeping/releasing row position |
 | Top menu says Add ad-hoc task | P2 | Ad-hoc is backend-ish wording for a one-off task | 0 + 5 | Fixed: label, prompt, and toast now say one-off task |
 | Today checkbox still says tick refresh | P2 | The main daily action had different names on the menu and sheet | 0 + 2 + 4 | Fixed: Today checkbox now says Build / refresh Today's plan |
+| Home says Start working when Today is not built | P1/P2 | Home points to execution/documentation before the plan exists, which makes the cockpit feel stale or misleading | 0 + 4 | Fixed: Home now says Open Today to build plan / Open Today based on plan state |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -152,6 +153,7 @@ Implemented after this review began:
 - Today menu actions now use plain language for adding a selected task, adding more time, and keeping/releasing row position.
 - The top-level one-off task action no longer uses "ad-hoc" in menu, prompt, or success feedback.
 - Today sheet's build checkbox now uses the same "Build / refresh Today's plan" wording as the menu.
+- Home's Today-plan action now follows state: "Open Today to build plan" before a plan exists, "Open Today" when built with no committed work, and "Start working" only when there is committed work.
 
 ## Pass 1 - User Journey Review
 
