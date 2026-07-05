@@ -1906,7 +1906,7 @@ function applyDecisionHelperColumns(sheet, row) {
 function backfillDecisionHelperColumns() {
   var sheet = ensureDecisionsTab();
   if (!sheet || sheet.getLastRow() < 2) return;
-  autoDismissPendingDecisionsForTerminalSources('Linked source is closed, parked, or retired');
+  autoDismissPendingDecisionsForUnavailableSources('Linked source is closed, parked, retired, or missing');
   for (var r = 2; r <= sheet.getLastRow(); r++) applyDecisionHelperColumns(sheet, r);
 }
 
@@ -2284,18 +2284,31 @@ function decisionLinkedSourceIsTerminal(row) {
   return isSourceObjectTerminal(targetType, targetId);
 }
 
-function autoDismissPendingDecisionsForTerminalSources(reason) {
+function decisionLinkedSourceIsMissing(row, maps) {
+  var targetType = String(row[COLS.DECISIONS.TARGET_TYPE - 1] || '');
+  var targetId = String(row[COLS.DECISIONS.TARGET_ID - 1] || '');
+  if (!isKnownLinkedObjectType(targetType) || !targetId) return false;
+  maps = maps || buildLinkedObjectHealthMaps();
+  return !linkedObjectExistsForHealth(targetType, targetId, maps);
+}
+
+function decisionLinkedSourceUnavailable(row, maps) {
+  return decisionLinkedSourceIsTerminal(row) || decisionLinkedSourceIsMissing(row, maps);
+}
+
+function autoDismissPendingDecisionsForUnavailableSources(reason) {
   var sheet = ensureDecisionsTab();
   if (!sheet || sheet.getLastRow() < 2) return 0;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  var maps = buildLinkedObjectHealthMaps();
   var count = 0;
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
-    if (!decisionLinkedSourceIsTerminal(data[i])) continue;
+    if (!decisionLinkedSourceUnavailable(data[i], maps)) continue;
     var row = i + 2;
     sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
     sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Linked source is no longer active'));
+    appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Linked source is no longer active or no longer exists'));
     applyDecisionHelperColumns(sheet, row);
     count++;
   }
@@ -2338,10 +2351,11 @@ function collectPendingDecisionQueue(limit) {
   var sheet = getSheet('Decisions');
   if (!sheet || sheet.getLastRow() < 2) return [];
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  var maps = buildLinkedObjectHealthMaps();
   var out = [];
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
-    if (decisionLinkedSourceIsTerminal(data[i])) continue;
+    if (decisionLinkedSourceUnavailable(data[i], maps)) continue;
     out.push({ row: i + 2, data: data[i] });
   }
   out.sort(function (a, b) {
@@ -11720,6 +11734,16 @@ function roundIdExistsMap() {
   return out;
 }
 
+function buildLinkedObjectHealthMaps() {
+  return {
+    orgIds: orgIdExistsMap(),
+    jobIds: jobIdExistsMap(),
+    personIds: personIdExistsMap(),
+    sectorIds: sectorIdExistsMap(),
+    roundIds: roundIdExistsMap()
+  };
+}
+
 function linkedObjectExistsForHealth(type, id, maps) {
   if (!id || !type || type === 'None') return true;
   if (type === 'Job') return !!maps.jobIds[id];
@@ -11810,13 +11834,8 @@ function syncJobsPeopleHealthFlags() {
     }
   }
   var taskSheet = getSheet('Tasks');
-  var healthMaps = {
-    orgIds: orgIds,
-    jobIds: jobIdExistsMap(),
-    personIds: personIdExistsMap(),
-    sectorIds: sectorIdExistsMap(),
-    roundIds: roundIdExistsMap()
-  };
+  var healthMaps = buildLinkedObjectHealthMaps();
+  healthMaps.orgIds = orgIds;
   if (taskSheet && taskSheet.getLastRow() >= 2) {
     var tasks = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
     for (var t = 0; t < tasks.length; t++) {
