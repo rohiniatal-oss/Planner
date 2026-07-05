@@ -2534,6 +2534,10 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
   try { daysToLinked = resolveDaysToLinkedDate(workflow, objId, objType, dueDate); }
   catch (err) { Logger.log('assignCommitmentClass: ' + err); }
 
+  if (isRecurringSearchWorkflow(workflow)) {
+    return (daysToLinked === null || daysToLinked <= 0) ? 'Fixed' : 'Pipeline-building';
+  }
+
   switch (workflow) {
     case 'Day-before review': return 'Fixed';
     case 'Interview scheduling': return (daysToLinked !== null && daysToLinked <= 2) ? 'Fixed' : 'Active pursuit';
@@ -3453,6 +3457,7 @@ function completeTodoRow(sheet, row, status, options) {
     // (e.g. "Prep/submit skipped — Park or Close?") as if it were.
     if (target === 'Skipped' && !alreadyTerminal && options.source !== 'breakdown') handleSkipCascade(sheet, row);
     if (target === 'Cancelled' && !alreadyTerminal) handleCancelCascade(sheet, row);
+    if ((target === 'Skipped' || target === 'Cancelled') && !alreadyTerminal) skipSearchRoutineOccurrence(getTodoByRow(sheet, row), target);
     syncTodayRowForTodo(row, target);
     syncTaskPlanningHelpers();
     if (EDIT_BATCH_CONTEXT && EDIT_BATCH_CONTEXT.deferTaskRefresh) {
@@ -3484,6 +3489,11 @@ function routeTodoCompletion(todo, options) {
 
 function handleSourceLedScanCompletion(todo, options) {
   if (options.sourceScanHandled) return;
+  if (isRecurringSearchWorkflow(todo.workflow)) {
+    appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[search-results-missing] Completed without the result popup; routine advanced without captured results.');
+    advanceSearchRoutineForTodo(todo);
+    return;
+  }
   if (isOpportunitySearchWorkflow(todo.workflow)) {
     appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Opportunity search completed',
       'Add/update jobs or organisations found', 'None', '', todo.workflow,
@@ -7108,6 +7118,7 @@ function onEditTasks(sheet, row, col, newVal, e) {
       String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), sheet.getRange(row, COLS.TODO.DUE_DATE).getValue(),
       String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
     sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+    if (col === COLS.TODO.DUE_DATE) syncSearchRoutineFromDeferredTask(getTodoByRow(sheet, row), sheet.getRange(row, COLS.TODO.DUE_DATE).getValue());
   }
   if (col === COLS.TODO.TIME_EST) syncTodayEstMinForTodo(sheet, row);
   if (col === COLS.TODO.STATUS) {
@@ -7509,6 +7520,7 @@ function collectTaskPool(focus, tierLookup) {
     var objType = String(data[i][COLS.TODO.OBJ_TYPE - 1] || '');
     var objId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
     var isDue = !dueDate || new Date(dueDate) <= todayDate;
+    if (objType === 'Search routine' && isRecurringSearchWorkflow(workflow) && !isDue) continue;
     if (cls === 'Keep-alive' && !isDue) continue; // not due yet — stays hidden in Tasks
 
     pool.push({
@@ -7544,6 +7556,9 @@ function reasonForStage(stageLabel, item) {
   if (item && item.dueDate) {
     var d = daysBetween(today(), new Date(item.dueDate));
     dueBit = d < 0 ? 'overdue' : (d === 0 ? 'due today' : 'due in ' + d + 'd');
+  }
+  if (item && item.objType === 'Search routine' && isRecurringSearchWorkflow(item.workflow)) {
+    return ['scheduled search', dueBit].filter(Boolean).join(' - ');
   }
   if (stageLabel === 'Fixed' && item && item.workflow && item.workflow !== 'Day-before review') {
     var subject = item.workflow === 'Interview scheduling' ? 'interview' : 'application';
@@ -7791,6 +7806,7 @@ function todayCapacityHeadline(selection, availableMinutes) {
 function populateTodayImpl() {
   var sheet = ensureTodaySheet();
   if (sheet.getMaxRows() < TODAY_ENDOFDAY_ROW || !sheet.getRange(1, 1).getValue()) bootstrapToday();
+  materializeDueSearchRoutines(today());
   var previousState = collectPreviousTodayState(sheet);
 
   var availableMinutes = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10);
@@ -8224,6 +8240,7 @@ function deferTodoById(todoId, days, source) {
     String(todo.sheet.getRange(todo.row, COLS.TODO.WORKFLOW).getValue()), due,
     String(todo.sheet.getRange(todo.row, COLS.TODO.OBJ_ID).getValue()), String(todo.sheet.getRange(todo.row, COLS.TODO.OBJ_TYPE).getValue())));
   todo.sheet.getRange(todo.row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+  syncSearchRoutineFromDeferredTask(todo, due);
   appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[deferred] pushed ' + days + ' days' + (source ? ' from ' + source : ''));
   return true;
 }
@@ -10315,16 +10332,16 @@ function buildSourceScanResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
   if (!todo || !isSourceLedScanTask(todo)) return '<p>Search task not found.</p>';
   var isPeople = isNetworkSearchWorkflow(todo.workflow);
-  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
+  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE, jobStatuses: DROPDOWNS.JOB_STATUS };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FBFBF9;color:#1B474D;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
     '<h2>Capture search results</h2><p id="intro"></p>' +
     '<div id="peopleBlock" class="hidden"><label>People found<textarea id="personNames" placeholder="One per line, or comma-separated"></textarea></label><label>Relationship source<select id="relType"></select></label><label>Organisation, if relevant<input id="personOrg"></label><label>Notes/source<textarea id="peopleNotes"></textarea></label><div class="hint">People are saved as Identified. Outreach is not created automatically.</div></div>' +
-    '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
+    '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>Application status<select id="jobStatus"></select></label><label>Submitted date, if already submitted<input id="appliedDate" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
     '<button class="primary" type="button" onclick="save(false,false)">Save results</button><button class="secondary" type="button" onclick="save(true,false)">Nothing useful found</button><button class="secondary" type="button" onclick="save(false,true)">Need more time</button><div id="status"></div>' +
-    '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});' +
-    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType"),jobStatus=document.getElementById("jobStatus");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});data.jobStatuses.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;jobStatus.appendChild(opt);});jobStatus.value="Not started";' +
+    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,jobStatus:jobStatus.value,appliedDate:document.getElementById("appliedDate").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
 function runSourceScanResultPopup(todoId, decisionId) {
@@ -10335,21 +10352,18 @@ function runSourceScanResultPopup(todoId, decisionId) {
 function processSourceLedPeopleCapture(fields) {
   var names = splitInputList(fields.personNames);
   if (!names.length) return failResult('Add at least one person found by the search.', 'personNames', 'MISSING_PERSON');
-  var org = fields.personOrg ? createNameOnlyOrg(fields.personOrg, { status: 'Mapped', stub: true }) : null;
   var relType = DROPDOWNS.PERSON_REL_TYPE.indexOf(fields.relType) !== -1 ? fields.relType : '';
-  var created = 0, reused = 0;
-  names.forEach(function (name) {
-    var existing = findPersonByNameOrg(name, org ? org.name : '');
-    if (!existing && org) existing = findSingleBlankOrgPersonByExactName(name).person;
-    var personId = writePersonRow(name, org, '');
-    var person = getPersonRowById(personId);
-    if (!person) return;
-    if (existing) reused++; else created++;
-    var peopleSheet = getSheet('People');
-    if (relType) peopleSheet.getRange(person.row, COLS.PEOPLE.REL_TYPE).setValue(relType);
-    if (!peopleSheet.getRange(person.row, COLS.PEOPLE.STAGE).getValue()) peopleSheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
-    if (fields.peopleNotes) appendNoteFlag(peopleSheet, person.row, COLS.PEOPLE.NOTES, fields.peopleNotes);
-  });
+  for (var i = 0; i < names.length; i++) {
+    var result = processCapturePayload('Add/update person', {
+      name: names[i],
+      org: fields.personOrg || '',
+      role: '',
+      relType: relType,
+      reachedOut: 'No',
+      notes: fields.peopleNotes || ''
+    });
+    if (!result.ok) return result;
+  }
   syncPeopleHelperColumns();
   return okResult('Captured ' + names.length + ' people from Network search as Identified.');
 }
@@ -10387,7 +10401,7 @@ function completeSourceScanResultFromPopup(payload) {
         }
         if (String(payload.jobTitle || '').trim()) {
           if (!String(payload.jobOrg || '').trim()) return failResult('Add the organisation for the opportunity.', 'jobOrg', 'MISSING_ORG');
-          var jobResult = processCapturePayload('Add/update job', { jobTitle: payload.jobTitle, org: payload.jobOrg, deadline: payload.deadline, status: 'Not started', urlNotes: payload.urlNotes });
+          var jobResult = processCapturePayload('Add/update job', { jobTitle: payload.jobTitle, org: payload.jobOrg, deadline: payload.deadline, status: payload.jobStatus || 'Not started', appliedDate: payload.appliedDate || '', urlNotes: payload.urlNotes });
           if (!jobResult.ok) return jobResult;
           captured.push('opportunity');
         }
@@ -11126,6 +11140,28 @@ function advanceSearchRoutineForTodo(todo) {
   sheet.getRange(routine.row, COLS.SEARCH.LAST_RUN).setValue(today());
   sheet.getRange(routine.row, COLS.SEARCH.NEXT_RUN).setValue(nextSearchRunDate(today(), frequency));
   sheet.getRange(routine.row, COLS.SEARCH.OPEN_TASK_ID).clearContent();
+  return true;
+}
+
+function syncSearchRoutineFromDeferredTask(todo, dueDate) {
+  if (!todo || todo.objType !== 'Search routine' || !isRecurringSearchWorkflow(todo.workflow)) return false;
+  var routine = getSearchRoutineById(todo.objId);
+  if (!routine) return false;
+  var sheet = getSheet('Search Routines');
+  sheet.getRange(routine.row, COLS.SEARCH.NEXT_RUN).setValue(dueDate || today());
+  sheet.getRange(routine.row, COLS.SEARCH.OPEN_TASK_ID).setValue(todo.id);
+  return true;
+}
+
+function skipSearchRoutineOccurrence(todo, status) {
+  if (!todo || todo.objType !== 'Search routine' || !isRecurringSearchWorkflow(todo.workflow)) return false;
+  var routine = getSearchRoutineById(todo.objId);
+  if (!routine) return false;
+  var sheet = getSheet('Search Routines');
+  var frequency = normalizeSearchFrequency(routine.data[COLS.SEARCH.FREQUENCY - 1]) || 'Weekly';
+  sheet.getRange(routine.row, COLS.SEARCH.NEXT_RUN).setValue(nextSearchRunDate(today(), frequency));
+  sheet.getRange(routine.row, COLS.SEARCH.OPEN_TASK_ID).clearContent();
+  if (status) appendNoteFlag(sheet, routine.row, COLS.SEARCH.NOTES, '[routine-task-' + String(status).toLowerCase() + '] Current occurrence was ' + status + '; next run moved forward.');
   return true;
 }
 // =============================================================
@@ -12979,6 +13015,7 @@ function rowActionDeferSelectedTask() {
       String(sheet.getRange(row, COLS.TODO.WORKFLOW).getValue()), newDue,
       String(sheet.getRange(row, COLS.TODO.OBJ_ID).getValue()), String(sheet.getRange(row, COLS.TODO.OBJ_TYPE).getValue())));
     sheet.getRange(row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+    syncSearchRoutineFromDeferredTask(getTodoByRow(sheet, row), newDue);
     // v7.6.1: if this task is currently sitting on Today's Commit list, it
     // would otherwise keep showing stale info until some unrelated refresh.
     syncTodayRowForTodo(row, 'Not started');
