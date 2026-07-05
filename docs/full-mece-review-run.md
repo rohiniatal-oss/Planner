@@ -782,6 +782,64 @@ Acceptance tests:
 4. Completed interview expected response due today materializes an Interview follow-up task if none is open.
 5. Org review due-today behavior remains unchanged.
 
+## Stage 11 - Observability, Audit, and Maintenance
+
+Required output:
+
+| System signal | Where stored | Where surfaced | Current gap | Fix |
+|---|---|---|---|---|
+
+Stage 11 signal trace:
+
+| System signal | Where stored | Where surfaced | Current gap | Fix |
+|---|---|---|---|---|
+| Trigger health | `checkTriggerHealth` / live trigger existence | Home setup banner and attention line | No code gap found | None |
+| Daily maintenance heartbeat | Document property `lastDailyMaintenanceAt` | Home attention/maintenance line when stale | No code gap found | None |
+| Weekly review heartbeat | Document property `lastWeeklyReviewAt` | Home warning when stale | No code gap found | None |
+| Weekly review summary | Document property `lastWeeklyReviewSummary` | Home maintenance line when healthy | No code gap found | None |
+| Last Home refresh | Home visible `Last refreshed` row | Home | No code gap found | None |
+| Last Today build | Document property `todayPlanBuiltDate` plus B3 note | Today headline / Home plan state | No code gap found | None |
+| Last maintenance error | Document property `lastMaintenanceError` | Home attention and maintenance line | No code gap found | None |
+| Snapshot saved | Document properties `lastPlannerSnapshotAt/Name/Url` | Toast now; durable property for later detail view | No Stage 11 code gap found | None |
+| Reset performed | Document properties `lastPlannerResetAt/RowsCleared/EntryPoint/Backup*` | Durable audit; setup flow copy/alert | No Stage 11 code gap found | None |
+| Auto-dismissed decisions | Decisions status/date/notes | Decisions audit trail; stale decisions hidden from Home and counted | Stage 9 fixed manual dismissal notes | None |
+| Repair result | Toast only before this stage | Toast only | Successful/skipped repair was not durable after toast disappeared | Add `lastRepairAt`, `lastRepairResult`, `lastRepairVersion` |
+
+Stage 11 finding:
+
+## Issue: Repair result was not durably audited
+
+Severity: P2
+
+Stage: 11
+Area: Observability, audit, and maintenance
+Tab/surface: Maintenance menu / document properties / future maintenance detail view
+Column/function: `repairAllTabs`, `repairAllTabsImpl`
+
+Evidence:
+- Code evidence: `repairAllTabsImpl` ended with a toast, but did not write a persistent repair result.
+- Code evidence: daily maintenance, weekly review, snapshot, reset, and Today build already write durable properties, so repair was the outlier.
+
+Current behaviour:
+If the user missed the toast after repair, there was no durable “last repair ran” signal.
+
+Expected behaviour:
+Repair should leave a persistent audit marker, especially because it can change hidden helpers, dropdowns, schema columns, triggers, duplicate flags, and generated tabs.
+
+User impact:
+The planner can later show or inspect when repair last ran and whether it completed or was skipped.
+
+Automation boundary:
+L1 audit helper. This does not change workbook data or repair behavior.
+
+Implemented fix:
+Added `recordRepairAudit(result)` and called it when repair completes successfully or is skipped because another Planner action is running.
+
+Acceptance tests:
+1. Successful Repair all tabs sets `lastRepairAt`, `lastRepairResult`, and `lastRepairVersion`.
+2. Lock-skipped repair sets `lastRepairAt` and a skipped result.
+3. Home still only surfaces critical repair/maintenance warnings, not a noisy success log.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3

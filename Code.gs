@@ -454,6 +454,17 @@ function recordMaintenanceError(label, message) {
   }
 }
 
+function recordRepairAudit(result) {
+  try {
+    var props = maintenanceProps();
+    props.setProperty('lastRepairAt', new Date().toISOString());
+    props.setProperty('lastRepairResult', String(result || 'Completed'));
+    props.setProperty('lastRepairVersion', SCRIPT_VERSION);
+  } catch (err) {
+    Logger.log('recordRepairAudit: ' + err);
+  }
+}
+
 // Tracks when Today's plan was last (re)built, independent of the B2
 // display cell — B2 is a live =TODAY() formula so the visible date is
 // always current even when nothing has (re)generated the plan; the
@@ -12402,7 +12413,10 @@ function ensureCanonicalSheet(name) {
 // (data preserved) rather than shadowed by new empty canonical tabs.
 function repairAllTabs() {
   var result = withDocumentLock(repairAllTabsImpl, { label: 'repairAllTabs', timeoutMs: 30000, failOpen: false });
-  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Repair skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  if (result === null) {
+    recordRepairAudit('Skipped: another Planner action was running');
+    SpreadsheetApp.getActiveSpreadsheet().toast('Repair skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  }
   return result;
 }
 
@@ -12464,6 +12478,7 @@ function repairAllTabsImpl() {
   // installable edit trigger (onboarding / Add-update popups) can never
   // silently stay missing after a Maintenance run. Idempotent + silent.
   ensureTriggersInstalled({ silent: true });
+  recordRepairAudit('Completed: all tabs repaired and triggers verified');
   SpreadsheetApp.getActiveSpreadsheet().toast('All tabs repaired + triggers verified (' + SCRIPT_VERSION + ').', 'The Planner', 4);
   return true;
 }
