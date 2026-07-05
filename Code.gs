@@ -8122,7 +8122,8 @@ function middayNudge() {
   }, { label: 'middayNudge', timeoutMs: 30000, failOpen: false });
 }
 // =============================================================
-// HOME — orientation only. No data entry lives here.
+// HOME — daily command centre. It shows judgement, readiness, capture,
+// active application context, and system health without owning source data.
 //
 // FIX (confirmed): the onboarding and refresh checkboxes are now both
 // pinned to fixed rows (4 and 5) ABOVE all variable-height content
@@ -8146,14 +8147,14 @@ var HOME_DECISIONS_ID_ROW = 8;         // A/C/F hold Decision IDs; B/D/G hold th
 var HOME_DECISIONS_ACTION_ROW = 9;     // B/D/G hold the Yes/No dropdowns
 var HOME_DECISIONS_MORE_ROW = 10;      // "N more in queue" link, only rendered when count > 3
 
-var HOME_UPDATE_HEADER_ROW = 12;
-var HOME_UPDATE_ROW = 13;
+var HOME_UPDATE_HEADER_ROW = 17;
+var HOME_UPDATE_ROW = 18;
 var HOME_UPDATE_COL = 2;               // B — the update-type dropdown
 
-var HOME_PLAN_HEADER_ROW = 15;         // "Today's plan"
-var HOME_PLAN_STATUS_ROW = 16;         // "Ready — N tasks, M minutes." / "Not built yet."
-var HOME_PLAN_START_ROW = 17;          // "Start working ▸" HYPERLINK
-var HOME_PLAN_SUBLINE_ROW = 18;        // small muted "<N> tasks remain in your master queue."
+var HOME_PLAN_HEADER_ROW = 12;         // "Today's plan"
+var HOME_PLAN_STATUS_ROW = 13;         // "Ready — N tasks, M minutes." / "Not built yet."
+var HOME_PLAN_START_ROW = 14;          // "Start working ▸" HYPERLINK
+var HOME_PLAN_SUBLINE_ROW = 15;        // small muted "<N> tasks remain in your master queue."
 
 var HOME_APPLICATIONS_HEADER_ROW = 20;
 var HOME_APPLICATIONS_FIRST_ROW = 21;  // 21..24, 4 rows max
@@ -8241,7 +8242,7 @@ function taskQueueSummary() {
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
     if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready)\]/.test(notes)) needAttention++;
     if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1) needPlanning++;
-    if (notes.indexOf('[blocked]') !== -1) blockedCount++;
+    if (status === 'Blocked') blockedCount++;
   });
   return open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
     needAttention + ' need attention · ' + needPlanning + ' need planning · ' + blockedCount + ' blocked';
@@ -8295,12 +8296,23 @@ function formatDateFriendly(d) {
   return Utilities.formatDate(new Date(d), plannerTimeZone(), 'EEE d MMM');
 }
 
+function formatHomeFeedDate(d) {
+  var date = new Date(d);
+  if (isNaN(date.getTime())) return '';
+  var day = new Date(date);
+  day.setHours(0, 0, 0, 0);
+  var diff = daysBetween(today(), day);
+  if (diff < 0) return 'Overdue - ' + formatDateFriendly(date);
+  if (diff === 0) return 'Today - ' + formatDateFriendly(date);
+  if (diff === 1) return 'Tomorrow - ' + formatDateFriendly(date);
+  return formatDateFriendly(date);
+}
+
 // v7.4: read-only merge of the next 5 upcoming dated items across
 // Interviews / People (scheduled conversations) / Jobs (applied, awaiting
 // review) — no writes, no cascades, just a sorted feed for Home.
 function collectUpcomingItems(limit) {
   limit = limit || 5;
-  var t = today();
   var items = [];
 
   var roundsSheet = getSheet('Interviews');
@@ -8309,7 +8321,7 @@ function collectUpcomingItems(limit) {
     rData.forEach(function (r) {
       var d = r[COLS.ROUNDS.INTERVIEW_DATE - 1];
       var status = String(r[COLS.ROUNDS.STATUS - 1]);
-      if (d && new Date(d) >= t && ['Completed', 'Cancelled'].indexOf(status) === -1) {
+      if (d && ['Completed', 'Cancelled'].indexOf(status) === -1) {
         var label = r[COLS.ROUNDS.ORG_DISPLAY - 1] || r[COLS.ROUNDS.JOB_DISPLAY - 1] || '';
         items.push({ type: 'Interview', date: new Date(d), label: label });
       }
@@ -8322,7 +8334,7 @@ function collectUpcomingItems(limit) {
     pData.forEach(function (p) {
       var d = p[COLS.PEOPLE.CONVERSATION_DATE - 1];
       var stage = normalizePersonStage(p[COLS.PEOPLE.STAGE - 1]);
-      if (stage === 'Conversation scheduled' && d && new Date(d) >= t) {
+      if (stage === 'Conversation scheduled' && d) {
         items.push({ type: 'Conversation', date: new Date(d), label: p[COLS.PEOPLE.NAME - 1] || '' });
       }
     });
@@ -8334,7 +8346,8 @@ function collectUpcomingItems(limit) {
     jData.forEach(function (j) {
       var status = String(j[COLS.JOBS.STATUS - 1]);
       var d = j[COLS.JOBS.REVIEW_DATE - 1];
-      if (normalizeJobStatus(status) === 'Submitted' && d && new Date(d) >= t) {
+      var outcome = normalizeJobOutcome(j[COLS.JOBS.OUTCOME - 1]);
+      if (normalizeJobStatus(status) === 'Submitted' && (!outcome || outcome === 'Waiting') && d) {
         items.push({ type: 'Follow-up', date: new Date(d), label: j[COLS.JOBS.ORG - 1] || '' });
       }
     });
@@ -8432,8 +8445,8 @@ function refreshHome() {
   sheet.getRange(HOME_DECISIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Pending Decisions').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
-  // --- Add update (§1.3) — the primary capture surface now ---
-  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  // --- Capture update (§1.3) — the primary capture surface now ---
+  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Capture update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   if (editReady) {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
@@ -8485,7 +8498,7 @@ function refreshHome() {
     upcoming.forEach(function (item, idx) {
       var r = HOME_UPCOMING_FIRST_ROW + idx;
       sheet.getRange(r, 2).setValue(item.type).setFontWeight('bold').setFontColor('#1B474D');
-      sheet.getRange(r, 3).setValue(formatDateFriendly(item.date));
+      sheet.getRange(r, 3).setValue(formatHomeFeedDate(item.date));
       sheet.getRange(r, 4, 1, 3).merge().setValue(item.label);
     });
   }
@@ -9912,14 +9925,14 @@ var HEADER_GUIDANCE = {
     'Notes': 'Review flags and context.'
   },
   'Organisations': {
-    'Org ID': 'system', 'Organisation': 'Type the organisation name; Home > Add update is preferred',
+    'Org ID': 'system', 'Organisation': 'Type the organisation name; Home > Capture update is preferred',
     'Sector ID': 'system link to Sectors.Sector ID', 'Sector': 'Choose a real Sector; blank becomes Needs classification',
     'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; choose only after Sector',
     'Tier': 'A/B/C priority; defaults to B', 'Status': 'Mapped = known; Active suggests people/jobs; Dormant pauses org suggestions; Archived retires',
     'Known people (count)': 'automatic count from People', 'Open opportunities (count)': 'automatic count from open Jobs', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'hidden system trigger; Active +14, Dormant +42', 'Notes': 'your context plus bracketed system flags'
   },
   'People': {
-    'Person ID': 'system', 'Name': 'Prefer Home > Add update; Organisation is optional', 'Organisation': 'Link to Organisations when relevant', 'Org ID': 'system',
+    'Person ID': 'system', 'Name': 'Prefer Home > Capture update; Organisation is optional', 'Organisation': 'Link to Organisations when relevant', 'Org ID': 'system',
     'Role': 'optional', 'Relationship source': 'source / relationship context; does not route by itself',
     'Relationship status': 'Identified / To outreach / Drafted / Sent / Replied / Scheduled / Completed / Keep warm / Closed',
     'Next follow-up date': 'auto or manual',
@@ -9936,7 +9949,7 @@ var HEADER_GUIDANCE = {
     'Notes': 'URL/source and prep notes'
   },
   'Interactions': {
-    'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'Prefer Home > Add update; pick or type person', 'Organisation': 'auto from person',
+    'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'Prefer Home > Capture update; pick or type person', 'Organisation': 'auto from person',
     'Type': 'call, email, message, referral, etc.', 'Interaction status': 'Scheduled / Completed / Cancelled', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
   },
   'To-do': {
