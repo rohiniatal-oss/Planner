@@ -8550,12 +8550,14 @@ var HOME_APPLICATIONS_FIRST_ROW = 21;  // 21..24, 4 rows max
 var HOME_UPCOMING_HEADER_ROW = 26;
 var HOME_UPCOMING_FIRST_ROW = 27;      // 27..31, 5 rows max
 
-var HOME_MOMENTUM_ROW = 32;            // quiet weekly momentum signal, not a dashboard section
+var HOME_MONTH_HEADER_ROW = 33;        // compact pipeline signal, not a dashboard section
+var HOME_MONTH_METRICS_ROW = 34;
+var HOME_MONTH_SUMMARY_ROW = 35;
 
-var HOME_REFRESH_ROW = 33;             // small utility row
+var HOME_REFRESH_ROW = 37;             // small utility row
 var HOME_REFRESH_COL = 2;
 
-var HOME_LAST_REFRESHED_ROW = 35;
+var HOME_LAST_REFRESHED_ROW = 39;
 
 var SETUP_PROP_KEY = 'setupProfile';
 
@@ -8858,14 +8860,6 @@ function collectOpenApplications(limit) {
   return items.slice(0, limit);
 }
 
-function plannerWeekStart(date, offsetWeeks) {
-  var d = new Date(date || today());
-  d.setHours(0, 0, 0, 0);
-  var mondayOffset = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - mondayOffset + ((offsetWeeks || 0) * 7));
-  return d;
-}
-
 function isDateInWindow(value, start, end) {
   if (!value) return false;
   var d = new Date(value);
@@ -8874,42 +8868,62 @@ function isDateInWindow(value, start, end) {
   return d >= start && d < end;
 }
 
-function homeMomentumCountsForWindow(start, end) {
-  var counts = { tasks: 0, conversations: 0 };
-  var taskSheet = getSheet('Tasks');
-  if (taskSheet && taskSheet.getLastRow() > 1) {
-    var taskData = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, COLS.TODO.COMPLETED).getValues();
-    taskData.forEach(function (row) {
-      if (String(row[COLS.TODO.STATUS - 1] || '') === 'Done' && isDateInWindow(row[COLS.TODO.COMPLETED - 1], start, end)) counts.tasks++;
-    });
-  }
+function currentMonthWindow() {
+  var start = today();
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  var end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  return { start: start, end: end };
+}
+
+function isPipelineConversationRow(row) {
+  if (String(row[COLS.INTERACTIONS.STATUS - 1] || '') !== 'Completed') return false;
+  var type = String(row[COLS.INTERACTIONS.TYPE - 1] || '');
+  var notes = String(row[COLS.INTERACTIONS.NOTES - 1] || '');
+  if (type !== 'Auto-log') return true;
+  return /conversation completed/i.test(notes);
+}
+
+function collectMonthlyPipelineStats() {
+  var window = currentMonthWindow();
+  var counts = { conversations: 0, applications: 0, interviews: 0 };
   var interactionSheet = getSheet('Conversations');
   if (interactionSheet && interactionSheet.getLastRow() > 1) {
     var interactionData = interactionSheet.getRange(2, 1, interactionSheet.getLastRow() - 1, COLS.INTERACTIONS.OUTCOME).getValues();
     interactionData.forEach(function (row) {
-      if (String(row[COLS.INTERACTIONS.STATUS - 1] || '') !== 'Completed') return;
-      if (!isDateInWindow(row[COLS.INTERACTIONS.DATE - 1], start, end)) return;
-      var type = String(row[COLS.INTERACTIONS.TYPE - 1] || '');
-      var notes = String(row[COLS.INTERACTIONS.NOTES - 1] || '');
-      if (type !== 'Auto-log' || /conversation completed|interview completed/i.test(notes)) counts.conversations++;
+      if (isPipelineConversationRow(row) && isDateInWindow(row[COLS.INTERACTIONS.DATE - 1], window.start, window.end)) counts.conversations++;
+    });
+  }
+  var jobsSheet = getSheet('Jobs');
+  if (jobsSheet && jobsSheet.getLastRow() > 1) {
+    var jobData = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, COLS.JOBS.NOTES).getValues();
+    jobData.forEach(function (row) {
+      if (isDateInWindow(row[COLS.JOBS.APPLIED_DATE - 1], window.start, window.end)) counts.applications++;
+    });
+  }
+  var roundsSheet = getSheet('Interviews');
+  if (roundsSheet && roundsSheet.getLastRow() > 1) {
+    var roundData = roundsSheet.getRange(2, 1, roundsSheet.getLastRow() - 1, COLS.ROUNDS.NOTES).getValues();
+    roundData.forEach(function (row) {
+      var status = String(row[COLS.ROUNDS.STATUS - 1] || '');
+      if (status === 'Cancelled') return;
+      if (isDateInWindow(row[COLS.ROUNDS.INTERVIEW_DATE - 1], window.start, window.end)) counts.interviews++;
     });
   }
   return counts;
 }
 
-function homeMomentumSummary() {
-  var thisStart = plannerWeekStart(today(), 0);
-  var nextStart = plannerWeekStart(today(), 1);
-  var lastStart = plannerWeekStart(today(), -1);
-  var current = homeMomentumCountsForWindow(thisStart, nextStart);
-  var previous = homeMomentumCountsForWindow(lastStart, thisStart);
-  var lastTotal = previous.tasks + previous.conversations;
-  var parts = [];
-  if (current.tasks) parts.push(current.tasks + ' task' + (current.tasks === 1 ? '' : 's') + ' done');
-  if (current.conversations) parts.push(current.conversations + ' conversation' + (current.conversations === 1 ? '' : 's') + ' logged');
-  var text = parts.length ? ('Momentum this week: ' + parts.join(' - ') + '.') : 'Momentum this week: completed tasks and conversations will show here.';
-  if (lastTotal) text += ' Last week total: ' + lastTotal + '.';
-  return text;
+function monthlyPipelineSummary(stats) {
+  stats = stats || collectMonthlyPipelineStats();
+  if (!stats.conversations && !stats.applications && !stats.interviews) {
+    return 'No pipeline activity logged yet this month.';
+  }
+  var applicationWord = stats.applications === 1 ? 'application' : 'applications';
+  var interviewWord = stats.interviews === 1 ? 'interview' : 'interviews';
+  var conversationWord = stats.conversations === 1 ? 'conversation' : 'conversations';
+  return 'Funnel: ' + stats.applications + ' ' + applicationWord + ' -> ' + stats.interviews + ' ' + interviewWord + '; ' +
+    stats.conversations + ' ' + conversationWord + ' feeding the search.';
 }
 
 function refreshHome() {
@@ -9043,8 +9057,13 @@ function refreshHome() {
     });
   }
 
-  sheet.getRange(HOME_MOMENTUM_ROW, 2, 1, 5).merge()
-    .setValue(homeMomentumSummary())
+  var monthStats = collectMonthlyPipelineStats();
+  sheet.getRange(HOME_MONTH_HEADER_ROW, 2, 1, 5).merge().setValue('This month').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(HOME_MONTH_METRICS_ROW, 2).setValue(monthStats.conversations + ' conversations').setFontWeight('bold').setFontColor('#1B474D').setBackground('#EAF4F5');
+  sheet.getRange(HOME_MONTH_METRICS_ROW, 3, 1, 2).merge().setValue(monthStats.applications + ' applications').setFontWeight('bold').setFontColor('#1B474D').setBackground('#EAF4F5');
+  sheet.getRange(HOME_MONTH_METRICS_ROW, 5, 1, 2).merge().setValue(monthStats.interviews + ' interviews').setFontWeight('bold').setFontColor('#1B474D').setBackground('#EAF4F5');
+  sheet.getRange(HOME_MONTH_SUMMARY_ROW, 2, 1, 5).merge()
+    .setValue(monthlyPipelineSummary(monthStats))
     .setFontSize(9).setFontColor('#8A8D87').setFontStyle('italic');
 
   // --- Refresh (§1.6) — demoted utility control for re-reading Home status ---
