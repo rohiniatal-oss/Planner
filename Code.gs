@@ -4565,7 +4565,7 @@ function repairOrgTaxonomyLinks() {
 // context. See onEditJobs / onEditPeople below. Organisation creation
 // itself is unaffected — an Organisation row never needed a second
 // anchor field.
-function onEditOrgs(sheet, row, col, newVal, e) {
+function onEditOrganisations(sheet, row, col, newVal, e) {
   if (col === COLS.ORGS.NAME && !newVal) {
     var existingOrgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
     if (existingOrgId) {
@@ -6836,7 +6836,7 @@ function dispatchCellEdit(sheet, row, col, value, e) {
     if (name === 'Home') { onEditHome(sheet, row, col, value); return; }
     if (row <= 1) return;
     switch (name) {
-      case 'Organisations': onEditOrgs(sheet, row, col, value, e); break;
+      case 'Organisations': onEditOrganisations(sheet, row, col, value, e); break;
       case 'Sectors': onEditSectors(sheet, row, col, value, e); break;
       case 'Jobs': onEditJobs(sheet, row, col, value, e); break;
       case 'People': onEditPeople(sheet, row, col, value, e); break;
@@ -10877,7 +10877,11 @@ function processJobCapture(fields) {
     if (!isJobSubmittedForResponseTracking(jobId)) return failResult('Set Application status to Submitted before recording a response.', 'status', 'RESPONSE_BEFORE_SUBMIT');
     createJobResponseOutcomeDecision(jobId, 'Job update captured: ' + fields.jobTitle);
   }
-  return okResult((exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
+  var message = (exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.';
+  if (existingJob && !exactExistingJob) {
+    message += ' Possible duplicate: this looks similar to Jobs row ' + existingJob.row + ' (' + existingJob.data[COLS.JOBS.OPPORTUNITY - 1] + ').';
+  }
+  return okResult(message);
 }
 
 function normalizeSearchRoutineType(value) {
