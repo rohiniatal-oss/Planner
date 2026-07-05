@@ -51,7 +51,8 @@
  *                minutes, energy, capacity fit, and the Commit/Options
  *                task table. No data capture and no Pending Decisions.
  *   Decisions  = the suggestion queue. States: Pending / Yes / No /
- *                Auto-dismissed. No "Later". Yes promotes to a Task.
+ *                Auto-dismissed. No "Later". Yes routes to the configured
+ *                next step: task, popup, capture, source update, or dismiss.
  *   Tasks      = sole owner of task existence, status, linked object,
  *                and workflow. Completion always routes through the
  *                same canonical engine regardless of which tab it was
@@ -1969,13 +1970,22 @@ function resolveOpenPopupDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  return keepDecisionPendingForMissingRoute(ctx, '[popup-route-missing]', 'No popup is wired for this decision type yet');
+  var captureType = sourceUpdateCaptureTypeForDecision(ctx);
+  if (captureType) return runDecisionCapturePopup(ctx, captureType);
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision route is not configured; run Repair all tabs, then review this row');
 }
 
 function decisionKeySuffix(key, prefix) {
   var raw = String(key || '');
   if (raw.indexOf(prefix) !== 0) return '';
   return raw.slice(prefix.length).split(':')[0];
+}
+
+function runDecisionCapturePopup(ctx, captureType) {
+  ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+  runCapturePopup(captureType, ctx.id, captureDefaultsForDecision(ctx, captureType));
+  applyDecisionHelperColumns(ctx.sheet, ctx.row);
+  return { ok: true, pending: true, popupOpened: true };
 }
 
 function captureTypeForDecision(ctx) {
@@ -2000,6 +2010,37 @@ function captureDefaultsForDecision(ctx, captureType) {
         defaults.tier = org.tier || 'B';
         defaults.status = org.status || 'Mapped';
       }
+    }
+  }
+  if (ctx.targetType === 'Job') {
+    var job = getJobRowById(ctx.targetId);
+    if (job) {
+      defaults.org = job.org || '';
+      defaults.jobTitle = job.title || '';
+      defaults.deadline = formatDateHuman(job.deadline);
+      defaults.status = normalizeJobStatus(job.status) || job.status || '';
+      defaults.appliedDate = formatDateHuman(job.appliedDate);
+      defaults.outcome = normalizeJobOutcome(job.outcome) || '';
+    }
+  }
+  if (ctx.targetType === 'Interview round') {
+    var round = getRoundById(ctx.targetId);
+    if (round) {
+      defaults.org = round.org || '';
+      defaults.jobTitle = round.job || '';
+      defaults.roundNumber = round.round || '';
+      defaults.roundType = round.roundType || '';
+      defaults.interviewDate = formatDateHuman(round.interviewDate);
+      defaults.status = round.status || '';
+      defaults.officialOutcome = round.officialOutcome || '';
+    }
+  }
+  if (ctx.targetType === 'Person') {
+    var targetPerson = getPersonRowById(ctx.targetId);
+    if (targetPerson) {
+      defaults.name = targetPerson.name || '';
+      defaults.person = targetPerson.name || '';
+      defaults.org = targetPerson.org || '';
     }
   }
   if (ctx.targetType === 'Sector' && captureType === 'Find organisations') {
@@ -2045,7 +2086,7 @@ function resolveCaptureDataDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  return keepDecisionPendingForMissingRoute(ctx, '[capture-route-missing]', 'No capture route is wired for this decision type yet');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision capture route is not configured; run Repair all tabs, then review this row');
 }
 
 function keepDecisionPendingForMissingRoute(ctx, flag, reason) {
@@ -2084,12 +2125,21 @@ function resolveUpdateSourceDecision(ctx) {
   }
   if (String(ctx.key || '').indexOf('PERSON_REPLY_OUTCOME:') === 0) captureType = 'Add/update conversation';
   if (captureType) {
-    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
-    runCapturePopup(captureType, ctx.id, captureDefaultsForDecision(ctx, captureType));
-    applyDecisionHelperColumns(ctx.sheet, ctx.row);
-    return { ok: true, pending: true, popupOpened: true };
+    return runDecisionCapturePopup(ctx, captureType);
   }
-  return keepDecisionPendingForMissingRoute(ctx, '[update-source-route-missing]', 'No source-update route is wired for this decision type yet');
+  captureType = sourceUpdateCaptureTypeForDecision(ctx);
+  if (captureType) return runDecisionCapturePopup(ctx, captureType);
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision source-update route is not configured; run Repair all tabs, then review this row');
+}
+
+function sourceUpdateCaptureTypeForDecision(ctx) {
+  switch (String(ctx.targetType || '')) {
+    case 'Job': return 'Application update';
+    case 'Organisation': return 'Add/update organisation';
+    case 'Person': return 'Add/update person';
+    case 'Interview round': return 'Add/update interview';
+    default: return '';
+  }
 }
 
 function resolveCreateTaskDecision(ctx) {
@@ -10890,24 +10940,7 @@ function addNewJob() {
 }
 
 function addNewInteraction() {
-  var ui = SpreadsheetApp.getUi();
-  var personResp = ui.prompt('Log conversation', 'Person name (must exist on People):', ui.ButtonSet.OK_CANCEL);
-  if (personResp.getSelectedButton() !== ui.Button.OK) return;
-  var personName = personResp.getResponseText().trim();
-  if (!personName) { ui.alert('Name required.', ui.ButtonSet.OK); return; }
-  var orgResp = ui.prompt('Organisation', 'Organisation, for disambiguation:', ui.ButtonSet.OK_CANCEL);
-  var orgName = orgResp.getSelectedButton() === ui.Button.OK ? orgResp.getResponseText().trim() : '';
-  var resolved = resolveInteractionPersonSelection(orgName ? personName + ' (' + orgName + ')' : personName);
-  if (resolved.ambiguous) { ui.alert('Ambiguous person', 'More than one matching person. Re-run and include the organisation.', ui.ButtonSet.OK); return; }
-  var person = resolved.person;
-  if (!person) { ui.alert('Not found', '"' + personName + '" not found on People. Add them first.', ui.ButtonSet.OK); return; }
-  var notesResp = ui.prompt('Key notes', 'What was said/decided?', ui.ButtonSet.OK_CANCEL);
-  var notes = notesResp.getSelectedButton() === ui.Button.OK ? notesResp.getResponseText().trim() : '';
-  withDocumentLock(function () {
-    promoteOrgForLivePerson(person.data[COLS.PEOPLE.ORG_ID - 1], 'Outreach sent');
-    appendInteraction(person.data[COLS.PEOPLE.ID - 1], person.data[COLS.PEOPLE.NAME - 1], person.data[COLS.PEOPLE.ORG - 1], today(), 'Other', notes, '');
-  }, { label: 'addNewInteraction' });
-  ui.alert('Logged', 'Conversation with ' + person.data[COLS.PEOPLE.NAME - 1] + ' logged.', ui.ButtonSet.OK);
+  runCapturePopup('Add/update conversation');
 }
 
 function addAdHocTodo() {
