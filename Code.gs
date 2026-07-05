@@ -2618,6 +2618,19 @@ function allChildTodosTerminal(parentTodoId) {
   return found;
 }
 
+function allChildTodosDone(parentTodoId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || !parentTodoId || sheet.getLastRow() < 2) return false;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var found = false;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.PARENT_ID - 1] || '') !== String(parentTodoId)) continue;
+    found = true;
+    if (String(data[i][COLS.TODO.STATUS - 1] || '') !== 'Done') return false;
+  }
+  return found;
+}
+
 function syncTaskPlanningHelpers() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return;
@@ -2832,7 +2845,11 @@ function completeTodoRow(sheet, row, status, options) {
     }
     syncTodayRowForTodo(row, target);
     syncTaskPlanningHelpers();
-    requestHomeRefresh();
+    if (before.status === 'Blocked' && options.source === 'tasks') {
+      populateToday();
+    } else {
+      requestHomeRefresh();
+    }
     return true;
   }
 
@@ -2851,10 +2868,10 @@ function completeTodoRow(sheet, row, status, options) {
 
   if (isTerminalTodoStatus(target)) {
     if (!sheet.getRange(row, COLS.TODO.COMPLETED).getValue()) sheet.getRange(row, COLS.TODO.COMPLETED).setValue(today());
-    if (target === 'Done' && hasSubtasks(before.id) && !allChildTodosTerminal(before.id)) {
+    if (target === 'Done' && hasSubtasks(before.id) && !allChildTodosDone(before.id)) {
       sheet.getRange(row, COLS.TODO.STATUS).setValue('In progress');
       sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
-      appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-open] Finish or skip child tasks before completing the parent.');
+      appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-open] Finish child tasks, or review skipped/cancelled children, before completing the parent.');
       syncTaskPlanningHelpers();
       requestHomeRefresh();
       return false;
@@ -2862,7 +2879,20 @@ function completeTodoRow(sheet, row, status, options) {
     if (before.parentId) {
       syncTaskPlanningHelpers();
       if (allChildTodosTerminal(before.parentId)) {
-        completeTodo(before.parentId, 'Done', { source: 'child-rollup' });
+        if (allChildTodosDone(before.parentId)) {
+          completeTodo(before.parentId, 'Done', { source: 'child-rollup' });
+        } else {
+          var parent = getTodoById(before.parentId);
+          if (parent) {
+            if (!isTerminalTodoStatus(parent.status)) {
+              if (parent.status !== 'Blocked') parent.sheet.getRange(parent.row, COLS.TODO.STATUS).setValue('In progress');
+              parent.sheet.getRange(parent.row, COLS.TODO.COMPLETED).setValue('');
+              parent.sheet.getRange(parent.row, COLS.TODO.LAST_EDITED).setValue(today());
+            }
+            appendNoteFlag(parent.sheet, parent.row, COLS.TODO.NOTES, '[parent-open] Review skipped/cancelled child tasks before closing the parent.');
+          }
+          requestHomeRefresh();
+        }
       } else {
         requestHomeRefresh();
       }
@@ -2925,7 +2955,6 @@ function handleUnblockerTodoCompletion(todo, options) {
     populateToday();
     refreshHome();
   }
-  if (count) syncTaskPlanningHelpers();
   return count;
 }
 
@@ -5992,6 +6021,10 @@ function collectPreviousTodayState(sheet) {
   var state = { sameDay: false, ordered: [], byTodoId: {} };
   var builtDate = getTodayPlanBuiltDate();
   if (builtDate) state.sameDay = builtDate.getTime() === today().getTime();
+  if (!state.sameDay) {
+    var noteDate = todayPlanDateFromNote(sheet.getRange('B3').getNote());
+    if (noteDate) state.sameDay = noteDate.getTime() === today().getTime();
+  }
   if (!state.sameDay) return state;
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = String(sheet.getRange(r, COLS.TODAY.TASK).getValue() || '');
@@ -6714,6 +6747,7 @@ function pullSelectedTaskIntoToday() {
       effort: String(active.getRange(row, COLS.TODO.EFFORT_TYPE).getValue() || ''),
       reason: 'manually pulled from Tasks', tags: '[pulled]', userNote: ''
     }, 'Commit');
+    applyTodayRowStatusDropdowns(todaySheet);
     ss.setActiveSheet(todaySheet);
     SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
   }, { label: 'pullSelectedTaskIntoToday' });
@@ -6746,9 +6780,11 @@ function unlockTodayRow() {
 }
 
 function swapTodayRows(sheet, a, b) {
-  var rangeA = sheet.getRange(a, 2, 1, 8), rangeB = sheet.getRange(b, 2, 1, 8);
+  var rangeA = sheet.getRange(a, 1, 1, HEADERS["Today's plan"].length);
+  var rangeB = sheet.getRange(b, 1, 1, HEADERS["Today's plan"].length);
   var valsA = rangeA.getValues(), valsB = rangeB.getValues();
   rangeA.setValues(valsB); rangeB.setValues(valsA);
+  applyTodayRowStatusDropdowns(sheet);
 }
 
 function moveTodayRowUp() {
