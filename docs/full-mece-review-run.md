@@ -254,6 +254,47 @@ Do not do:
 - Do not rewrite Guide content now.
 - Do not use Guide copy to compensate for unclear UI.
 
+## Issue: Maintenance menu labels used implementation language
+
+Severity: P3
+
+Stage: 1
+Area: Surface roles and navigation
+Tab/surface: The Planner menu / Maintenance
+Column/function: `buildMenu`, `refreshAllDerivedData`, `recalculateTaskPriorityFromMenu`, `showAllColumns`
+
+Evidence:
+- Code evidence: `buildMenu` exposed `Refresh derived data (safe)`, `Recalculate task priority`, and `Show hidden columns`.
+- User experience evidence: These are valid maintenance actions, but the labels describe internals instead of user outcomes.
+
+Current behaviour:
+The user could run the actions, but would need to infer what "derived data" means and why priority recalculation affects Today.
+
+Expected behaviour:
+Visible maintenance actions should describe the user-facing outcome.
+
+User impact:
+Repair mode becomes less mysterious and less likely to feel like a developer menu.
+
+Workflow impact:
+No workflow change.
+
+Data/integrity impact:
+None; labels only.
+
+Automation boundary:
+L1 surface clarity.
+
+Fix implemented:
+- `Refresh derived data (safe)` -> `Refresh planner links and display (safe)`
+- `Recalculate task priority` -> `Re-rank Tasks for Today`
+- `Show hidden columns` -> `Show hidden system columns`
+
+Acceptance tests:
+1. The Planner menu still calls the same functions.
+2. No setup, repair, task-ranking, or hidden-column behaviour changes.
+3. Labels explain user outcomes rather than implementation details.
+
 Already verified after restart:
 
 | Prior issue | Current evidence | Status |

@@ -12533,9 +12533,9 @@ function buildMenu() {
       .addItem('Run daily maintenance now', 'dailyMaintenance')
       .addItem('Run weekly review now', 'weeklyReview')
       .addItem('Save backup copy', 'savePlannerSnapshot')
-      .addItem('Refresh derived data (safe)', 'refreshAllDerivedData')
-      .addItem('Recalculate task priority', 'recalculateTaskPriorityFromMenu')
-      .addItem('Show hidden columns', 'showAllColumns'))
+      .addItem('Refresh planner links and display (safe)', 'refreshAllDerivedData')
+      .addItem('Re-rank Tasks for Today', 'recalculateTaskPriorityFromMenu')
+      .addItem('Show hidden system columns', 'showAllColumns'))
     .addToUi();
 }
 
