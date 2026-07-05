@@ -666,7 +666,33 @@ function normalizePersonStage(value) {
 // Appends a marker to a Notes cell. A marker of the same bracketed
 // category (e.g. "[flags]") replaces any prior one instead of stacking,
 // so Notes cells don't become flag graveyards.
+function humanReadableNoteFlag(flag) {
+  var text = String(flag || '');
+  var starts = function (prefix) { return text.indexOf(prefix) === 0; };
+  if (starts('[needs planning]')) return '[needs planning] Break this into smaller steps before planning it for Today.';
+  if (starts('[no-estimate]')) return '[no-estimate] Add an estimated time so Today can plan realistically.';
+  if (starts('[no-link]')) return '[no-link] Link this task to its source row, or mark it as Admin.';
+  if (starts('[no-date]')) return '[no-date] Add a due date because this workflow depends on timing.';
+  if (starts('[flags]') && text.indexOf('HOT') !== -1) return '[flags] Review this task - it is overdue or high priority.';
+  if (starts('[review]') && text.indexOf('Stale') !== -1) return '[review] Decide whether to keep, defer, park, or close this.';
+  if (starts('[active-empty]')) return text.replace('Active but no people/open opportunities', 'Active organisation has no people or open opportunities');
+  if (starts('[dormant-live]')) return text.replace('Live linked work exists', 'Live work exists for this dormant organisation');
+  if (starts('[missing-prep-plan]')) return '[missing-prep-plan] Plan interview prep so the round has the right tasks.';
+  if (starts('[flags] Prep plan not set')) return '[flags] Plan interview prep so the round has the right tasks.';
+  if (starts('[stale-round]')) return '[stale-round] Update the interview round: mark it completed, cancelled, or rescheduled.';
+  if (starts('[overdue-outcome]')) return '[overdue-outcome] Add the interview result or set the next follow-up date.';
+  if (starts('[missing-debrief]')) return '[missing-debrief] Add the interview debrief while it is still fresh.';
+  if (starts('[invalid-value]')) return text.replace('rejected', 'is not in the dropdown');
+  if (starts('[orphaned-org]')) return text.replace('Linked Organisation no longer exists', 'Linked Organisation is missing - relink or repair this row');
+  if (starts('[orphaned-link]')) return text.replace('Linked ', 'Linked source missing: ');
+  if (starts('[blocked]') && text === '[blocked] Blocked') return '[blocked] Add what is blocking this task.';
+  if (starts('[needs-application-plan]')) return '[needs-application-plan] Use the Home decision to create the application plan.';
+  if (starts('[missing-date]')) return text.replace('Add conversation date to create prep task', 'Add the conversation date so prep can be scheduled');
+  return text;
+}
+
 function appendNoteFlag(sheet, row, notesCol, flag) {
+  flag = humanReadableNoteFlag(flag);
   var cell = sheet.getRange(row, notesCol);
   var existing = String(cell.getValue() || '');
   var categoryMatch = flag.match(/^(\[[^\]]+\])/);
@@ -8477,6 +8503,8 @@ var HOME_APPLICATIONS_FIRST_ROW = 21;  // 21..24, 4 rows max
 var HOME_UPCOMING_HEADER_ROW = 26;
 var HOME_UPCOMING_FIRST_ROW = 27;      // 27..31, 5 rows max
 
+var HOME_MOMENTUM_ROW = 32;            // quiet weekly momentum signal, not a dashboard section
+
 var HOME_REFRESH_ROW = 33;             // small utility row
 var HOME_REFRESH_COL = 2;
 
@@ -8783,6 +8811,60 @@ function collectOpenApplications(limit) {
   return items.slice(0, limit);
 }
 
+function plannerWeekStart(date, offsetWeeks) {
+  var d = new Date(date || today());
+  d.setHours(0, 0, 0, 0);
+  var mondayOffset = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - mondayOffset + ((offsetWeeks || 0) * 7));
+  return d;
+}
+
+function isDateInWindow(value, start, end) {
+  if (!value) return false;
+  var d = new Date(value);
+  if (isNaN(d.getTime())) return false;
+  d.setHours(0, 0, 0, 0);
+  return d >= start && d < end;
+}
+
+function homeMomentumCountsForWindow(start, end) {
+  var counts = { tasks: 0, conversations: 0 };
+  var taskSheet = getSheet('Tasks');
+  if (taskSheet && taskSheet.getLastRow() > 1) {
+    var taskData = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, COLS.TODO.COMPLETED).getValues();
+    taskData.forEach(function (row) {
+      if (String(row[COLS.TODO.STATUS - 1] || '') === 'Done' && isDateInWindow(row[COLS.TODO.COMPLETED - 1], start, end)) counts.tasks++;
+    });
+  }
+  var interactionSheet = getSheet('Conversations');
+  if (interactionSheet && interactionSheet.getLastRow() > 1) {
+    var interactionData = interactionSheet.getRange(2, 1, interactionSheet.getLastRow() - 1, COLS.INTERACTIONS.OUTCOME).getValues();
+    interactionData.forEach(function (row) {
+      if (String(row[COLS.INTERACTIONS.STATUS - 1] || '') !== 'Completed') return;
+      if (!isDateInWindow(row[COLS.INTERACTIONS.DATE - 1], start, end)) return;
+      var type = String(row[COLS.INTERACTIONS.TYPE - 1] || '');
+      var notes = String(row[COLS.INTERACTIONS.NOTES - 1] || '');
+      if (type !== 'Auto-log' || /conversation completed|interview completed/i.test(notes)) counts.conversations++;
+    });
+  }
+  return counts;
+}
+
+function homeMomentumSummary() {
+  var thisStart = plannerWeekStart(today(), 0);
+  var nextStart = plannerWeekStart(today(), 1);
+  var lastStart = plannerWeekStart(today(), -1);
+  var current = homeMomentumCountsForWindow(thisStart, nextStart);
+  var previous = homeMomentumCountsForWindow(lastStart, thisStart);
+  var lastTotal = previous.tasks + previous.conversations;
+  var parts = [];
+  if (current.tasks) parts.push(current.tasks + ' task' + (current.tasks === 1 ? '' : 's') + ' done');
+  if (current.conversations) parts.push(current.conversations + ' conversation' + (current.conversations === 1 ? '' : 's') + ' logged');
+  var text = parts.length ? ('Momentum this week: ' + parts.join(' - ') + '.') : 'Momentum this week: completed tasks and conversations will show here.';
+  if (lastTotal) text += ' Last week total: ' + lastTotal + '.';
+  return text;
+}
+
 function refreshHome() {
   var sheet = getSheet('Home');
   if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Home', 0);
@@ -8913,6 +8995,10 @@ function refreshHome() {
       sheet.getRange(r, 4, 1, 3).merge().setValue(item.label);
     });
   }
+
+  sheet.getRange(HOME_MOMENTUM_ROW, 2, 1, 5).merge()
+    .setValue(homeMomentumSummary())
+    .setFontSize(9).setFontColor('#8A8D87').setFontStyle('italic');
 
   // --- Refresh (§1.6) — demoted utility control for re-reading Home status ---
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);

@@ -1516,6 +1516,8 @@ Product taste findings:
 | Home decision copy still sounded like backend queue state. | P2 | Home section said Pending Decisions, which is the data/audit model rather than the user's moment of judgement. | Fixed now: Home says Decisions to make; Decisions tab remains the audit queue. |
 | Home decision overflow still sent the user to the backend queue. | P2 | The fourth pending decision became an "open queue" link to Decisions, even though Home is meant to be self-sufficient for daily judgement. | Fixed now: Home keeps three fixed card slots and pages the pending queue with Prev/Next controls. |
 | Home decisions lacked a non-judgement skip. | P2 | Home offered Yes/No only, but No is a judgement and sometimes the user only wants to move past a card for now. | Fixed now: Skip hides the card from Home until refresh while leaving the Decision pending. |
+| Notes flags still sounded like internal system state. | P2 | Visible notes used labels such as HOT, stale, missing prep plan, and rejected, which are true but not recovery-oriented. | Fixed now for new flags: bracket tokens remain machine-readable, but common visible flags are rewritten into clearer recovery guidance. |
+| Home lacked a light momentum signal. | P3 | The product guides tasks and decisions but did not reflect recent progress, making the search feel more static than it is. | Fixed now: Home shows a compact weekly momentum line from completed Tasks and logged Conversations. |
 | Setup menu copy still exposed automation as the product concept. | P2 | User-facing paths said Setup & automation even when the user goal is simply turning the Planner on. | Fixed now: visible menu/path says Planner setup; repair actions say Repair rather than Fix. |
 | Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user has warnings and refreshes, not a calm "restart today" flow. | Structural redesign candidate after Home/Today review. |
 | Source tabs are powerful but still feel spreadsheet-like. | P2/P3 | Direct editable tables, row actions, hidden helper columns, header hints. | Backlog: stronger inspect/repair framing, filters/views, or fewer daily-visible source mechanics. |
@@ -1529,6 +1531,8 @@ Immediate Stage 17 implementation:
 - Rename Home's decision section to Decisions to make while preserving Decisions as the audit queue.
 - Replace Home's decision overflow link with Prev/Next paging across the same three card slots.
 - Add a Home-only Skip action that keeps the Decision pending and brings forward the next card.
+- Preserve Notes tag tokens but rewrite common new flags as recovery guidance.
+- Add a quiet Home momentum line from completed Tasks and logged Conversations.
 - Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.
 
 Stage 17 decision:
