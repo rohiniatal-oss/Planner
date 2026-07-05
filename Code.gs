@@ -1833,7 +1833,7 @@ function decisionDueDateFor(key, targetType, targetId, workflow) {
   if (targetType === 'Job') {
     var job = getJobRowById(targetId);
     if (job && (workflow === 'Referral search' || workflow === 'Application preparation')) return job.deadline || '';
-    if (job && workflow === 'Admin' && normalizeJobStatus(job.status) === 'Submitted') return job.reviewDate || '';
+    if (job && workflow === 'Admin' && normalizeJobStatus(job.status) === 'Submitted') return job.nextCheck || '';
   }
   if (targetType === 'Interview round') {
     var round = getRoundById(targetId);
@@ -2036,17 +2036,7 @@ function dismissDecisionByKey(key, reason) {
   return true;
 }
 
-function pendingDecisionCount() {
-  var sheet = getSheet('Decisions');
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-  var decisions = sheet.getRange(2, COLS.DECISIONS.DECISION, sheet.getLastRow() - 1, 1).getValues();
-  var count = 0;
-  decisions.forEach(function (d) { if (String(d[0]) === 'Pending') count++; });
-  return count;
-}
-
 function decisionSortDateValue(decisionRow) {
-  var created = decisionRow[COLS.DECISIONS.CREATED - 1] || today();
   var due = decisionRow[COLS.DECISIONS.DUE_DATE - 1];
   if (due) {
     var dueDate = new Date(due);
@@ -2058,15 +2048,17 @@ function decisionSortDateValue(decisionRow) {
     var planBy = applicationPlanDueDate(job);
     if (planBy) return new Date(planBy).getTime();
   }
-  return new Date(created).getTime();
+  return 9999999999999;
 }
 
-// Up to `limit` (default 3) pending decisions. Application planning
-// decisions use their plan-by date, so deadlines push genuinely urgent
-// application planning onto Home without changing the Decisions schema.
-function firstPendingDecisions(limit) {
-  limit = limit || 3;
-  var sheet = ensureDecisionsTab();
+function decisionCreatedDateValue(decisionRow) {
+  var created = decisionRow[COLS.DECISIONS.CREATED - 1] || today();
+  var createdDate = new Date(created);
+  return isNaN(createdDate.getTime()) ? today().getTime() : createdDate.getTime();
+}
+
+function collectPendingDecisionQueue(limit) {
+  var sheet = getSheet('Decisions');
   if (!sheet || sheet.getLastRow() < 2) return [];
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
   var out = [];
@@ -2074,10 +2066,40 @@ function firstPendingDecisions(limit) {
     if (String(data[i][COLS.DECISIONS.DECISION - 1]) === 'Pending') out.push({ row: i + 2, data: data[i] });
   }
   out.sort(function (a, b) {
-    var diff = decisionSortDateValue(a.data) - decisionSortDateValue(b.data);
-    return diff || (a.row - b.row);
+    var dueDiff = decisionSortDateValue(a.data) - decisionSortDateValue(b.data);
+    if (dueDiff) return dueDiff;
+    var createdDiff = decisionCreatedDateValue(a.data) - decisionCreatedDateValue(b.data);
+    return createdDiff || (a.row - b.row);
   });
-  return out.slice(0, limit);
+  return limit ? out.slice(0, limit) : out;
+}
+
+function pendingDecisionCount() {
+  return collectPendingDecisionQueue().length;
+}
+
+function decisionReviewTimingLabel(value) {
+  if (!value) return 'No date';
+  var date = new Date(value);
+  if (isNaN(date.getTime())) return 'No date';
+  date.setHours(0, 0, 0, 0);
+  var diff = daysBetween(today(), date);
+  if (diff < 0) return 'Overdue';
+  if (diff === 0) return 'Due today';
+  if (diff === 1) return 'Due tomorrow';
+  return 'Due in ' + diff + 'd';
+}
+
+function decisionLinkedLabel(targetType, targetId) {
+  var linked = resolveLinkedTo(String(targetType || ''), String(targetId || ''));
+  return linked && linked.text ? linked.text : '';
+}
+
+// Up to `limit` (default 3) pending decisions. Application planning
+// decisions use their plan-by date, so deadlines push genuinely urgent
+// application planning onto Home without changing the Decisions schema.
+function firstPendingDecisions(limit) {
+  return collectPendingDecisionQueue(limit || 3);
 }
 
 // =============================================================
@@ -7064,12 +7086,15 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
     var trigger = data[COLS.DECISIONS.TRIGGER - 1] || 'Decision';
     var task = data[COLS.DECISIONS.TASK - 1] || '';
     var notes = data[COLS.DECISIONS.NOTES - 1] || '';
-    var label = 'Pending Decision ' + (idx + 1);
+    var actionType = data[COLS.DECISIONS.ACTION_TYPE - 1] || inferDecisionActionType(data[COLS.DECISIONS.KEY - 1], data[COLS.DECISIONS.TARGET_TYPE - 1], data[COLS.DECISIONS.WORKFLOW - 1], task);
+    var timing = decisionReviewTimingLabel(data[COLS.DECISIONS.DUE_DATE - 1]);
+    var linked = decisionLinkedLabel(data[COLS.DECISIONS.TARGET_TYPE - 1], data[COLS.DECISIONS.TARGET_ID - 1]);
+    var meta = timing + ' - ' + actionType + (linked ? ' - ' + linked : '');
     sheet.getRange(slot.id).setValue(id);
     sheet.getRange(slot.text)
-      .setValue(label + ': ' + task)
+      .setValue(meta + '\n' + task)
       .setBackground('#EAF4F5').setFontColor('#1B474D').setFontWeight('bold').setWrap(true)
-      .setNote('Why: ' + trigger + (notes ? '\nNotes: ' + notes : ''));
+      .setNote('Why: ' + trigger + (linked ? '\nLinked to: ' + linked : '') + (notes ? '\nNotes: ' + notes : ''));
     sheet.getRange(slot.action).setValue('').setBackground(MANUAL_COLOR).setFontWeight('bold');
     setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No']);
   });
