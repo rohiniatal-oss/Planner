@@ -8,6 +8,7 @@ Implemented after this review began:
 - Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
 - Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
 - Source-led scan completion opens a capture popup, and now has a direct "Nothing useful found" completion path.
+- Weekly review summaries are written before Home refresh and surfaced in the Home utility area; stale weekly review also appears in Needs attention.
 
 ## Pass 1 - User Journey Review
 
@@ -15,7 +16,7 @@ Implemented after this review began:
 |---|---|---|---|---|---|---|---|
 | First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Medium | Onboarding can keep showing next checklist work after useful seed rows exist | What "complete" means vs generated next tasks | Complete onboarding after seed facts; route next exploration as Tasks/Decisions | P2 |
 | Daily use | Know what to do now | Home -> Today -> mark work | Low/medium | Home has plan, decisions, apps, upcoming, but critical warnings are not clearly first-class | Why something needs repair | Home warning strip + Today needs-planning details | P1 |
-| Weekly review | Keep stale search alive | time trigger -> org review decisions/tasks | Medium | Review output is mostly notes/tasks, not a visible weekly summary | What weekly review did | Home maintenance/weekly status summary | P2 |
+| Weekly review | Keep stale search alive | time trigger -> org review decisions/tasks -> Home summary | Low | Review output is now visible in Home utility area | Details remain in Tasks/Decisions/source tabs | Keep | Keep |
 | Source-led opportunity discovery | Run flexible scans and capture findings | Task -> Done -> result popup | Low | Completion is now direct, with no-results path | None major | Keep | Keep |
 | Source-led people discovery | Capture people without outreach spam | Task -> Done -> result popup | Low | Good anti-spam model | "Identified means no outreach yet" in Guide later | Keep | Keep |
 | Targeted sector/org mapping | Grow target universe | Sectors/Orgs -> Decisions -> Tasks | Medium | Parent/sub-sector model is clearer now but still hard from sheet alone | Examples | Keep source rows clear; Guide later | P3 |
@@ -157,7 +158,7 @@ Representative risks from current schema:
 | Missing-source pending Decisions can still appear on Home | P1 | Must fix now | Home should not ask user to decide on an orphaned source | none |
 | Home critical warnings are not first-class | P1/P2 | Should fix next | Product cockpit should surface broken/stale/maintenance before work | warning summary helper |
 | Source-led scan no-results path | P2 | Done | Better UX, not integrity | source result popup |
-| Weekly review summary not visible enough | P2 | Later | Reduces "what happened?" anxiety | Home warning/snapshot |
+| Weekly review summary not visible enough | P2 | Done | Reduces "what happened?" anxiety | Home warning/snapshot |
 | Notes/tag logic undocumented | P2 | Guide last | User cannot self-serve repair | Guide dictionary |
 | Legacy interview prep workflows still visible | P3 | Guide/header later | May confuse but current routing works | Guide/header pass |
 

@@ -490,13 +490,20 @@ function readMaintenanceHealth() {
   var props = maintenanceProps();
   var now = new Date();
   var dailyRaw = props.getProperty('lastDailyMaintenanceAt') || '';
+  var weeklyRaw = props.getProperty('lastWeeklyReviewAt') || '';
+  var weeklySummary = props.getProperty('lastWeeklyReviewSummary') || '';
   var error = props.getProperty('lastMaintenanceError') || '';
   var stale = false;
+  var weeklyStale = false;
   if (dailyRaw) {
     var dailyDate = new Date(dailyRaw);
     stale = !isNaN(dailyDate.getTime()) && ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000);
   }
-  return { daily: dailyRaw, error: error, stale: stale };
+  if (weeklyRaw) {
+    var weeklyDate = new Date(weeklyRaw);
+    weeklyStale = !isNaN(weeklyDate.getTime()) && ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000);
+  }
+  return { daily: dailyRaw, weekly: weeklyRaw, weeklySummary: weeklySummary, error: error, stale: stale, weeklyStale: weeklyStale };
 }
 
 function today() {
@@ -8394,6 +8401,7 @@ function collectHomeAttentionItems() {
   var maint = readMaintenanceHealth();
   if (maint.error) items.push('maintenance issue logged');
   else if (maint.stale) items.push('maintenance has not run in 2 days');
+  if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
   return items;
 }
 
@@ -8674,6 +8682,14 @@ function refreshHome() {
     var maintText = maint.error ? ('Maintenance issue: ' + maint.error) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Run daily maintenance now.';
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
+  } else if (maint.weeklyStale) {
+    sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
+      .setValue('Weekly review has not run in 8 days. Use The Planner > Maintenance > Run weekly review now.')
+      .setFontSize(9).setFontColor('#964219').setWrap(true);
+  } else if (maint.weeklySummary) {
+    sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
+      .setValue(maint.weeklySummary)
+      .setFontSize(9).setFontColor('#8A8D87').setWrap(true);
   }
 
   sheet.getRange(HOME_LAST_REFRESHED_ROW, 2, 1, 3).merge().setValue('Last refreshed: ' + Utilities.formatDate(new Date(), plannerTimeZone(), 'yyyy-MM-dd HH:mm'))
@@ -11000,11 +11016,11 @@ function weeklyReviewImpl() {
   applyColumnWidths();
   refreshAllDropdowns();
   checkTriggerHealth();
-  populateToday();
-  refreshHome();
   recordMaintenanceHeartbeat('lastWeeklyReviewAt');
   summary.message = 'Weekly review: ' + summary.activeEmptyTasks + ' org review route(s) created, ' + summary.activeEmptyAlreadyRouted + ' empty Active org(s) already routed, ' + summary.staleKeepWarm + ' stale keep-warm, ' + summary.orgOrphans + ' org orphans, ' + summary.sectorOrphans + ' sector orphans.';
   try { maintenanceProps().setProperty('lastWeeklyReviewSummary', summary.message); } catch (err) { Logger.log('weeklyReview summary store: ' + err); }
+  populateToday();
+  refreshHome();
   return summary;
 }
 
