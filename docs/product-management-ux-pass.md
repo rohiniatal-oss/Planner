@@ -95,6 +95,7 @@ Grounded in current `HEADERS` / `MANUAL_COLUMNS` from `Code.gs`.
 | Snapshot/reset/repair distinction not fully productised | Recovery / Trust | P1 | User may not know what is safe or reversible | Phase 1/6 |
 | Source tabs not yet reviewed through PM/UX lens | Orientation / Workflow | P1/P2 | Fixes could overfit Home/Today while tab flows remain confusing | Phase 1/3 |
 | Header hints still expose backend wording | Orientation / Visual design | P2 | Source tabs feel like storage tables instead of calm records | Phase 1 |
+| Jobs response columns read like duplicate states | Workflow / Trust | P2 | User may not know whether to edit Response received or Application result | Phase 1/3 |
 
 ## Current Improvement: Home Today State
 
@@ -145,3 +146,26 @@ Non-goals:
 - Do not rewrite the Guide yet.
 - Do not change column order or visibility in this pass.
 - Do not change workflow routing or task creation.
+
+## Current Improvement: Jobs Response Column Clarity
+
+User story:
+As a user looking at a submitted application, I need to know whether "Response received" or "Application result" is the right field to touch, so that I can record waiting, rejection, or interview invite without guessing.
+
+Current pain:
+The copy made `Response received` sound purely automatic even though setting it to Yes opens the result path. `Application result` also did not say it belongs after submission.
+
+Target experience:
+`Response received` says that Yes records a result and Waiting keeps it as No. `Application result` says it is only for submitted applications.
+
+Implementation:
+Header guidance copy only; no dropdown, status, popup, or routing behavior changed.
+
+Acceptance tests:
+1. Jobs header hint for Response received explains Yes as the result-recording path.
+2. Jobs header hint for Application result says it is used after Submitted.
+3. Existing onEdit Jobs response/result routing remains unchanged.
+
+Non-goals:
+- Do not rename columns in this pass.
+- Do not change the application response state machine.

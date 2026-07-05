@@ -10222,8 +10222,8 @@ var HEADER_GUIDANCE = {
     'Job ID': 'Filled automatically.', 'Opportunity': 'Job or opportunity title.', 'Organisation': 'Organisation for this opportunity; used to link work.', 'Org ID': 'Filled automatically from Organisation.',
     'Deadline': 'Application deadline. It affects priority but does not create tasks by itself.', 'Application status': 'Not started / In progress / Submitted / Closed.', 'Submitted date': 'Date you submitted the application.',
     'Linked contacts (IDs)': 'Filled automatically from linked People.', 'People for this application': 'Contacts linked through referral/application actions.', 'Next response check': 'Next date to check for an application response.',
-    'Response received': 'Updates from Application result: Waiting = No; invite/rejection = Yes.',
-    'Application result': 'Waiting / Interview invite / Rejected',
+    'Response received': 'Set Yes to record a result; Waiting keeps this as No.',
+    'Application result': 'Waiting / Interview invite / Rejected. Use after the application is Submitted.',
     'Notes': 'URL, source, application context, and repair flags.'
   },
   'Interactions': {
