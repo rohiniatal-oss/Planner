@@ -2514,6 +2514,19 @@ function recalculateCommitmentClasses() {
   }
 }
 
+function recalculateTaskPriorityFromMenu() {
+  var result = withDocumentLock(function () {
+    recalculateCommitmentClasses();
+    backfillTaskHelperColumns();
+    populateToday();
+    refreshHome();
+    SpreadsheetApp.getActiveSpreadsheet().toast("Task priority recalculated. Today's plan and Home were refreshed.", 'The Planner', 5);
+    return true;
+  }, { label: 'recalculateTaskPriorityFromMenu', timeoutMs: 30000, failOpen: false });
+  if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Task priority refresh skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  return result;
+}
+
 function recalcTodosLinkedToObject(linkedObjId) {
   if (!linkedObjId) return;
   var sheet = getSheet('Tasks');
@@ -10565,7 +10578,7 @@ function showAllColumns() {
     var sheet = getSheet(name);
     if (sheet && SHEET_TO_HEADER_KEY[name]) { try { sheet.showColumns(1, sheetHeaderLength(name)); } catch (err) { } }
   });
-  SpreadsheetApp.getActiveSpreadsheet().toast('All columns shown.', 'The Planner', 3);
+  SpreadsheetApp.getActiveSpreadsheet().toast('Hidden columns shown for inspection.', 'The Planner', 3);
 }
 
 function applyColumnWidths() {
@@ -10675,7 +10688,7 @@ function migrateLegacyTabs() {
     }
   });
   if (renamed.length) {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Migrated legacy tab(s): ' + renamed.join(', '), 'The Planner', 6);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Old tab names cleaned up: ' + renamed.join(', '), 'The Planner', 6);
   }
   return renamed;
 }
@@ -11930,7 +11943,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Good to know');
-  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show all columns when you need to inspect them.');
+  r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show hidden columns when you need to inspect them.');
   r = writeKV(sheet, r, 'Sectors', 'A parent Sector row names the broad area. A Sub-sector row belongs to that Sector ID. Editing Sector on a parent row renames it; editing Sector on a Sub-sector row moves that child under another sector.');
   r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
@@ -12381,12 +12394,12 @@ function buildMenu() {
       .addItem('Turn off daily/weekly automation', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
-      .addItem('Migrate legacy tab names', 'migrateLegacyTabs')
+      .addItem('Clean up old tab names', 'migrateLegacyTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')
       .addItem('Run weekly review now', 'weeklyReview')
       .addItem('Refresh derived data (safe)', 'refreshAllDerivedData')
-      .addItem('Recalculate commitment classes', 'recalculateCommitmentClasses')
-      .addItem('Show all columns', 'showAllColumns'))
+      .addItem('Recalculate task priority', 'recalculateTaskPriorityFromMenu')
+      .addItem('Show hidden columns', 'showAllColumns'))
     .addToUi();
 }
 

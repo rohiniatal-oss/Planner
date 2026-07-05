@@ -96,6 +96,7 @@ Grounded in current `HEADERS` / `MANUAL_COLUMNS` from `Code.gs`.
 | Source tabs not yet reviewed through PM/UX lens | Orientation / Workflow | P1/P2 | Fixes could overfit Home/Today while tab flows remain confusing | Phase 1/3 |
 | Header hints still expose backend wording | Orientation / Visual design | P2 | Source tabs feel like storage tables instead of calm records | Phase 1 |
 | Jobs response columns read like duplicate states | Workflow / Trust | P2 | User may not know whether to edit Response received or Application result | Phase 1/3 |
+| Maintenance menu exposes implementation terms | Navigation / Trust | P2 | User must translate legacy migration, commitment classes, and all columns into planner actions | Phase 1 |
 
 ## Current Improvement: Home Today State
 
@@ -169,3 +170,27 @@ Acceptance tests:
 Non-goals:
 - Do not rename columns in this pass.
 - Do not change the application response state machine.
+
+## Current Improvement: Maintenance Menu Language
+
+User story:
+As a user opening Maintenance, I need the actions to say what they do in planner terms, so that I can repair or inspect the workbook without guessing whether an action is safe.
+
+Current pain:
+Labels like "Migrate legacy tab names" and "Recalculate commitment classes" expose implementation language. "Show all columns" is also less precise than the actual intent: reveal hidden helper columns for inspection.
+
+Target experience:
+Maintenance uses user concepts: clean up old tab names, recalculate task priority, and show hidden columns. The task-priority action confirms that Today and Home were refreshed.
+
+Implementation:
+Menu-label and toast changes only, plus a menu-only `recalculateTaskPriorityFromMenu()` wrapper so scheduled maintenance can continue recalculating quietly.
+
+Acceptance tests:
+1. The Maintenance menu uses the new user-facing labels.
+2. Recalculate task priority refreshes task helpers, Today, and Home, then shows a confirmation.
+3. Daily maintenance and repair can still call `recalculateCommitmentClasses()` without extra user toasts.
+
+Non-goals:
+- Do not change priority rules.
+- Do not change hidden-column lists.
+- Do not change migration behavior.
