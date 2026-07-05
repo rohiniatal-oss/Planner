@@ -131,6 +131,7 @@ Category 0 issue queue:
 | Today checkbox still says tick refresh | P2 | The main daily action had different names on the menu and sheet | 0 + 2 + 4 | Fixed: Today checkbox now says Build / refresh Today's plan |
 | Setup/automation menu exposes trigger mechanics | P2 | First-run recovery asks the user to reason about triggers instead of Planner actions | 0 + 5 | Fixed: menu and Home copy now say Setup & automation / Turn on Planner actions; setup status hides handler names |
 | Today submenu has misleading hidden-column action | P2 | "Show all Today columns" actually revealed hidden columns across every tab | 0 + 5 | Fixed: removed from Today; global Show hidden columns remains in Maintenance |
+| Row actions do not distinguish task vs decision vs planning route | P2 | User cannot tell whether an action creates work, asks for judgement, opens a plan, or links existing data | 0 + 5 | Fixed: labels now say create task, ask whether, start application plan, and link existing contact |
 | Home says Start working when Today is not built | P1/P2 | Home points to execution/documentation before the plan exists, which makes the cockpit feel stale or misleading | 0 + 4 | Fixed: Home now says Open Today to build plan / Open Today based on plan state |
 | Header hints use backend wording | P2 | First impression across source/work tabs feels like storage or implementation detail instead of a user-owned planner | 0 + 5 | Fixed: header hints now explain ownership, automatic fields, and work surfaces in user language |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
@@ -158,6 +159,7 @@ Implemented after this review began:
 - The top-level one-off task action no longer uses "ad-hoc" in menu, prompt, or success feedback.
 - Today sheet's build checkbox now uses the same "Build / refresh Today's plan" wording as the menu.
 - Setup/automation menus and first-run prompts now use Planner-action language instead of trigger mechanics, and the misleading Today-only hidden-column action was removed.
+- Row actions now distinguish task creation, decision prompts, application planning, and existing-contact linking.
 - Home's Today-plan action now follows state: "Open Today to build plan" before a plan exists, "Open Today" when built with no committed work, and "Start working" only when there is committed work.
 - Workbook header hints now use user-facing ownership language across source, work, decision, interview, conversation, Today, and Tasks surfaces.
 

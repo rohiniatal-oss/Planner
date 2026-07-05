@@ -276,3 +276,27 @@ Non-goals:
 - Do not change Apps Script trigger mechanics.
 - Do not remove the ability to inspect hidden columns.
 - Do not rewrite the Guide beyond keeping the active menu path accurate.
+
+## Current Improvement: Row Action Outcome Labels
+
+User story:
+As a user choosing a row action, I need the label to tell me whether the action creates a task, asks for a decision, opens planning, or links existing data, so that I do not have to remember the planner's internal routing.
+
+Current pain:
+Some labels used backend-ish or ambiguous language: "Queue market-map decision", "Queue sub-sector task", "Prep application", and "Link contact". Those were directionally true but not precise enough about the user-visible outcome.
+
+Target experience:
+Row actions use outcome language: create a people-search/job-scan/referral-search/sub-sector task, ask whether to market-map, start an application plan, and link an existing contact.
+
+Implementation:
+Menu-label changes only. The row-action functions, cascades, task/decision creation, and popup behavior are unchanged.
+
+Acceptance tests:
+1. Row action labels distinguish tasks from decisions and planning routes.
+2. The existing-contact link action does not imply it can create a new Person.
+3. No row-action function names, workflows, or routing behavior changed.
+
+Non-goals:
+- Do not change source-led workflow logic.
+- Do not add new row actions.
+- Do not move row actions out of the menu in this pass.
