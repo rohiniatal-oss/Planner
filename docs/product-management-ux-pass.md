@@ -42,8 +42,31 @@ Does this make the job hunt easier to understand, decide, execute, and recover f
 | Today | Execution surface | What can I actually do now? | Do, block, defer, finish | Backlog/capture surface | Needs visual retest | Pending |
 | Tasks | Work source of truth | Why is work ready/blocked/waiting? | Inspect/repair/sequence | Daily default | Helper fields are powerful but backend-ish | Category 3/5 |
 | Decisions | Judgement queue | What happens if Yes/No? | Decide or audit | Task list | Must keep action type truthful | Retest |
-| Source tabs | Records | What is true about this object? | Inspect/repair records | Daily navigation | Headers/copy need final pass | Category 5 |
+| Sectors | Search-space record | What broad/narrow markets am I exploring? | Maintain taxonomy and exploration state | Daily execution | Parent/sub-sector model is not self-explanatory | Category 5 examples/copy |
+| Organisations | Target-universe record | Which orgs are mapped, active, dormant, or need review? | Maintain target status and classification | Become a CRM dashboard | Review cadence is mostly hidden in helper dates | Category 3/4 review-state surfacing |
+| Jobs | Opportunity/application record | What is this opportunity's application state? | Track deadline, status, contacts, result | Own application task execution | Status/result/waiting model must stay intuitive | Category 3 journey retest |
+| People | Relationship pipeline record | Who is this person and what relationship action exists? | Track relationship source/status and next action | Force outreach from discovery | Relationship status still needs careful UX review | Category 3 People journey retest |
+| Conversations | Interaction history | What happened, with whom, and what follow-up did it create? | Log interaction/status/outcome | Replace People or Tasks | Manual log can feel like another operating surface | Category 3 People/Conversations retest |
+| Interviews | Round/prep record | What interview is scheduled, what prep/outcome is needed? | Track date/status/outcome/follow-up | Store prep plan as extra columns | Prep must flow through Tasks, not hidden notes | Category 3 interview-prep retest |
 | Guide | Operating manual | How do I use this safely? | Self-serve help | Hide UX problems | Defer until behavior settles | Guide-last |
+
+## Pass 3A - Tab-by-Tab Product Lens
+
+Grounded in current `HEADERS` / `MANUAL_COLUMNS` from `Code.gs`.
+
+| Tab | Top 3 visible fields for the user | Manual inputs | Product risk | Category 0 judgement |
+|---|---|---|---|---|
+| Home | Needs attention, Pending Decisions, Today's plan | checkboxes/dropdowns only | Can become dashboardy or contradict Today | Keep compact; action copy must route to the next operating surface |
+| Today | Task, estimated minutes, Status/Why | execution status and notes | Can become a backlog if non-ready work leaks in | Preserve executable-only boundary; review no-fit/option wording |
+| Decisions | Suggested action, Decision, Result | Decision and context notes | Can look like a task list if Yes is vague | Keep action type truthful and Home cards plain |
+| Tasks | Task, Status, Ready for Today | status, due/time, blocker/planning fields | Helper columns can feel like backend machinery | Needs visual/copy pass, but not a Home replacement |
+| Sectors | Sector, Sub-sector, Status | Sector/Sub-sector/status/notes | Parent/child taxonomy can confuse users | Add examples/copy later; keep records calm |
+| Organisations | Organisation, Sector/Sub-sector, Status | org name, classification, tier/status/notes | Status meaning and next review can be invisible | Review Active/Dormant/Next check flow in Category 3/4 |
+| Jobs | Opportunity, Organisation, Application status | opportunity/org/status/deadline/result/notes | Application result vs status can feel like two states | Continue Jobs journey review before more UX changes |
+| People | Name, Relationship source/status, Next action | name/org/role/source/status/follow-up/conversation/notes | Relationship status must not over-automate outreach | Review relationship lifecycle as product flow |
+| Conversations | Date, Person, Interaction status/outcome | date/person/type/status/notes/outcome | Can duplicate People if its role is unclear | Keep as history plus outcome router |
+| Interviews | Job, Interview date, Status/outcome | round/date/status/outcome/follow-up/notes | Prep can be buried if not task-led | Keep prep work in Tasks; retest prep tasks |
+| Guide | Setup, daily routine, repair/troubleshooting | n/a | Can become a bandage for unclear UX | Update last after behavior settles |
 
 ## Pass 4 - UX Scorecard
 
@@ -53,7 +76,13 @@ Does this make the job hunt easier to understand, decide, execute, and recover f
 | Today | 4 | 3 | 4 | 4 | 4 | 4 | 3 | 4 | Retest over/under-capacity and Needs planning |
 | Tasks | 3 | 2 | 3 | 3 | 3 | 3 | 3 | 4 | De-emphasise backend helper semantics later |
 | Decisions | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | Keep Home cards plain and action-specific |
-| Source tabs | 3 | 2 | 3 | 3 | 3 | 3 | 3 | 3 | Header/column copy pass later |
+| Sectors | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | Explain sector/sub-sector relationship |
+| Organisations | 3 | 2 | 3 | 3 | 3 | 3 | 3 | 3 | Clarify status and review loop |
+| Jobs | 3 | 3 | 3 | 3 | 3 | 4 | 3 | 3 | Retest status/result/deadline flow |
+| People | 3 | 2 | 3 | 3 | 3 | 3 | 3 | 3 | Retest relationship source/status lifecycle |
+| Conversations | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 | Clarify history vs action routing |
+| Interviews | 3 | 3 | 3 | 3 | 3 | 4 | 3 | 3 | Retest prep/outcome flow |
+| Guide | 3 | 3 | 3 | 3 | n/a | n/a | n/a | 3 | Rewrite after behavior settles |
 
 ## Pass 5 - Prioritised Issues
 
@@ -64,6 +93,7 @@ Does this make the job hunt easier to understand, decide, execute, and recover f
 | Home/Today visual retest pending | Trust | P1/P2 | Code may be correct but visible state may still feel wrong | Phase 1 |
 | Legacy workflow/header labels remain | Documentation / Visual design | P3 | Confusion after behavior changes | Phase 5 |
 | Snapshot/reset/repair distinction not fully productised | Recovery / Trust | P1 | User may not know what is safe or reversible | Phase 1/6 |
+| Source tabs not yet reviewed through PM/UX lens | Orientation / Workflow | P1/P2 | Fixes could overfit Home/Today while tab flows remain confusing | Phase 1/3 |
 
 ## Current Improvement: Home Today State
 
