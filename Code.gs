@@ -58,7 +58,7 @@
  *                and workflow. Completion always routes through the
  *                same canonical engine regardless of which tab it was
  *                triggered from (Today or Tasks).
- *   Sectors / Organisations / Jobs / People / Conversations / Interviews
+ *   Sectors / Organisations / Search Routines / Jobs / People / Conversations / Interviews
  *              = source-of-truth database tabs. Editable directly, but
  *                routine daily capture should happen via Home's
  *                Capture update popups, not by navigating to these tabs.
@@ -136,6 +136,11 @@ var COLS = {
     TYPE: 6, STATUS: 7, NOTES: 8, OUTCOME: 9
   },
 
+  SEARCH: {
+    ID: 1, ROUTINE: 2, SOURCES: 3, FREQUENCY: 4, NEXT_RUN: 5,
+    ENABLED: 6, LAST_RUN: 7, OPEN_TASK_ID: 8, NOTES: 9
+  },
+
   TODO: {
     ID: 1, TASK: 2, OBJ_TYPE: 3, OBJ_ID: 4, ORG: 5,
     WORKFLOW: 6, STATUS: 7, DUE_DATE: 8, TIME_EST: 9,
@@ -195,6 +200,10 @@ var HEADERS = {
     'Interaction ID', 'Date', 'Person ID', 'Person', 'Organisation',
     'Type', 'Interaction status', 'Key notes', 'Outcome'
   ],
+  'Search Routines': [
+    'Routine ID', 'Routine', 'Sources to check', 'How often', 'Next run',
+    'On?', 'Last run', 'Open task', 'Notes'
+  ],
   'To-do': [
     'Task ID', 'Task', 'Linked object type', 'Linked object ID', 'Org',
     'Workflow type', 'Status', 'Due date', 'Time estimate',
@@ -235,6 +244,7 @@ var SHEET_TO_HEADER_KEY = {
   '— Help —': null,
   'Sectors': 'Sectors',
   'Organisations': 'Organisations',
+  'Search Routines': 'Search Routines',
   'Jobs': 'Jobs',
   'People': 'People',
   'Conversations': 'Interactions',
@@ -251,15 +261,16 @@ var LEGACY_TAB_NAMES = {
   'Tasks': ['To-do', 'ToDo', 'Todo', 'To Do'],
   'Today': ["Today's plan", "Today's Plan", 'Todays plan', 'Today Plan'],
   'Conversations': ['Interactions'],
+  'Search Routines': ['Sourcing Routines', 'Search routines', 'Sourcing routines'],
   'Interviews': ['Interview rounds', 'Interview Rounds'],
   'Decisions': ['Pending decisions', 'Pending Decisions', 'Suggestions']
 };
 
-var CANONICAL_TAB_ORDER = ['Home', 'Today', '— Review & Tasks —', 'Decisions', 'Tasks', '— Source Tabs —', 'Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations', '— Help —', 'Guide'];
+var CANONICAL_TAB_ORDER = ['Home', 'Today', '— Review & Tasks —', 'Decisions', 'Tasks', '— Source Tabs —', 'Sectors', 'Organisations', 'Search Routines', 'Jobs', 'People', 'Interviews', 'Conversations', '— Help —', 'Guide'];
 var TAB_DIVIDER_TABS = ['— Review & Tasks —', '— Source Tabs —', '— Help —'];
 var LEGACY_TAB_DIVIDER_TABS = ['— Work —', '— Sources —', '— Queues —', '— Records —'];
 var ZONE_WORK_TABS = ['Home', 'Today', 'Decisions', 'Tasks'];
-var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations'];
+var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Search Routines', 'Jobs', 'People', 'Interviews', 'Conversations'];
 var ZONE_REF_TABS = ['Guide'];
 var ZONE_WORK_COLOR = '#1B474D';
 var ZONE_DATA_COLOR = '#964219';
@@ -267,12 +278,14 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.3';
+var SCRIPT_VERSION = 'v7.8.4';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
 var ORG_ACTIVE_REVIEW_DAYS = 14;
 var ORG_DORMANT_REVIEW_DAYS = 42;
+var WORKFLOW_OPPORTUNITY_SEARCH = 'Opportunity search';
+var WORKFLOW_NETWORK_SEARCH = 'Network search';
 
 var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
@@ -291,10 +304,16 @@ var DROPDOWNS = {
   INTERACTION_STATUS: ['Scheduled', 'Completed', 'Cancelled'],
   INTERACTION_OUTCOME: ['Useful', 'Neutral', 'Dead end', 'Referral given', 'Opportunity created', 'Follow-up needed', 'System log'],
 
-  TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'None'],
+  SEARCH_ROUTINE_TYPE: [WORKFLOW_OPPORTUNITY_SEARCH, WORKFLOW_NETWORK_SEARCH],
+  SEARCH_FREQUENCY: ['Weekly', 'Twice a week', 'Fortnightly', 'Monthly'],
+  SEARCH_OPPORTUNITY_SOURCES: ['LinkedIn', 'Recruiters', 'Company career pages', 'Job boards', 'Newsletters', 'Other'],
+  SEARCH_NETWORK_SOURCES: ['Alumni', 'Former colleagues', 'Recruiters', 'Professional communities', 'Friends / warm network', 'Other'],
+
+  TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'Search routine', 'None'],
   TODO_WORKFLOW: [
     'Sector selection', 'Market mapping', 'Organisation classification', 'Org research',
-    'Job board scan', 'Org job scan', 'Opportunity scan', 'People sourcing', 'People source scan',
+    'Job board scan', 'Org job scan', 'Opportunity scan', WORKFLOW_OPPORTUNITY_SEARCH,
+    'People sourcing', 'People source scan', WORKFLOW_NETWORK_SEARCH,
     'Outreach', 'Send outreach', 'Contact follow-up',
     'Reply and arrange conversation', 'Conversation prep',
     'Reschedule conversation', 'Conversation debrief', 'Referral search',
@@ -314,7 +333,7 @@ var DROPDOWNS = {
   // was misleading. Consistent with minimizing daily choices elsewhere.
   TODO_TIME: ['15 min', '30 min', '45 min', '60 min', '90 min', '120 min', 'Multi-day'],
   TODO_COMMITMENT_CLASS: ['Fixed', 'Blocking', 'Keep-alive', 'Active pursuit', 'Pipeline-building', 'Backlog'],
-  TODO_SOURCE: ['Auto-triggered', 'Manually added', 'Onboarding', 'Decision', 'Manual pull'],
+  TODO_SOURCE: ['Auto-triggered', 'Manually added', 'Onboarding', 'Decision', 'Manual pull', 'Search routine'],
 
   ROUND_TYPE: ['Recruiter', 'Hiring manager', 'Panel', 'Case', 'Technical', 'Culture fit', 'Final', 'Other'],
   ROUND_STATUS: ['To schedule', 'Scheduled', 'Completed', 'Cancelled', 'Reschedule'],
@@ -1875,7 +1894,9 @@ function defaultTimeForWorkflow(workflow) {
     case 'Application blocker': return '30 min';
     case 'People sourcing':
     case 'Opportunity scan':
+    case WORKFLOW_OPPORTUNITY_SEARCH:
     case 'People source scan':
+    case WORKFLOW_NETWORK_SEARCH:
     case 'Org job scan':
     case 'Referral search':
     case 'Conversation prep': return '30 min';
@@ -2547,7 +2568,9 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
     case 'Org research':
     case 'People sourcing':
     case 'Opportunity scan':
+    case WORKFLOW_OPPORTUNITY_SEARCH:
     case 'People source scan':
+    case WORKFLOW_NETWORK_SEARCH:
     case 'Org job scan':
     case 'Job board scan':
       return 'Pipeline-building';
@@ -2558,7 +2581,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 
 function deriveEffortType(workflow) {
   var deep = ['Application preparation', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
-  var medium = ['People sourcing', 'People source scan', 'Org job scan', 'Opportunity scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
+  var medium = ['People sourcing', 'People source scan', WORKFLOW_NETWORK_SEARCH, 'Org job scan', 'Opportunity scan', WORKFLOW_OPPORTUNITY_SEARCH, 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
   var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Task unblocker', 'Interview scheduling', 'Plan interview prep', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
@@ -2926,7 +2949,8 @@ var LINKED_TO_MAP = {
   'Job': { sheet: 'Jobs', idCol: 1, nameCol: 2 },
   'Person': { sheet: 'People', idCol: 1, nameCol: 2 },
   'Organisation': { sheet: 'Organisations', idCol: 1, nameCol: 2 },
-  'Interview round': { sheet: 'Interviews', idCol: 1, nameCol: 3 }
+  'Interview round': { sheet: 'Interviews', idCol: 1, nameCol: 3 },
+  'Search routine': { sheet: 'Search Routines', idCol: 1, nameCol: 2 }
 };
 
 function resolveLinkedTo(objType, objId) {
@@ -3460,14 +3484,14 @@ function routeTodoCompletion(todo, options) {
 
 function handleSourceLedScanCompletion(todo, options) {
   if (options.sourceScanHandled) return;
-  if (todo.workflow === 'Opportunity scan') {
-    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Opportunity scan completed',
-      'Add/update jobs or organisations found', 'None', '', 'Opportunity scan',
+  if (isOpportunitySearchWorkflow(todo.workflow)) {
+    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Opportunity search completed',
+      'Add/update jobs or organisations found', 'None', '', todo.workflow,
       'Open the capture flow and add any opportunities or organisations found.' + (todo.notes ? '\n' + todo.notes : ''),
       { actionType: 'Capture data' });
-  } else if (todo.workflow === 'People source scan') {
-    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'People source scan completed',
-      'Add/update people found from source scan', 'None', '', 'People source scan',
+  } else if (isNetworkSearchWorkflow(todo.workflow)) {
+    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Network search completed',
+      'Add/update people found from Network search', 'None', '', todo.workflow,
       'Add people as Identified contacts. Outreach is a separate choice later.' + (todo.notes ? '\n' + todo.notes : ''),
       { actionType: 'Capture data' });
   }
@@ -6030,11 +6054,11 @@ function isInterviewPrepPlanningTask(todo) {
 }
 
 function isSourceLedScanTask(todo) {
-  return !!todo && ['Opportunity scan', 'People source scan'].indexOf(String(todo.workflow || '')) !== -1;
+  return !!todo && ['Opportunity scan', 'People source scan', WORKFLOW_OPPORTUNITY_SEARCH, WORKFLOW_NETWORK_SEARCH].indexOf(String(todo.workflow || '')) !== -1;
 }
 
 function workflowOpensCompletionPopup(workflow) {
-  return ['Submit application', 'Referral search', 'Plan interview prep', 'Opportunity scan', 'People source scan'].indexOf(String(workflow || '')) !== -1;
+  return ['Submit application', 'Referral search', 'Plan interview prep', 'Opportunity scan', 'People source scan', WORKFLOW_OPPORTUNITY_SEARCH, WORKFLOW_NETWORK_SEARCH].indexOf(String(workflow || '')) !== -1;
 }
 
 function createInterviewPrepPlanningTask(roundId) {
@@ -6778,6 +6802,7 @@ function dispatchCellEdit(sheet, row, col, value, e) {
       case 'Jobs': onEditJobs(sheet, row, col, value, e); break;
       case 'People': onEditPeople(sheet, row, col, value, e); break;
       case 'Conversations': onEditInteractions(sheet, row, col, value); break;
+      case 'Search Routines': onEditSearchRoutines(sheet, row, col, value, e); break;
       case 'Interviews': onEditRounds(sheet, row, col, value); break;
       case 'Tasks': onEditTasks(sheet, row, col, value, e); break;
       case 'Today': onEditToday(sheet, row, col, value); break;
@@ -7503,10 +7528,10 @@ function collectTaskPool(focus, tierLookup) {
 
 function taskMatchesFocus(workflow, objType, focus) {
   if (!focus || focus === 'Default') return true;
-  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Referral search', 'Submit application', 'Check application response', 'Offer decision', 'Opportunity scan'].indexOf(workflow) !== -1;
-  if (focus === 'Networking') return objType === 'Person' || workflow === 'People source scan';
+  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Referral search', 'Submit application', 'Check application response', 'Offer decision', 'Opportunity scan', WORKFLOW_OPPORTUNITY_SEARCH].indexOf(workflow) !== -1;
+  if (focus === 'Networking') return objType === 'Person' || workflow === 'People source scan' || workflow === WORKFLOW_NETWORK_SEARCH;
   if (focus === 'Interviews') return objType === 'Interview round' || /Interview/.test(workflow);
-  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'Opportunity scan', 'People sourcing', 'People source scan', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
+  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'Opportunity scan', WORKFLOW_OPPORTUNITY_SEARCH, 'People sourcing', 'People source scan', WORKFLOW_NETWORK_SEARCH, 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
   if (focus === 'Admin / light day') return workflow === 'Admin';
   return true;
 }
@@ -9151,7 +9176,7 @@ function refreshHome() {
   sheet.getRange(HOME_APPLICATIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Open applications').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   var applications = collectOpenApplications(4);
   if (!applications.length) {
-    sheet.getRange(HOME_APPLICATIONS_FIRST_ROW, 2, 1, 5).merge().setValue('No open applications. Capture a job or run an Opportunity scan.').setFontColor('#5F625E');
+    sheet.getRange(HOME_APPLICATIONS_FIRST_ROW, 2, 1, 5).merge().setValue('No open applications. Capture a job or add an Opportunity search routine.').setFontColor('#5F625E');
   } else {
     applications.forEach(function (app, idx) {
       var r = HOME_APPLICATIONS_FIRST_ROW + idx;
@@ -9279,6 +9304,7 @@ function clearSheetBody(sheet, headerKey) {
 function resetPlannerDataForOnboarding() {
   var dataTabs = [
     { name: 'Sectors', key: 'Sectors' }, { name: 'Organisations', key: 'Organisations' },
+    { name: 'Search Routines', key: 'Search Routines' },
     { name: 'Jobs', key: 'Jobs' }, { name: 'People', key: 'People' },
     { name: 'Conversations', key: 'Interactions' }, { name: 'Interviews', key: 'Interview rounds' },
     { name: 'Tasks', key: 'To-do' }, { name: 'Decisions', key: 'Pending decisions' }
@@ -9319,7 +9345,7 @@ function startFreshPlannerData() {
   var rows = plannerDataRowCount();
   var resp = ui.alert(
     'Start fresh?',
-    'This creates a full backup copy of this spreadsheet in Google Drive, then clears planner data from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Continue?',
+    'This creates a full backup copy of this spreadsheet in Google Drive, then clears planner data from Sectors, Organisations, Search Routines, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Continue?',
     ui.ButtonSet.YES_NO);
   if (resp !== ui.Button.YES) {
     SpreadsheetApp.getActiveSpreadsheet().toast('Start fresh cancelled. Existing planner data was not changed.', 'The Planner', 4);
@@ -9365,7 +9391,7 @@ function recordPlannerResetAudit(details) {
 }
 
 function plannerDataRowCount() {
-  var tabs = ['Sectors', 'Organisations', 'Jobs', 'People', 'Conversations', 'Interviews', 'Tasks', 'Decisions'];
+  var tabs = ['Sectors', 'Organisations', 'Search Routines', 'Jobs', 'People', 'Conversations', 'Interviews', 'Tasks', 'Decisions'];
   return tabs.reduce(function (count, name) {
     var sheet = getSheet(name);
     if (!sheet) return count;
@@ -9379,7 +9405,7 @@ function runSetupInterview() {
 }
 
 function buildSetupHtml() {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE;
+  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE, routineTypes = DROPDOWNS.SEARCH_ROUTINE_TYPE, frequencies = DROPDOWNS.SEARCH_FREQUENCY;
   var existingRows = plannerDataRowCount();
   var setupIntro = existingRows ? 'Add or revise starting facts. Existing planner data will be kept.' : 'This captures your starting facts and writes them to the right tabs.';
   var setupButton = 'Save setup';
@@ -9426,7 +9452,7 @@ function buildSetupHtml() {
     '<script>' +
     'var goal="", entryPoint="";' +
     'var existingRows=' + existingRows + ';' +
-    'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ';' +
+    'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ';' +
     'var forms={' +
     ' sectors:{title:"Add your first broad sector(s)",fields:[{k:"sectorNames",l:"Broad sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
@@ -9434,6 +9460,7 @@ function buildSetupHtml() {
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation, if relevant",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
     ' orgs:{title:"Capture organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
+    ' routines:{title:"Create a recurring search routine",fields:[{k:"routine",l:"Routine",t:"select",o:routineTypes,defaultValue:"Opportunity search"},{k:"sources",l:"Sources or networks to check",t:"textarea",p:"Opportunity search: LinkedIn, recruiters, newsletters\\nNetwork search: alumni, former colleagues, recruiters",req:true},{k:"frequency",l:"How often?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
     'function selectedResetMode(){return "append";}' +
@@ -9448,6 +9475,7 @@ function buildSetupHtml() {
     ' ["jobs","I have jobs I want to apply to","Creates a Not-started application and asks whether to start work."],' +
     ' ["people","I have people or conversations","Creates a Person and the right outreach/follow-up state."],' +
     ' ["orgs","I have organisations to track","Creates/classifies Organisations — status you pick is honored; Active only ever suggests, never floods job/people search."],' +
+    ' ["routines","I want recurring search routines","Creates an Opportunity search or Network search habit. The next task appears when due."],' +
     ' ["not_sure","I am not sure","Creates a light clarification task on Today."]];' +
     ' var c=document.getElementById("q2_options");c.innerHTML="";' +
     ' opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});' +
@@ -9504,6 +9532,7 @@ function setupChecklistFor(entryPoint, fields) {
     // rows) — there is no task-based completion signal to check, so this
     // item is always considered acknowledged once onboarding runs it.
     orgs: [{ alwaysDone: true, label: 'Review classified organisations', text: 'Review classified organisations', tab: 'Organisations', notes: 'The status you selected was applied as-is; Active only ever suggests people/job-search work.' }],
+    routines: [{ workflow: WORKFLOW_OPPORTUNITY_SEARCH, altWorkflows: [WORKFLOW_NETWORK_SEARCH], label: 'Run the first search routine', text: 'Run the first search routine', tab: 'Tasks', notes: 'The routine created one due task. Completing it captures results and advances the next run.' }],
     not_sure: [{ workflow: 'Admin', label: 'Clarify the most live part of the search', text: 'Clarify the most live part of the search', tab: 'Tasks', notes: 'Pick one anchor: interview, application, job, person, organisation, or sector.' }]
   };
   return map[entryPoint] || map.not_sure;
@@ -9517,6 +9546,7 @@ function processOnboardingCapture(goal, entryPoint, fields) {
   if (entryPoint === 'jobs') return processJobOnboarding(fields);
   if (entryPoint === 'people') return processPeopleOnboarding(fields);
   if (entryPoint === 'orgs') return processOrgOnboarding(fields);
+  if (entryPoint === 'routines') return processSearchRoutineOnboarding(fields);
   return processNotSureOnboarding(fields);
 }
 
@@ -9542,7 +9572,21 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
   if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   }
+  if (entryPoint === 'routines') {
+    if (!normalizeSearchRoutineType(fields.routine)) return failResult('Choose Opportunity search or Network search.', 'routine', 'INVALID_ROUTINE');
+    if (!splitInputList(fields.sources).length) return failResult('Add at least one source or network to check.', 'sources', 'MISSING_SOURCES');
+    if (!normalizeSearchFrequency(fields.frequency)) return failResult('Choose how often to run this search.', 'frequency', 'INVALID_FREQUENCY');
+  }
   return okResult('Valid.');
+}
+
+function processSearchRoutineOnboarding(fields) {
+  return createSearchRoutine({
+    routine: fields.routine,
+    sources: fields.sources,
+    frequency: fields.frequency,
+    notes: fields.notes
+  });
 }
 
 // Sector onboarding uses the exact same upsertSectorBranch/
@@ -9909,7 +9953,7 @@ function completeSetupFromPopup(payload) {
   if (shouldReset && rowsBeforeReset > 0 && payload.resetConfirmed !== true) {
     var resp = SpreadsheetApp.getUi().alert(
       'Clear existing planner data?',
-      'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Make a backup first if you may need to recover it. Continue?',
+      'This clears all Sectors/Organisations/Search Routines/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Make a backup first if you may need to recover it. Continue?',
       SpreadsheetApp.getUi().ButtonSet.YES_NO);
     if (resp !== SpreadsheetApp.getUi().Button.YES) return failResult('Setup cancelled. Existing planner data was not changed.', '', 'SETUP_RESET_CANCELLED');
   }
@@ -10269,23 +10313,23 @@ function completeReferralSearchResultFromPopup(payload) {
 
 function buildSourceScanResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
-  if (!todo || !isSourceLedScanTask(todo)) return '<p>Source scan task not found.</p>';
-  var isPeople = todo.workflow === 'People source scan';
+  if (!todo || !isSourceLedScanTask(todo)) return '<p>Search task not found.</p>';
+  var isPeople = isNetworkSearchWorkflow(todo.workflow);
   var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FBFBF9;color:#1B474D;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
-    '<h2>Capture scan results</h2><p id="intro"></p>' +
+    '<h2>Capture search results</h2><p id="intro"></p>' +
     '<div id="peopleBlock" class="hidden"><label>People found<textarea id="personNames" placeholder="One per line, or comma-separated"></textarea></label><label>Relationship source<select id="relType"></select></label><label>Organisation, if relevant<input id="personOrg"></label><label>Notes/source<textarea id="peopleNotes"></textarea></label><div class="hint">People are saved as Identified. Outreach is not created automatically.</div></div>' +
     '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
-    '<button class="primary" type="button" onclick="save(false)">Save results</button><button class="secondary" type="button" onclick="save(true)">Nothing useful found</button><div id="status"></div>' +
+    '<button class="primary" type="button" onclick="save(false,false)">Save results</button><button class="secondary" type="button" onclick="save(true,false)">Nothing useful found</button><button class="secondary" type="button" onclick="save(false,true)">Need more time</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});' +
-    'function save(noResults){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or use Nothing useful found.";return;}if(!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or use Nothing useful found.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
 function runSourceScanResultPopup(todoId, decisionId) {
-  var html = HtmlService.createHtmlOutput(buildSourceScanResultHtml(todoId, decisionId || '')).setWidth(600).setHeight(650).setTitle('Capture scan results');
-  SpreadsheetApp.getUi().showModalDialog(html, 'Capture scan results');
+  var html = HtmlService.createHtmlOutput(buildSourceScanResultHtml(todoId, decisionId || '')).setWidth(600).setHeight(650).setTitle('Capture search results');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Capture search results');
 }
 
 function processSourceLedPeopleCapture(fields) {
@@ -10307,7 +10351,7 @@ function processSourceLedPeopleCapture(fields) {
     if (fields.peopleNotes) appendNoteFlag(peopleSheet, person.row, COLS.PEOPLE.NOTES, fields.peopleNotes);
   });
   syncPeopleHelperColumns();
-  return okResult('Captured ' + names.length + ' people from source scan as Identified.');
+  return okResult('Captured ' + names.length + ' people from Network search as Identified.');
 }
 
 function completeSourceScanResultFromPopup(payload) {
@@ -10315,13 +10359,24 @@ function completeSourceScanResultFromPopup(payload) {
     try {
       payload = payload || {};
       var todo = getTodoById(payload.todoId);
-      if (!todo || !isSourceLedScanTask(todo)) return failResult('I could not find that source-scan task.', '', 'TASK_NOT_FOUND');
+      if (!todo || !isSourceLedScanTask(todo)) return failResult('I could not find that search task.', '', 'TASK_NOT_FOUND');
       var result;
       var noResults = payload.noResults === true || String(payload.noResults || '') === 'true';
+      var needMoreTime = payload.needMoreTime === true || String(payload.needMoreTime || '') === 'true';
+      if (needMoreTime) {
+        todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Not started');
+        todo.sheet.getRange(todo.row, COLS.TODO.COMPLETED).clearContent();
+        appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[more-time] Search left open from result popup.');
+        resolvePopupDecision(payload.decisionId, '', 'Search task left open');
+        populateToday();
+        refreshHome();
+        renderTodayDecisionCards();
+        return okResult('Search task left open. It will stay available in Tasks/Today.');
+      }
       if (noResults) {
-        appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[no-results] Source scan completed without useful rows found.');
-        result = okResult('Closed source scan with no new rows.');
-      } else if (todo.workflow === 'People source scan') {
+        appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[no-results] Search completed without useful rows found.');
+        result = okResult('Closed search with no new rows.');
+      } else if (isNetworkSearchWorkflow(todo.workflow)) {
         result = processSourceLedPeopleCapture(payload);
       } else {
         var captured = [];
@@ -10336,11 +10391,12 @@ function completeSourceScanResultFromPopup(payload) {
           if (!jobResult.ok) return jobResult;
           captured.push('opportunity');
         }
-        result = okResult('Captured scan result: ' + (captured.length ? captured.join(' and ') : 'nothing new') + '.');
+        result = okResult('Captured search result: ' + (captured.length ? captured.join(' and ') : 'nothing new') + '.');
       }
       if (!result.ok) return result;
       completeTodo(todo.id, 'Done', { source: 'source-scan-popup', sourceScanHandled: true });
-      resolvePopupDecision(payload.decisionId, '', noResults ? 'No source-scan results captured' : 'Captured source-scan results');
+      advanceSearchRoutineForTodo(todo);
+      resolvePopupDecision(payload.decisionId, '', noResults ? 'No search results captured' : 'Captured search results');
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
@@ -10736,6 +10792,342 @@ function processJobCapture(fields) {
   }
   return okResult((exactExistingJob ? 'Updated existing' : 'Created') + ' job/application: ' + fields.jobTitle + ' at ' + (org ? org.name : fields.org) + '.');
 }
+
+function normalizeSearchRoutineType(value) {
+  var v = String(value || '').trim();
+  if (v === 'Opportunity sourcing' || v === 'Job board scan' || v === 'Opportunity scan') return WORKFLOW_OPPORTUNITY_SEARCH;
+  if (v === 'Network sourcing' || v === 'People-led sourcing' || v === 'People source scan') return WORKFLOW_NETWORK_SEARCH;
+  return DROPDOWNS.SEARCH_ROUTINE_TYPE.indexOf(v) !== -1 ? v : '';
+}
+
+function normalizeSearchFrequency(value) {
+  var v = String(value || '').trim();
+  return DROPDOWNS.SEARCH_FREQUENCY.indexOf(v) !== -1 ? v : '';
+}
+
+function isOpportunitySearchWorkflow(workflow) {
+  return ['Opportunity scan', WORKFLOW_OPPORTUNITY_SEARCH].indexOf(String(workflow || '')) !== -1;
+}
+
+function isNetworkSearchWorkflow(workflow) {
+  return ['People source scan', WORKFLOW_NETWORK_SEARCH].indexOf(String(workflow || '')) !== -1;
+}
+
+function isRecurringSearchWorkflow(workflow) {
+  return [WORKFLOW_OPPORTUNITY_SEARCH, WORKFLOW_NETWORK_SEARCH].indexOf(String(workflow || '')) !== -1;
+}
+
+function searchRoutineTaskTitle(routine) {
+  routine = normalizeSearchRoutineType(routine);
+  if (routine === WORKFLOW_NETWORK_SEARCH) return 'Review people to contact';
+  return 'Look for opportunities';
+}
+
+function searchRoutineSourcesList(value) {
+  return splitInputList(value).filter(function (source) { return !!String(source || '').trim(); });
+}
+
+function searchRoutineNotesFromRow(row) {
+  var sources = searchRoutineSourcesList(row[COLS.SEARCH.SOURCES - 1]);
+  var notes = [];
+  notes.push('Run this search routine.');
+  if (sources.length) {
+    notes.push('');
+    notes.push('Check:');
+    sources.forEach(function (source) { notes.push('- ' + source); });
+  }
+  var extra = String(row[COLS.SEARCH.NOTES - 1] || '').trim();
+  if (extra) {
+    notes.push('');
+    notes.push(extra);
+  }
+  notes.push('');
+  notes.push('When finished, mark Done and capture what you found.');
+  return notes.join('\n');
+}
+
+function nextSearchRunDate(baseDate, frequency) {
+  var date = parseDateOr(baseDate) || today();
+  var freq = normalizeSearchFrequency(frequency) || 'Weekly';
+  if (freq === 'Twice a week') return addDays(date, 3);
+  if (freq === 'Fortnightly') return addDays(date, 14);
+  if (freq === 'Monthly') {
+    var next = new Date(date);
+    next.setMonth(next.getMonth() + 1);
+    next.setHours(0, 0, 0, 0);
+    return next;
+  }
+  return addDays(date, 7);
+}
+
+function getSearchRoutineById(routineId) {
+  var sheet = getSheet('Search Routines');
+  if (!sheet || !routineId || sheet.getLastRow() < 2) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Search Routines'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.SEARCH.ID - 1] || '') === String(routineId)) return { row: i + 2, data: data[i] };
+  }
+  return null;
+}
+
+function findOpenSearchRoutineTodo(routineId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || !routineId || sheet.getLastRow() < 2) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1] || '') !== 'Search routine') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1] || '') !== String(routineId)) continue;
+    if (!isOpenTodoStatus(String(data[i][COLS.TODO.STATUS - 1] || ''))) continue;
+    return { row: i + 2, id: String(data[i][COLS.TODO.ID - 1] || ''), data: data[i] };
+  }
+  return null;
+}
+
+function ensureSearchRoutineId(sheet, row) {
+  if (!sheet || row <= 1) return '';
+  var existing = String(sheet.getRange(row, COLS.SEARCH.ID).getValue() || '');
+  if (existing) return existing;
+  var hasRoutine = String(sheet.getRange(row, COLS.SEARCH.ROUTINE).getValue() || '').trim();
+  var hasSources = String(sheet.getRange(row, COLS.SEARCH.SOURCES).getValue() || '').trim();
+  if (!hasRoutine && !hasSources) return '';
+  var id = nextId(sheet, COLS.SEARCH.ID, 'SR');
+  sheet.getRange(row, COLS.SEARCH.ID).setValue(id);
+  return id;
+}
+
+function syncOpenSearchRoutineTask(sheet, row) {
+  var routineId = String(sheet.getRange(row, COLS.SEARCH.ID).getValue() || '');
+  if (!routineId) return;
+  var values = sheet.getRange(row, 1, 1, HEADERS['Search Routines'].length).getValues()[0];
+  var routine = normalizeSearchRoutineType(values[COLS.SEARCH.ROUTINE - 1]);
+  if (!routine) return;
+  if (String(values[COLS.SEARCH.ENABLED - 1] || 'Yes') === 'No') {
+    cancelOpenSearchRoutineTask(routineId, 'Routine turned off');
+    sheet.getRange(row, COLS.SEARCH.OPEN_TASK_ID).clearContent();
+    return;
+  }
+  var existing = findOpenSearchRoutineTodo(routineId);
+  if (!existing) return;
+  var todoSheet = getSheet('Tasks');
+  todoSheet.getRange(existing.row, COLS.TODO.TASK).setValue(searchRoutineTaskTitle(routine));
+  todoSheet.getRange(existing.row, COLS.TODO.WORKFLOW).setValue(routine);
+  todoSheet.getRange(existing.row, COLS.TODO.DUE_DATE).setValue(values[COLS.SEARCH.NEXT_RUN - 1] || today());
+  todoSheet.getRange(existing.row, COLS.TODO.TIME_EST).setValue(defaultTimeForWorkflow(routine));
+  todoSheet.getRange(existing.row, COLS.TODO.NOTES).setValue(searchRoutineNotesFromRow(values));
+  todoSheet.getRange(existing.row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(routine, values[COLS.SEARCH.NEXT_RUN - 1] || today(), routineId, 'Search routine'));
+  todoSheet.getRange(existing.row, COLS.TODO.EFFORT_TYPE).setValue(deriveEffortType(routine));
+  sheet.getRange(row, COLS.SEARCH.OPEN_TASK_ID).setValue(existing.id);
+}
+
+function cancelOpenSearchRoutineTask(routineId, reason) {
+  var existing = findOpenSearchRoutineTodo(routineId);
+  if (!existing) return false;
+  var sheet = getSheet('Tasks');
+  sheet.getRange(existing.row, COLS.TODO.STATUS).setValue('Cancelled');
+  sheet.getRange(existing.row, COLS.TODO.COMPLETED).setValue(today());
+  appendNoteFlag(sheet, existing.row, COLS.TODO.NOTES, '[routine-off] ' + (reason || 'Search routine paused'));
+  syncTodayRowForTodo(existing.row, 'Cancelled');
+  return true;
+}
+
+function onEditSearchRoutines(sheet, row, col, newVal, e) {
+  if (row <= 1) return;
+  var id = ensureSearchRoutineId(sheet, row);
+  if (!id) return;
+  var values = sheet.getRange(row, 1, 1, HEADERS['Search Routines'].length).getValues()[0];
+  var routine = normalizeSearchRoutineType(values[COLS.SEARCH.ROUTINE - 1]);
+  var frequency = normalizeSearchFrequency(values[COLS.SEARCH.FREQUENCY - 1]) || 'Weekly';
+  var enabled = String(values[COLS.SEARCH.ENABLED - 1] || '').trim();
+  if (routine && routine !== String(values[COLS.SEARCH.ROUTINE - 1] || '')) sheet.getRange(row, COLS.SEARCH.ROUTINE).setValue(routine);
+  if (!values[COLS.SEARCH.FREQUENCY - 1]) sheet.getRange(row, COLS.SEARCH.FREQUENCY).setValue(frequency);
+  if (!values[COLS.SEARCH.ENABLED - 1]) sheet.getRange(row, COLS.SEARCH.ENABLED).setValue('Yes');
+  if (!values[COLS.SEARCH.NEXT_RUN - 1]) sheet.getRange(row, COLS.SEARCH.NEXT_RUN).setValue(today());
+  if (enabled && DROPDOWNS.YES_NO.indexOf(enabled) === -1) {
+    sheet.getRange(row, COLS.SEARCH.ENABLED).setValue('Yes');
+    appendNoteFlag(sheet, row, COLS.SEARCH.NOTES, '[invalid-value] On? reset to Yes');
+  }
+  syncOpenSearchRoutineTask(sheet, row);
+  materializeDueSearchRoutines(today());
+  populateToday();
+  refreshHome();
+}
+
+function createSearchRoutine(payload) {
+  payload = payload || {};
+  var routine = normalizeSearchRoutineType(payload.routine);
+  if (!routine) return failResult('Choose Opportunity search or Network search.', 'routine', 'INVALID_ROUTINE');
+  var sources = Array.isArray(payload.sources) ? payload.sources : splitInputList(payload.sources);
+  sources = sources.map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+  if (!sources.length) return failResult('Choose at least one source to check.', 'sources', 'MISSING_SOURCES');
+  var frequency = normalizeSearchFrequency(payload.frequency);
+  if (!frequency) return failResult('Choose how often to run this search.', 'frequency', 'INVALID_FREQUENCY');
+  var sheet = getSheet('Search Routines');
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Search Routines');
+    sheet.getRange(1, 1, 1, HEADERS['Search Routines'].length).setValues([HEADERS['Search Routines']]);
+    styleHeader(sheet, HEADERS['Search Routines'].length);
+  }
+  var routineId = String(payload.routineId || '').trim();
+  var existing = routineId ? getSearchRoutineById(routineId) : null;
+  var enabled = DROPDOWNS.YES_NO.indexOf(String(payload.enabled || 'Yes')) !== -1 ? String(payload.enabled || 'Yes') : 'Yes';
+  if (existing) {
+    sheet.getRange(existing.row, COLS.SEARCH.ROUTINE).setValue(routine);
+    sheet.getRange(existing.row, COLS.SEARCH.SOURCES).setValue(sources.join('\n'));
+    sheet.getRange(existing.row, COLS.SEARCH.FREQUENCY).setValue(frequency);
+    sheet.getRange(existing.row, COLS.SEARCH.ENABLED).setValue(enabled);
+    if (!sheet.getRange(existing.row, COLS.SEARCH.NEXT_RUN).getValue()) sheet.getRange(existing.row, COLS.SEARCH.NEXT_RUN).setValue(today());
+    sheet.getRange(existing.row, COLS.SEARCH.NOTES).setValue(String(payload.notes || '').trim());
+    syncOpenSearchRoutineTask(sheet, existing.row);
+    applySheetDropdowns('Search Routines');
+    colorCodeManualFields();
+    applyColumnWidths();
+    if (enabled === 'Yes') materializeDueSearchRoutines(today());
+    return okResult(enabled === 'No' ? 'Search routine paused.' : 'Search routine updated.');
+  }
+  var row = new Array(HEADERS['Search Routines'].length).fill('');
+  row[COLS.SEARCH.ID - 1] = nextId(sheet, COLS.SEARCH.ID, 'SR');
+  row[COLS.SEARCH.ROUTINE - 1] = routine;
+  row[COLS.SEARCH.SOURCES - 1] = sources.join('\n');
+  row[COLS.SEARCH.FREQUENCY - 1] = frequency;
+  row[COLS.SEARCH.NEXT_RUN - 1] = today();
+  row[COLS.SEARCH.ENABLED - 1] = enabled;
+  row[COLS.SEARCH.NOTES - 1] = String(payload.notes || '').trim();
+  sheet.appendRow(row);
+  applySheetDropdowns('Search Routines');
+  colorCodeManualFields();
+  applyColumnWidths();
+  if (enabled === 'Yes') materializeDueSearchRoutines(today());
+  return okResult(enabled === 'No' ? 'Search routine saved and paused.' : 'Search routine saved. The first task is due now.');
+}
+
+function searchRoutinesForPopup() {
+  var sheet = getSheet('Search Routines');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Search Routines'].length).getValues();
+  return data.map(function (row) {
+    var id = String(row[COLS.SEARCH.ID - 1] || '');
+    var routine = normalizeSearchRoutineType(row[COLS.SEARCH.ROUTINE - 1]);
+    if (!id || !routine) return null;
+    return {
+      id: id,
+      label: routine + ' - ' + (String(row[COLS.SEARCH.SOURCES - 1] || '').split(/\n|,/).filter(Boolean).slice(0, 2).join(', ') || 'no sources yet'),
+      routine: routine,
+      sources: String(row[COLS.SEARCH.SOURCES - 1] || ''),
+      frequency: normalizeSearchFrequency(row[COLS.SEARCH.FREQUENCY - 1]) || 'Weekly',
+      enabled: String(row[COLS.SEARCH.ENABLED - 1] || 'Yes'),
+      notes: String(row[COLS.SEARCH.NOTES - 1] || '')
+    };
+  }).filter(Boolean);
+}
+
+function buildSearchRoutineHtml() {
+  var data = {
+    routines: DROPDOWNS.SEARCH_ROUTINE_TYPE,
+    opportunitySources: DROPDOWNS.SEARCH_OPPORTUNITY_SOURCES,
+    networkSources: DROPDOWNS.SEARCH_NETWORK_SOURCES,
+    frequencies: DROPDOWNS.SEARCH_FREQUENCY,
+    existing: searchRoutinesForPopup()
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;line-height:1.35;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'select,textarea{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    'textarea{min-height:70px;resize:vertical;}.suggestions{font-size:12px;color:#6E716C;margin-top:5px;line-height:1.35;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Add or modify search routine</h2><p>Set up or adjust a recurring search habit. The Planner creates the next task only when it is due.</p>' +
+    '<label>Routine to edit<select id="routineId"></select></label>' +
+    '<label>Routine<select id="routine"></select></label>' +
+    '<label>Sources or networks to check<textarea id="sources" placeholder="One per line, or comma-separated"></textarea><div id="suggestions" class="suggestions"></div></label>' +
+    '<label>How often?<select id="frequency"></select></label>' +
+    '<label>On?<select id="enabled"><option>Yes</option><option>No</option></select></label>' +
+    '<label>Notes, links, or search instructions<textarea id="notes"></textarea></label>' +
+    '<div class="hint">Network search asks which networks and how often. Add details later in Notes if useful.</div>' +
+    '<button class="primary" type="button" onclick="save()">Save routine</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';var routineId=document.getElementById("routineId"),routine=document.getElementById("routine"),freq=document.getElementById("frequency"),sources=document.getElementById("sources"),enabled=document.getElementById("enabled"),notes=document.getElementById("notes"),suggestions=document.getElementById("suggestions");' +
+    'function addOpt(sel,val,text){var opt=document.createElement("option");opt.value=val;opt.textContent=text||val;sel.appendChild(opt);}addOpt(routineId,"","Add new routine");data.existing.forEach(function(r){addOpt(routineId,r.id,r.label);});data.routines.forEach(function(r){addOpt(routine,r,r);});data.frequencies.forEach(function(f){addOpt(freq,f,f);});freq.value="Weekly";' +
+    'function sourceList(){return routine.value==="Network search"?data.networkSources:data.opportunitySources;}function renderSuggestions(){suggestions.textContent="Suggestions: "+sourceList().join(", ");}' +
+    'function loadExisting(){var id=routineId.value;if(!id){routine.value="Opportunity search";freq.value="Weekly";enabled.value="Yes";sources.value="";notes.value="";renderSuggestions();return;}var found=data.existing.filter(function(r){return r.id===id;})[0];if(!found)return;routine.value=found.routine;freq.value=found.frequency||"Weekly";enabled.value=found.enabled==="No"?"No":"Yes";sources.value=found.sources||"";notes.value=found.notes||"";renderSuggestions();}' +
+    'routine.onchange=renderSuggestions;routineId.onchange=loadExisting;loadExisting();' +
+    'function save(){var payload={routineId:routineId.value,routine:routine.value,sources:sources.value,frequency:freq.value,enabled:enabled.value,notes:notes.value};var status=document.getElementById("status");if(!String(payload.sources||"").trim()){status.textContent="Add at least one source or network.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from the menu.";}).completeSearchRoutineFromPopup(payload);}</script>';
+}
+
+function runSearchRoutinePopup() {
+  var html = HtmlService.createHtmlOutput(buildSearchRoutineHtml()).setWidth(560).setHeight(650).setTitle('Add or modify search routine');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Add or modify search routine');
+}
+
+function completeSearchRoutineFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      var result = createSearchRoutine(payload || {});
+      if (!result.ok) return result;
+      refreshAllDropdowns();
+      populateToday();
+      refreshHome();
+      colorCodeManualFields();
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeSearchRoutineFromPopup', err);
+    }
+  }, { label: 'completeSearchRoutineFromPopup', timeoutMs: 30000 });
+}
+
+function materializeDueSearchRoutines(todayDate) {
+  var sheet = getSheet('Search Routines');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  todayDate = todayDate || today();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Search Routines'].length).getValues();
+  var created = 0;
+  for (var i = 0; i < data.length; i++) {
+    var row = i + 2;
+    var routineId = String(data[i][COLS.SEARCH.ID - 1] || '');
+    var routine = normalizeSearchRoutineType(data[i][COLS.SEARCH.ROUTINE - 1]);
+    var enabled = String(data[i][COLS.SEARCH.ENABLED - 1] || 'Yes');
+    var frequency = normalizeSearchFrequency(data[i][COLS.SEARCH.FREQUENCY - 1]) || 'Weekly';
+    var nextRun = data[i][COLS.SEARCH.NEXT_RUN - 1] || todayDate;
+    if (!routineId) routineId = ensureSearchRoutineId(sheet, row);
+    if (!routine) continue;
+    if (!data[i][COLS.SEARCH.FREQUENCY - 1]) sheet.getRange(row, COLS.SEARCH.FREQUENCY).setValue(frequency);
+    if (!data[i][COLS.SEARCH.ENABLED - 1]) sheet.getRange(row, COLS.SEARCH.ENABLED).setValue('Yes');
+    if (!data[i][COLS.SEARCH.NEXT_RUN - 1]) sheet.getRange(row, COLS.SEARCH.NEXT_RUN).setValue(nextRun);
+    if (enabled === 'No') {
+      cancelOpenSearchRoutineTask(routineId, 'Routine is off');
+      sheet.getRange(row, COLS.SEARCH.OPEN_TASK_ID).clearContent();
+      continue;
+    }
+    if (!isDueOnOrBefore(nextRun, todayDate)) continue;
+    var existing = findOpenSearchRoutineTodo(routineId);
+    if (existing) {
+      syncOpenSearchRoutineTask(sheet, row);
+      sheet.getRange(row, COLS.SEARCH.OPEN_TASK_ID).setValue(existing.id);
+      continue;
+    }
+    var todoId = appendTodoOnceForWorkflow(searchRoutineTaskTitle(routine), 'Search routine', routineId, '', routine,
+      'Not started', nextRun, defaultTimeForWorkflow(routine), searchRoutineNotesFromRow(data[i]), 'Search routine');
+    if (todoId) {
+      sheet.getRange(row, COLS.SEARCH.OPEN_TASK_ID).setValue(todoId);
+      created++;
+    }
+  }
+  return created;
+}
+
+function advanceSearchRoutineForTodo(todo) {
+  if (!todo || todo.objType !== 'Search routine' || !isRecurringSearchWorkflow(todo.workflow)) return false;
+  var routine = getSearchRoutineById(todo.objId);
+  if (!routine) return false;
+  var sheet = getSheet('Search Routines');
+  var frequency = normalizeSearchFrequency(routine.data[COLS.SEARCH.FREQUENCY - 1]) || 'Weekly';
+  sheet.getRange(routine.row, COLS.SEARCH.LAST_RUN).setValue(today());
+  sheet.getRange(routine.row, COLS.SEARCH.NEXT_RUN).setValue(nextSearchRunDate(today(), frequency));
+  sheet.getRange(routine.row, COLS.SEARCH.OPEN_TASK_ID).clearContent();
+  return true;
+}
 // =============================================================
 // VISUAL POLISH — rich-text guidance headers, manual/auto shading,
 // status colour coding, hidden backend columns, tab zones
@@ -10777,6 +11169,17 @@ var HEADER_GUIDANCE = {
   'Interactions': {
     'Interaction ID': 'Filled automatically.', 'Date': 'Interaction or scheduled conversation date.', 'Person ID': 'Filled automatically from Person.', 'Person': 'Pick or type the person; Home > Add or update is preferred.', 'Organisation': 'Filled from the linked Person when known.',
     'Type': 'Call, email, message, referral, interview, or other.', 'Interaction status': 'Scheduled / Completed / Cancelled.', 'Key notes': 'What changed or what to remember.', 'Outcome': 'Use after Completed; can route follow-up, referral, or opportunity work.'
+  },
+  'Search Routines': {
+    'Routine ID': 'Filled automatically.',
+    'Routine': 'Opportunity search or Network search.',
+    'Sources to check': 'Pick the channels or networks to review.',
+    'How often': 'How often the next search task should appear.',
+    'Next run': 'Next date this routine should create a task.',
+    'On?': 'Yes keeps creating tasks; No pauses this routine.',
+    'Last run': 'Filled when the search task is completed.',
+    'Open task': 'Filled when a due search task is already open.',
+    'Notes': 'Optional context, links, or search instructions.'
   },
   'To-do': {
     'Task ID': 'system', 'Task': 'Master task queue — inspect, repair, audit', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
@@ -10904,6 +11307,7 @@ var MANUAL_COLUMNS = {
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.OUTREACH_DATE, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.APPLIED_DATE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
+  'Search Routines': [COLS.SEARCH.ROUTINE, COLS.SEARCH.SOURCES, COLS.SEARCH.FREQUENCY, COLS.SEARCH.NEXT_RUN, COLS.SEARCH.ENABLED, COLS.SEARCH.NOTES],
   'To-do': [COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP, COLS.TODO.BLOCKER],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
@@ -10915,6 +11319,7 @@ var COLUMN_WIDTHS = {
   'People': { 2: 190, 3: 200, 5: 170, 6: 175, 7: 185, 8: 125, 9: 120, 11: 125, 12: 135, 13: 300, 15: 125, 16: 260, 17: 260 },
   'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 7: 125, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 135, 8: 320, 9: 160 },
+  'Search Routines': { 2: 170, 3: 300, 4: 130, 5: 120, 6: 70, 7: 120, 8: 120, 9: 320 },
   'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100, 23: 150, 24: 120, 25: 70, 26: 220, 27: 125, 28: 150, 29: 240 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
   "Today's plan": { 1: 80, 2: 340, 4: 110, 5: 100, 6: 100, 7: 120, 8: 100, 9: 340 },
@@ -10924,6 +11329,7 @@ var COLUMN_WIDTHS = {
 var WRAP_COLUMNS = {
   'Sectors': [COLS.SECTORS.SUBSECTOR, COLS.SECTORS.NOTES], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES, COLS.PEOPLE.NEXT_ACTION, COLS.PEOPLE.LINKED_JOBS],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES], 'Interactions': [COLS.INTERACTIONS.NOTES],
+  'Search Routines': [COLS.SEARCH.SOURCES, COLS.SEARCH.NOTES],
   'To-do': [COLS.TODO.TASK, COLS.TODO.NOTES, COLS.TODO.PARENT_TASK, COLS.TODO.CHILD_PROGRESS, COLS.TODO.BLOCKER], 'Interview rounds': [COLS.ROUNDS.NOTES],
   "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES, COLS.DECISIONS.LINKED_TO, COLS.DECISIONS.RESULT]
 };
@@ -10943,6 +11349,7 @@ var STATUS_COLOR_MAP = {
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'To outreach': '#FEF7CD', 'Outreach drafted': '#FEF7CD', 'Outreach sent': '#C2DBFF', 'Replied': '#B6E3E0', 'Conversation scheduled': '#D2E3FC', 'Conversation completed': '#CEEAD6', 'Keep warm': '#FEF7CD', 'Closed': '#EAE3DD' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
   'Interactions': { col: COLS.INTERACTIONS.STATUS, colors: { 'Scheduled': '#D2E3FC', 'Completed': '#CEEAD6', 'Cancelled': '#EAE3DD' } },
+  'Search Routines': { col: COLS.SEARCH.ENABLED, colors: { 'Yes': '#CEEAD6', 'No': '#F1F3F4' } },
   'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
   'Interview rounds': { col: COLS.ROUNDS.STATUS, colors: { 'To schedule': '#FEF7CD', 'Scheduled': '#D2E3FC', 'Completed': '#CEEAD6', 'Cancelled': '#EAE3DD', 'Reschedule': '#FDE9D9' } },
   "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
@@ -11074,6 +11481,7 @@ function hiddenColumnsFor(canonicalName) {
   if (canonicalName === 'Jobs') return [COLS.JOBS.ID, COLS.JOBS.ORG_ID, COLS.JOBS.CONTACTS_IDS, COLS.JOBS.REVIEW_DATE];
   if (canonicalName === 'People') return [COLS.PEOPLE.ID, COLS.PEOPLE.ORG_ID, COLS.PEOPLE.FOLLOW_UP_SENT, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT];
   if (canonicalName === 'Conversations') return [COLS.INTERACTIONS.ID, COLS.INTERACTIONS.PERSON_ID];
+  if (canonicalName === 'Search Routines') return [COLS.SEARCH.ID, COLS.SEARCH.OPEN_TASK_ID];
   // v7.6 §2.1: Commitment class unhidden — it's the single most important
   // triage signal on this tab, and COMMITMENT_CLASS_COLORS conditional
   // formatting is already wired to it, just previously sitting unused on
@@ -11553,6 +11961,11 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.INTERACTIONS.OUTCOME, maxRow, 1), DROPDOWNS.INTERACTION_OUTCOME, { allowInvalid: false });
       refreshInteractionPersonDropdown();
       break;
+    case 'Search Routines':
+      setDropdown(sheet.getRange(2, COLS.SEARCH.ROUTINE, maxRow, 1), DROPDOWNS.SEARCH_ROUTINE_TYPE, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.SEARCH.FREQUENCY, maxRow, 1), DROPDOWNS.SEARCH_FREQUENCY, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.SEARCH.ENABLED, maxRow, 1), DROPDOWNS.YES_NO, { allowInvalid: false });
+      break;
     case 'Tasks':
       setDropdown(sheet.getRange(2, COLS.TODO.OBJ_TYPE, maxRow, 1), DROPDOWNS.TODO_OBJ_TYPE);
       setDropdown(sheet.getRange(2, COLS.TODO.WORKFLOW, maxRow, 1), DROPDOWNS.TODO_WORKFLOW, { allowInvalid: false });
@@ -11581,7 +11994,7 @@ function applySheetDropdowns(canonicalName) {
 }
 
 function refreshAllDropdowns() {
-  ['Sectors', 'Organisations', 'People', 'Jobs', 'Conversations', 'Tasks', 'Interviews', 'Today', 'Decisions'].forEach(applySheetDropdowns);
+  ['Sectors', 'Organisations', 'Search Routines', 'People', 'Jobs', 'Conversations', 'Tasks', 'Interviews', 'Today', 'Decisions'].forEach(applySheetDropdowns);
 }
 
 // =============================================================
@@ -11601,6 +12014,9 @@ function dropdownIntegrityRules() {
     { sheet: 'Jobs', headerKey: 'Jobs', col: COLS.JOBS.OUTCOME, notesCol: COLS.JOBS.NOTES, label: 'Application result', values: DROPDOWNS.JOB_OUTCOME },
     { sheet: 'Conversations', headerKey: 'Interactions', col: COLS.INTERACTIONS.STATUS, notesCol: COLS.INTERACTIONS.NOTES, label: 'Interaction status', values: DROPDOWNS.INTERACTION_STATUS },
     { sheet: 'Conversations', headerKey: 'Interactions', col: COLS.INTERACTIONS.OUTCOME, notesCol: COLS.INTERACTIONS.NOTES, label: 'Outcome', values: DROPDOWNS.INTERACTION_OUTCOME },
+    { sheet: 'Search Routines', headerKey: 'Search Routines', col: COLS.SEARCH.ROUTINE, notesCol: COLS.SEARCH.NOTES, label: 'Routine', values: DROPDOWNS.SEARCH_ROUTINE_TYPE },
+    { sheet: 'Search Routines', headerKey: 'Search Routines', col: COLS.SEARCH.FREQUENCY, notesCol: COLS.SEARCH.NOTES, label: 'How often', values: DROPDOWNS.SEARCH_FREQUENCY },
+    { sheet: 'Search Routines', headerKey: 'Search Routines', col: COLS.SEARCH.ENABLED, notesCol: COLS.SEARCH.NOTES, label: 'On?', values: DROPDOWNS.YES_NO },
     { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.OBJ_TYPE, notesCol: COLS.TODO.NOTES, label: 'Linked object type', values: DROPDOWNS.TODO_OBJ_TYPE },
     { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.WORKFLOW, notesCol: COLS.TODO.NOTES, label: 'Workflow', values: DROPDOWNS.TODO_WORKFLOW },
     { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.STATUS, notesCol: COLS.TODO.NOTES, label: 'Status', values: DROPDOWNS.TODO_STATUS },
@@ -11654,6 +12070,7 @@ function duplicateIdIntegrityRules() {
     { sheet: 'Jobs', headerKey: 'Jobs', idCol: COLS.JOBS.ID, notesCol: COLS.JOBS.NOTES, label: 'Job ID', flag: '[duplicate-job-id]' },
     { sheet: 'People', headerKey: 'People', idCol: COLS.PEOPLE.ID, notesCol: COLS.PEOPLE.NOTES, label: 'Person ID', flag: '[duplicate-person-id]' },
     { sheet: 'Conversations', headerKey: 'Interactions', idCol: COLS.INTERACTIONS.ID, notesCol: COLS.INTERACTIONS.NOTES, label: 'Interaction ID', flag: '[duplicate-interaction-id]' },
+    { sheet: 'Search Routines', headerKey: 'Search Routines', idCol: COLS.SEARCH.ID, notesCol: COLS.SEARCH.NOTES, label: 'Routine ID', flag: '[duplicate-routine-id]' },
     { sheet: 'Interviews', headerKey: 'Interview rounds', idCol: COLS.ROUNDS.ID, notesCol: COLS.ROUNDS.NOTES, label: 'Round ID', flag: '[duplicate-round-id]' },
     { sheet: 'Tasks', headerKey: 'To-do', idCol: COLS.TODO.ID, notesCol: COLS.TODO.NOTES, label: 'To-do ID', flag: '[duplicate-task-id]' },
     { sheet: 'Decisions', headerKey: 'Pending decisions', idCol: COLS.DECISIONS.ID, notesCol: COLS.DECISIONS.NOTES, label: 'Decision ID', flag: '[duplicate-decision-id]' }
@@ -11811,6 +12228,7 @@ function scanDuplicatePendingDecisions(writeFlags) {
 
 function materializeDueTasks() {
   var created = 0, todayDate = today();
+  created += materializeDueSearchRoutines(todayDate);
 
   var peopleSheet = getSheet('People');
   if (peopleSheet && peopleSheet.getLastRow() > 1) {
@@ -12612,7 +13030,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Capturing updates');
   r = writeKV(sheet, r, 'Use Home first', 'The Add or update dropdown opens the right popup, writes the source tab, links IDs, then refreshes Home and Today.');
   r = writeKV(sheet, r, 'Jobs', 'Capture the opportunity and organisation. Set Application status to In progress when you are ready to plan the application work.');
-  r = writeKV(sheet, r, 'People', 'Capture the person, source, organisation if relevant, and Relationship step. People found from source-led scans are saved as Identified; outreach is not automatic.');
+  r = writeKV(sheet, r, 'People', 'Capture the person, source, organisation if relevant, and Relationship step. People found from Network search are saved as Identified; outreach is not automatic.');
   r = writeKV(sheet, r, 'Conversations', 'Use this for scheduled or completed relationship interactions. Completed conversations can route follow-up, referral, or opportunity work.');
   r = writeKV(sheet, r, 'Interviews', 'Add rounds when they exist. Scheduled rounds create prep planning; completed rounds use Official outcome and expected response dates.');
   r = writeKV(sheet, r, 'Direct edits', 'Direct tab edits are allowed for correction and repair. For normal daily capture, Home is safer because it fills IDs and refreshes planning surfaces.');
@@ -12624,7 +13042,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Today', 'Do work here. Today is rebuilt from Tasks, but it is not the source of truth.');
   r = writeKV(sheet, r, 'Tasks', 'The work queue and source of truth for executable work, readiness, blockers, sequencing, and task completion routing.');
   r = writeKV(sheet, r, 'Decisions', 'The judgment queue and audit trail. Home shows the front of this queue; Decisions stores what happened.');
-  r = writeKV(sheet, r, 'Source tabs', 'Sectors, Organisations, Jobs, People, Interviews, and Conversations are durable records. They are not the daily operating surface.');
+  r = writeKV(sheet, r, 'Source tabs', 'Sectors, Organisations, Search Routines, Jobs, People, Interviews, and Conversations are durable records. They are not the daily operating surface.');
   r = writeKV(sheet, r, 'Guide', 'Reference after the workflow is stable. If you need the Guide to use a control, that control probably needs clearer wording.');
   r++;
 
@@ -12650,6 +13068,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Source tabs');
   r = writeKV(sheet, r, 'Sectors', 'A broad Sector row has Sector filled and Sub-sector blank. A Sub-sector row has the same Sector and a narrower Sub-sector. Renaming a Sector updates linked rows.');
   r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector if known, optionally choose Sub-sector after Sector, set Tier and Status. Active organisations can suggest people-search or job-scan work.');
+  r = writeKV(sheet, r, 'Search Routines', 'Set recurring Opportunity search or Network search habits. The routine creates the next due task; completing that task captures results and advances the next run.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
   r = writeKV(sheet, r, 'People', 'Relationship source is how you found or know the person. Relationship step is the outreach/conversation state: Identified, outreach, reply, conversation, keep warm, or Closed.');
   r = writeKV(sheet, r, 'Conversations', 'Use this as the interaction log. Scheduled and completed conversations update People and can create follow-up work.');
@@ -12759,13 +13178,23 @@ function roundIdExistsMap() {
   return out;
 }
 
+function searchRoutineIdExistsMap() {
+  var sheet = getSheet('Search Routines');
+  var out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var ids = sheet.getRange(2, COLS.SEARCH.ID, sheet.getLastRow() - 1, 1).getValues();
+  ids.forEach(function (r) { if (r[0]) out[String(r[0])] = true; });
+  return out;
+}
+
 function buildLinkedObjectHealthMaps() {
   return {
     orgIds: orgIdExistsMap(),
     jobIds: jobIdExistsMap(),
     personIds: personIdExistsMap(),
     sectorIds: sectorIdExistsMap(),
-    roundIds: roundIdExistsMap()
+    roundIds: roundIdExistsMap(),
+    searchRoutineIds: searchRoutineIdExistsMap()
   };
 }
 
@@ -12776,11 +13205,12 @@ function linkedObjectExistsForHealth(type, id, maps) {
   if (type === 'Organisation') return !!maps.orgIds[id];
   if (type === 'Sector') return !!maps.sectorIds[id];
   if (type === 'Interview round') return !!maps.roundIds[id];
+  if (type === 'Search routine') return !!maps.searchRoutineIds[id];
   return true;
 }
 
 function isKnownLinkedObjectType(type) {
-  return ['Job', 'Person', 'Organisation', 'Sector', 'Interview round'].indexOf(String(type || '')) !== -1;
+  return ['Job', 'Person', 'Organisation', 'Sector', 'Interview round', 'Search routine'].indexOf(String(type || '')) !== -1;
 }
 
 function syncJobsPeopleHealthFlags() {
@@ -13116,6 +13546,7 @@ function buildMenu() {
       .addItem('Add target organisation', 'addNewOrganisation')
       .addItem('Add person', 'addNewPerson')
       .addItem('Add job', 'addNewJob')
+      .addItem('Add / modify search routine', 'runSearchRoutinePopup')
       .addItem('Log conversation', 'addNewInteraction')
       .addItem('Add interview round', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Selected row')
