@@ -2256,6 +2256,26 @@ function autoDismissPendingDecisionByKey(key, reason) {
   return false;
 }
 
+function autoDismissPendingDecisionPrefixForTarget(prefix, targetType, targetId, reason) {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2 || !prefix || !targetId) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.DECISIONS.DECISION - 1]) !== 'Pending') continue;
+    if (String(data[i][COLS.DECISIONS.TARGET_TYPE - 1]) !== String(targetType)) continue;
+    if (String(data[i][COLS.DECISIONS.TARGET_ID - 1]) !== String(targetId)) continue;
+    if (String(data[i][COLS.DECISIONS.KEY - 1] || '').indexOf(prefix) !== 0) continue;
+    var r = i + 2;
+    sheet.getRange(r, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
+    sheet.getRange(r, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    appendNoteFlag(sheet, r, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Superseded by direct source update'));
+    applyDecisionHelperColumns(sheet, r);
+    count++;
+  }
+  return count;
+}
+
 function dismissDecisionByKey(key, reason) {
   var found = findPendingDecisionByKey(key);
   if (!found) return false;
@@ -3595,6 +3615,7 @@ function recordJobWaitingForResponse(jobId, opts) {
   syncOpenJobResponseCheckDate(jobId, nextCheck);
   appendTodoOnceForWorkflow('Check response from ' + job.org + ' for ' + job.title, 'Job', jobId, job.org,
     'Check application response', 'Not started', nextCheck, '15 min', 'Still waiting as of ' + formatDateHuman(baseDate), opts.source || 'Auto-triggered');
+  autoDismissPendingDecisionByKey('JOB_RESPONSE_OUTCOME:' + jobId, 'Waiting recorded on Jobs');
   return true;
 }
 
@@ -3900,6 +3921,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
       'Person', personId, person.org, 'Conversation prep', 'Not started',
       prepDueDate, '30 min', conversationPrepNotes(), 'Auto-triggered');
     updateOpenTodoDueForTargetWorkflow('Person', personId, 'Conversation prep', prepDueDate);
+    autoDismissPendingDecisionPrefixForTarget('PERSON_REPLY_OUTCOME:', 'Person', personId, 'Conversation scheduled');
     return;
   }
   if (newStage === 'Conversation completed') {
@@ -3910,6 +3932,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     appendTodoOnceForWorkflow('Debrief / thank-you for ' + person.name + (person.org ? ' at ' + person.org : ''),
       'Person', personId, person.org, 'Thank-you and debrief', 'Not started', '', '20 min',
       conversationDebriefNotes(), 'Auto-triggered');
+    autoDismissPendingDecisionPrefixForTarget('PERSON_REPLY_OUTCOME:', 'Person', personId, 'Conversation completed');
     return;
   }
   if (newStage === 'Keep warm') {
@@ -3917,6 +3940,7 @@ function firePersonStageChanged(personId, oldStage, newStage, opts) {
     sheet.getRange(person.row, COLS.PEOPLE.FOLLOW_UP_DATE).setValue(keepWarmDate);
     sheet.getRange(person.row, COLS.PEOPLE.REPLY_RECEIVED).setValue('Yes');
     promoteOrgForLivePerson(person.orgId, newStage);
+    autoDismissPendingDecisionPrefixForTarget('PERSON_REPLY_OUTCOME:', 'Person', personId, 'Keep-warm state recorded');
     return;
   }
   if (newStage === 'Closed') {
