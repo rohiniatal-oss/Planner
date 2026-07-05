@@ -1519,6 +1519,7 @@ Product taste findings:
 | Home decision labels still sounded like backend audit states. | P2 | Yes/No describes stored decision state, not the user intent at the moment of action. | Fixed now: Home shows Confirm / Not now / Skip while Decisions still stores Yes / No / Auto-dismissed for audit compatibility. |
 | Notes flags still sounded like internal system state. | P2 | Visible notes used labels such as HOT, stale, missing prep plan, and rejected, which are true but not recovery-oriented. | Fixed now for new flags: bracket tokens remain machine-readable, but common visible flags are rewritten into clearer recovery guidance. |
 | Home lacked a light momentum signal. | P3 | The product guides tasks and decisions but did not reflect recent progress, making the search feel more static than it is. | Fixed now: Home shows a compact weekly momentum line from completed Tasks and logged Conversations. |
+| Interview prep did not learn from repeated behaviour. | P2/P3 | Prep plans stored area/band tokens, but the popup always started blank unless the same round already had a saved plan. | Fixed now: new interview prep plans preselect historical area/band defaults from prior prep parent tasks; existing saved plans still take precedence. |
 | Setup menu copy still exposed automation as the product concept. | P2 | User-facing paths said Setup & automation even when the user goal is simply turning the Planner on. | Fixed now: visible menu/path says Planner setup; repair actions say Repair rather than Fix. |
 | Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user has warnings and refreshes, not a calm "restart today" flow. | Structural redesign candidate after Home/Today review. |
 | Source tabs are powerful but still feel spreadsheet-like. | P2/P3 | Direct editable tables, row actions, hidden helper columns, header hints. | Backlog: stronger inspect/repair framing, filters/views, or fewer daily-visible source mechanics. |
@@ -1535,6 +1536,7 @@ Immediate Stage 17 implementation:
 - Rename Home decision actions to Confirm / Not now / Skip while preserving the Decisions audit values.
 - Preserve Notes tag tokens but rewrite common new flags as recovery guidance.
 - Add a quiet Home momentum line from completed Tasks and logged Conversations.
+- Preselect interview prep areas/bands from prior prep history when a round has no saved plan yet.
 - Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.
 
 Stage 17 decision:

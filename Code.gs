@@ -6279,6 +6279,45 @@ function createInterviewPrepTasksFromPlan(roundId, payload) {
   return { created: createdOrUpdated, updated: createdOrUpdated, retired: retired, total: totalMinutes };
 }
 
+function interviewPrepHistoricalDefaults(currentRoundId) {
+  var sheet = getSheet('Tasks');
+  var out = { areas: {} };
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var defs = interviewPrepAreaDefinitions();
+  var labelToKey = {};
+  defs.forEach(function (def) { labelToKey[String(def.label || '')] = def.key; });
+  var areaCounts = {};
+  var bandCounts = {};
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  data.forEach(function (row) {
+    if (String(row[COLS.TODO.WORKFLOW - 1] || '') !== 'Interview prep') return;
+    if (String(row[COLS.TODO.OBJ_TYPE - 1] || '') !== 'Interview round') return;
+    if (String(row[COLS.TODO.OBJ_ID - 1] || '') === String(currentRoundId || '')) return;
+    var notes = String(row[COLS.TODO.NOTES - 1] || '');
+    if (notes.indexOf('[prep-parent-key:') === -1) return;
+    var areaLabel = (notes.match(/\[prep-area:([^\]]+)\]/) || [])[1] || '';
+    var band = (notes.match(/\[prep-band:([^\]]+)\]/) || [])[1] || '';
+    var areaKey = labelToKey[areaLabel];
+    if (!areaKey || ['Light', 'Moderate', 'Heavy', 'Extensive'].indexOf(band) === -1) return;
+    areaCounts[areaKey] = (areaCounts[areaKey] || 0) + 1;
+    bandCounts[areaKey] = bandCounts[areaKey] || {};
+    bandCounts[areaKey][band] = (bandCounts[areaKey][band] || 0) + 1;
+  });
+  Object.keys(areaCounts).forEach(function (areaKey) {
+    var bestBand = '';
+    var bestCount = -1;
+    Object.keys(bandCounts[areaKey] || {}).forEach(function (band) {
+      var count = bandCounts[areaKey][band];
+      if (count > bestCount) {
+        bestBand = band;
+        bestCount = count;
+      }
+    });
+    if (bestBand) out.areas[areaKey] = bestBand;
+  });
+  return out;
+}
+
 function buildInterviewPrepPlanHtml(roundId, todoId) {
   var round = getRoundById(roundId);
   if (!round) return '<p>Interview round not found.</p>';
@@ -6289,7 +6328,8 @@ function buildInterviewPrepPlanHtml(roundId, todoId) {
     interviewDate: round.interviewDate ? formatDateHuman(round.interviewDate) : '',
     areas: interviewPrepAreaDefinitions(),
     bands: ['Light', 'Moderate', 'Heavy', 'Extensive'],
-    existing: parseInterviewPrepPlanBlock(round.notes || '')
+    existing: parseInterviewPrepPlanBlock(round.notes || ''),
+    defaults: interviewPrepHistoricalDefaults(round.id)
   };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
@@ -6310,7 +6350,7 @@ function buildInterviewPrepPlanHtml(roundId, todoId) {
     '<button class="primary" type="button" onclick="save()">Create prep plan</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("meta").textContent=data.title+(data.interviewDate?" - "+data.interviewDate:"");' +
     'var wrap=document.getElementById("areas");data.areas.forEach(function(a){var row=document.createElement("div");row.className="area";var cb=document.createElement("input");cb.type="checkbox";cb.id="need_"+a.key;var lab=document.createElement("label");lab.htmlFor=cb.id;lab.textContent=a.label;var sel=document.createElement("select");sel.id="band_"+a.key;data.bands.forEach(function(b){var o=document.createElement("option");o.value=b;o.textContent=b;sel.appendChild(o);});row.appendChild(cb);row.appendChild(lab);row.appendChild(sel);wrap.appendChild(row);});' +
-    'Object.keys((data.existing&&data.existing.areas)||{}).forEach(function(k){var cb=document.getElementById("need_"+k),sel=document.getElementById("band_"+k);if(cb&&sel){cb.checked=true;sel.value=data.existing.areas[k];}});document.getElementById("otherDesc").value=(data.existing&&data.existing.otherDescription)||"";document.getElementById("blockers").value=(data.existing&&data.existing.blockers)||"";document.getElementById("interviewers").value=(data.existing&&data.existing.interviewerNames)||"";document.getElementById("notes").value=(data.existing&&data.existing.notes)||"";' +
+    'var existingAreas=(data.existing&&data.existing.areas)||{};var defaultAreas=(data.defaults&&data.defaults.areas)||{};var useAreas=Object.keys(existingAreas).length?existingAreas:defaultAreas;Object.keys(useAreas).forEach(function(k){var cb=document.getElementById("need_"+k),sel=document.getElementById("band_"+k);if(cb&&sel){cb.checked=true;sel.value=useAreas[k];}});document.getElementById("otherDesc").value=(data.existing&&data.existing.otherDescription)||"";document.getElementById("blockers").value=(data.existing&&data.existing.blockers)||"";document.getElementById("interviewers").value=(data.existing&&data.existing.interviewerNames)||"";document.getElementById("notes").value=(data.existing&&data.existing.notes)||"";' +
     'function save(){var areas={};data.areas.forEach(function(a){if(document.getElementById("need_"+a.key).checked)areas[a.key]=document.getElementById("band_"+a.key).value;});var status=document.getElementById("status");if(!Object.keys(areas).length){status.textContent="Choose at least one prep area.";return;}if(areas.other&&!String(document.getElementById("otherDesc").value||"").trim()){status.textContent="Describe the Other prep area.";return;}status.textContent="Creating prep tasks...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not create prep plan.";return;}status.textContent=res.message||"Prep plan created.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(){status.textContent="Could not create prep plan. Try again from Tasks.";}).completeInterviewPrepPlanFromPopup({roundId:data.roundId,todoId:data.todoId,areas:areas,otherDescription:document.getElementById("otherDesc").value,blockers:document.getElementById("blockers").value,interviewerNames:document.getElementById("interviewers").value,notes:document.getElementById("notes").value});}</script>';
 }
 
