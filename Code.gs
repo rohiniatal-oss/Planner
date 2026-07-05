@@ -216,7 +216,7 @@ var HEADERS = {
   'Interview rounds': [
     'Round ID', 'Linked Job ID', 'Job (display)', 'Org (display)',
     'Round', 'Round type', 'Interview date',
-    'Status', 'Domain readiness',
+    'Status', 'Topic familiarity',
     'Official outcome', 'Expected response / follow-up date', 'Notes'
   ],
   'Pending decisions': [
@@ -337,7 +337,7 @@ var DROPDOWNS = {
 
   ROUND_TYPE: ['Recruiter', 'Hiring manager', 'Panel', 'Case', 'Technical', 'Culture fit', 'Final', 'Other'],
   ROUND_STATUS: ['To schedule', 'Scheduled', 'Completed', 'Cancelled', 'Reschedule'],
-  DOMAIN_READINESS: ['Strong', 'Refresh needed', 'Weak or new'],
+  DOMAIN_READINESS: ['Familiar', 'Needs refresh', 'Unfamiliar'],
   OFFICIAL_OUTCOME: ['Waiting', 'Next round', 'Declined', 'Offer', 'Parked'],
 
   TODAY_STATUS: ['Planned', 'In progress', 'Blocked', 'Done', 'Deferred', 'Skipped'],
@@ -694,6 +694,16 @@ function normalizeJobOutcome(value) {
     'Reject': 'Rejected'
   };
   return legacyMap[v] !== undefined ? legacyMap[v] : (DROPDOWNS.JOB_OUTCOME.indexOf(v) !== -1 ? v : '');
+}
+
+function normalizeTopicFamiliarity(value) {
+  var v = String(value || '').trim();
+  var legacyMap = {
+    'Strong': 'Familiar',
+    'Refresh needed': 'Needs refresh',
+    'Weak or new': 'Unfamiliar'
+  };
+  return legacyMap[v] || (DROPDOWNS.DOMAIN_READINESS.indexOf(v) !== -1 ? v : '');
 }
 
 function normalizePersonStage(value) {
@@ -1754,6 +1764,7 @@ function getRoundById(roundId) {
         roundType: row[COLS.ROUNDS.ROUND_TYPE - 1],
         interviewDate: row[COLS.ROUNDS.INTERVIEW_DATE - 1],
         status: row[COLS.ROUNDS.STATUS - 1],
+        topicFamiliarity: normalizeTopicFamiliarity(row[COLS.ROUNDS.DOMAIN_READINESS - 1]) || row[COLS.ROUNDS.DOMAIN_READINESS - 1],
         domainReadiness: row[COLS.ROUNDS.DOMAIN_READINESS - 1],
         officialOutcome: row[COLS.ROUNDS.OFFICIAL_OUTCOME - 1],
         expectedResponse: row[COLS.ROUNDS.EXPECTED_RESPONSE - 1],
@@ -4066,7 +4077,7 @@ function createInterviewRoundForJob(jobId, opts) {
   var roundType = details.roundType || 'Other';
   if (DROPDOWNS.ROUND_TYPE.indexOf(roundType) === -1) roundType = 'Other';
   var date = details.interviewDate || '';
-  var domain = details.domainReadiness || '';
+  var topicFamiliarity = normalizeTopicFamiliarity(details.topicFamiliarity || details.domainReadiness || '');
   var row = new Array(HEADERS['Interview rounds'].length).fill('');
   row[COLS.ROUNDS.ID - 1] = id;
   row[COLS.ROUNDS.JOB_ID - 1] = jobId;
@@ -4076,7 +4087,7 @@ function createInterviewRoundForJob(jobId, opts) {
   row[COLS.ROUNDS.ROUND_TYPE - 1] = roundType;
   row[COLS.ROUNDS.INTERVIEW_DATE - 1] = date;
   row[COLS.ROUNDS.STATUS - 1] = date ? 'Scheduled' : 'To schedule';
-  row[COLS.ROUNDS.DOMAIN_READINESS - 1] = domain;
+  row[COLS.ROUNDS.DOMAIN_READINESS - 1] = topicFamiliarity;
   if (date) row[COLS.ROUNDS.EXPECTED_RESPONSE - 1] = addDays(new Date(date), REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7);
   row[COLS.ROUNDS.NOTES - 1] = details.notes || '';
   sheet.appendRow(row);
@@ -5781,10 +5792,10 @@ function roundTypePrepFocus(roundType) {
   return focus[roundType] || focus.Other;
 }
 
-function interviewPrepNotes(roundType, domainReadiness, section) {
+function interviewPrepNotes(roundType, topicFamiliarity, section) {
   return '[interview-prep]\n' +
     'Round type: ' + (roundType || 'Other') + '\n' +
-    'Domain/prep readiness: ' + (domainReadiness || 'Not set') + '\n' +
+    'Topic familiarity: ' + (topicFamiliarity || 'Not set') + '\n' +
     'Focus: ' + roundTypePrepFocus(roundType) + '\n' +
     'This task: ' + section;
 }
@@ -6052,36 +6063,40 @@ function createInterviewPrepTasks(roundId) {
   var round = getRoundById(roundId);
   if (!round) return 0;
   var sheet = getSheet('Interviews');
-  var domainReadiness = String(sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).getValue() || '');
+  var rawTopicFamiliarity = String(sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).getValue() || '');
+  var topicFamiliarity = normalizeTopicFamiliarity(rawTopicFamiliarity);
+  if (topicFamiliarity && topicFamiliarity !== rawTopicFamiliarity) {
+    sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).setValue(topicFamiliarity);
+  }
   var roundType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
   var interviewDate = sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
   var jobAt = round.job + (round.org ? ' at ' + round.org : '');
   var desiredWorkflows = {};
   var created = 0;
-  if (!domainReadiness) return 0;
+  if (!topicFamiliarity) return 0;
   ensureInterviewerTemplate(sheet, round.row);
   if (!sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue() && interviewDate) {
     sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDate), REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
   }
-  if (domainReadiness === 'Refresh needed' || domainReadiness === 'Weak or new') {
+  if (topicFamiliarity === 'Needs refresh' || topicFamiliarity === 'Unfamiliar') {
     desiredWorkflows['Interview prep (Domain scoping)'] = true;
-    var domainMinutes = domainReadiness === 'Weak or new' ? '60 min' : '30 min';
+    var domainMinutes = topicFamiliarity === 'Unfamiliar' ? '60 min' : '30 min';
     if (upsertInterviewPrepTask(roundId, 'Interview prep (Domain scoping)', {
       task: 'Interview prep - domain map: ' + jobAt,
       org: round.org,
       dueDate: interviewDate ? addDays(new Date(interviewDate), -3) : '',
       timeEst: domainMinutes,
-      notes: interviewPrepNotes(roundType, domainReadiness, 'Refresh the organisation, role, sector context, likely themes, and weak spots.')
+      notes: interviewPrepNotes(roundType, topicFamiliarity, 'Refresh the organisation, role, sector context, likely themes, and weak spots.')
     })) created++;
   }
-  if (domainReadiness === 'Weak or new') {
+  if (topicFamiliarity === 'Unfamiliar') {
     desiredWorkflows['Interview prep (Study)'] = true;
     if (upsertInterviewPrepTask(roundId, 'Interview prep (Study)', {
       task: 'Interview prep - study plan: ' + jobAt,
       org: round.org,
       dueDate: interviewDate ? addDays(new Date(interviewDate), -3) : '',
       timeEst: '60 min',
-      notes: interviewPrepNotes(roundType, domainReadiness, 'Build the minimum viable study plan for unfamiliar concepts, language, and examples.')
+      notes: interviewPrepNotes(roundType, topicFamiliarity, 'Build the minimum viable study plan for unfamiliar concepts, language, and examples.')
     })) created++;
   }
   desiredWorkflows['Interview prep (Fit case)'] = true;
@@ -6089,8 +6104,8 @@ function createInterviewPrepTasks(roundId) {
     task: 'Interview prep - ' + String(roundType || 'fit').toLowerCase() + ' story: ' + jobAt,
     org: round.org,
     dueDate: interviewDate ? addDays(new Date(interviewDate), -2) : '',
-    timeEst: domainReadiness === 'Strong' ? '45 min' : '60 min',
-    notes: interviewPrepNotes(roundType, domainReadiness, 'Prepare the story, examples, questions, and round-specific answer shape.')
+    timeEst: topicFamiliarity === 'Familiar' ? '45 min' : '60 min',
+    notes: interviewPrepNotes(roundType, topicFamiliarity, 'Prepare the story, examples, questions, and round-specific answer shape.')
   })) created++;
   if (interviewDate) desiredWorkflows['Day-before review'] = true;
   if (interviewDate && upsertInterviewPrepTask(roundId, 'Day-before review', {
@@ -6098,7 +6113,7 @@ function createInterviewPrepTasks(roundId) {
     org: round.org,
     dueDate: addDays(new Date(interviewDate), -1),
     timeEst: '90 min',
-    notes: interviewPrepNotes(roundType, domainReadiness, 'Final pass: logistics, notes, questions, story anchors, and follow-up plan.')
+    notes: interviewPrepNotes(roundType, topicFamiliarity, 'Final pass: logistics, notes, questions, story anchors, and follow-up plan.')
   })) created++;
   retireObsoleteInterviewPrepTasks(roundId, desiredWorkflows);
   return created;
@@ -6643,7 +6658,7 @@ function findRoundsNeedingPrep() {
   return out;
 }
 
-function checkDomainReadinessFlags() {
+function checkInterviewPrepReadinessFlags() {
   var results = findRoundsNeedingPrep();
   var sheet = getSheet('Interviews');
   if (!sheet) return;
@@ -6714,7 +6729,7 @@ function checkInterviewRoundHealthFlags() {
     // v7.7.4: [missing-prep]/[stale-round] must clear whenever their
     // setting condition (status==='Scheduled' && interviewDate && ...) is
     // no longer true, for ANY reason — including the round moving off
-    // Scheduled entirely (e.g. Reschedule) while domain readiness still
+    // Scheduled entirely (e.g. Reschedule) while topic familiarity still
     // isn't set. The previous `if (domain)` guard on the missing-prep
     // clear left it stuck in exactly that case.
     var isScheduledWithDate = status === 'Scheduled' && !!interviewDate;
@@ -9763,7 +9778,7 @@ function processInterviewOnboarding(fields) {
   routeJobOutcome(jobId, 'Interview invite', {
     source: 'interview-onboarding',
     forceRound: true,
-    roundDetails: { roundNum: roundNum, roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', domainReadiness: fields.domainReadiness || '' }
+    roundDetails: { roundNum: roundNum, roundType: fields.roundType || 'Other', interviewDate: fields.interviewDate || '', topicFamiliarity: fields.topicFamiliarity || fields.domainReadiness || '' }
   });
   var round = findRoundByJobRound(jobId, roundNum);
   if (round && (fields.status || fields.officialOutcome)) {
@@ -11357,7 +11372,7 @@ var HEADER_GUIDANCE = {
   'Interview rounds': {
     'Round ID': 'Filled automatically.', 'Linked Job ID': 'Filled automatically.', 'Job (display)': 'Filled from linked Job.', 'Org (display)': 'Filled from linked Job.', 'Round': 'Round number.', 'Round type': 'Recruiter, case, panel, hiring manager, or other.',
     'Interview date': 'Scheduled date; creates or updates prep timing.', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled.',
-    'Domain readiness': 'Optional context; prep depth is planned from Tasks.',
+    'Topic familiarity': 'Optional context; detailed prep is planned from Tasks.',
     'Official outcome': 'Waiting / Next round / Declined / Offer / Parked; resolves pending outcome prompts',
     'Expected response / follow-up date': 'Creates or updates interview follow-up timing.', 'Notes': 'Prep context, debrief, interviewers, and repair flags.'
   },
@@ -11422,7 +11437,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
   }
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
-    if (name === 'Domain readiness') return 'Optional context; prep depth is planned from Tasks';
+    if (name === 'Topic familiarity') return 'Optional context; detailed prep is planned from Tasks';
     if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
     if (name === 'Expected response / follow-up date') return 'Creates or updates interview follow-up timing';
     if (name === 'Notes') return 'Prep context, debrief, interviewers, and repair flags';
@@ -12086,6 +12101,36 @@ function migrateSearchRoutineTimingSchema() {
   return changed;
 }
 
+function migrateInterviewTopicFamiliarityLabels() {
+  var sheet = getSheet('Interviews');
+  if (!sheet || sheet.getLastRow() < 1) return false;
+  var changed = false;
+  var headerCell = sheet.getRange(1, COLS.ROUNDS.DOMAIN_READINESS);
+  if (String(headerCell.getValue() || '') === 'Domain readiness') {
+    headerCell.setValue('Topic familiarity');
+    changed = true;
+  }
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (rowCount > 0) {
+    var values = sheet.getRange(2, COLS.ROUNDS.DOMAIN_READINESS, rowCount, 1).getValues();
+    var needsWrite = false;
+    for (var i = 0; i < values.length; i++) {
+      var raw = String(values[i][0] || '');
+      var normalized = normalizeTopicFamiliarity(raw);
+      if (normalized && normalized !== raw) {
+        values[i][0] = normalized;
+        needsWrite = true;
+      }
+    }
+    if (needsWrite) {
+      sheet.getRange(2, COLS.ROUNDS.DOMAIN_READINESS, rowCount, 1).setValues(values);
+      changed = true;
+    }
+  }
+  if (changed) styleHeader(sheet, HEADERS['Interview rounds'].length);
+  return changed;
+}
+
 function migrateSectorIdSchema() {
   var migratedSectors = migrateSectorsTwoIdSchema();
   var migratedOrgs = migrateOrganisationSectorIdSchema();
@@ -12097,7 +12142,8 @@ function migrateWorkbookSchema() {
   var migratedJobs = migrateJobsDeadlineStatusSchema();
   var migratedInteractions = migrateInteractionsStatusSchema();
   var migratedSearchRoutines = migrateSearchRoutineTimingSchema();
-  return migratedSectorsOrOrgs || migratedJobs || migratedInteractions || migratedSearchRoutines;
+  var migratedInterviewLabels = migrateInterviewTopicFamiliarityLabels();
+  return migratedSectorsOrOrgs || migratedJobs || migratedInteractions || migratedSearchRoutines || migratedInterviewLabels;
 }
 
 // =============================================================
@@ -13698,7 +13744,7 @@ function repairAllTabsImpl() {
   repairSectorTaskLinks();
   detectSectorOrphans();
   syncJobsPeopleHealthFlags();
-  checkDomainReadinessFlags();
+  checkInterviewPrepReadinessFlags();
   checkInterviewRoundHealthFlags();
   removeOpenDeadlineReminderTasks();
   repairOrganisationsFormulas();
@@ -13746,9 +13792,11 @@ function dailyMaintenance() {
     Logger.log('dailyMaintenance: START ' + new Date());
     var migratedJobs = migrateJobsDeadlineStatusSchema();
     var migratedInteractions = migrateInteractionsStatusSchema();
-    if (migratedJobs || migratedInteractions) {
+    var migratedInterviewLabels = migrateInterviewTopicFamiliarityLabels();
+    if (migratedJobs || migratedInteractions || migratedInterviewLabels) {
       applySheetDropdowns('Jobs');
       applySheetDropdowns('Conversations');
+      applySheetDropdowns('Interviews');
       colorCodeManualFields();
       applyStatusColorCoding();
       applyColumnWidths();
@@ -13767,7 +13815,7 @@ function dailyMaintenance() {
     detectSectorOrphans();
     syncJobsPeopleHealthFlags();
     refreshLinkedContactsDisplay();
-    checkDomainReadinessFlags();
+    checkInterviewPrepReadinessFlags();
     checkInterviewRoundHealthFlags();
     refreshInteractionPersonDropdown();
     repairInteractionPersonLinks();
