@@ -10334,7 +10334,7 @@ function runSourceScanResultPopup(todoId, decisionId) {
 
 function processSourceLedPeopleCapture(fields) {
   var names = splitInputList(fields.personNames);
-  if (!names.length) return failResult('Add at least one person found by the scan.', 'personNames', 'MISSING_PERSON');
+  if (!names.length) return failResult('Add at least one person found by the search.', 'personNames', 'MISSING_PERSON');
   var org = fields.personOrg ? createNameOnlyOrg(fields.personOrg, { status: 'Mapped', stub: true }) : null;
   var relType = DROPDOWNS.PERSON_REL_TYPE.indexOf(fields.relType) !== -1 ? fields.relType : '';
   var created = 0, reused = 0;
