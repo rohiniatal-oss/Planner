@@ -1936,18 +1936,70 @@ function acceptPendingDecision(sheet, row) {
 // revert the row back to Pending on failure — see acceptPendingDecision),
 // and stamps Decided at for No/Auto-dismissed. Returns the accept result
 // (or null for No/Auto-dismissed) so callers can toast appropriately.
-function resolveDecision(decisionsSheet, row, action) {
-  decisionsSheet.getRange(row, COLS.DECISIONS.DECISION).setValue(action);
-  var accepted = null;
-  if (action === 'Yes') accepted = acceptPendingDecision(decisionsSheet, row);
-  if (action === 'No' || action === 'Auto-dismissed') {
-    decisionsSheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
-    var key = String(decisionsSheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
-    if (isApplicationPlanDecisionKey(key)) {
-      var job = getJobRowById(decisionsSheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue());
+function decisionContextFromRow(sheet, row, action) {
+  return {
+    sheet: sheet,
+    row: row,
+    action: String(action || ''),
+    id: String(sheet.getRange(row, COLS.DECISIONS.ID).getValue() || ''),
+    key: String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || ''),
+    task: String(sheet.getRange(row, COLS.DECISIONS.TASK).getValue() || ''),
+    targetType: String(sheet.getRange(row, COLS.DECISIONS.TARGET_TYPE).getValue() || ''),
+    targetId: String(sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue() || ''),
+    workflow: String(sheet.getRange(row, COLS.DECISIONS.WORKFLOW).getValue() || ''),
+    notes: String(sheet.getRange(row, COLS.DECISIONS.NOTES).getValue() || ''),
+    actionType: String(sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE).getValue() || '')
+  };
+}
+
+function resolveOpenPopupDecision(ctx) {
+  if (isApplicationPlanDecisionKey(ctx.key)) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runApplicationPlanPopup(ctx.targetId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[popup-missing] No popup is wired for this decision type yet');
+  applyDecisionHelperColumns(ctx.sheet, ctx.row);
+  return { ok: false, pending: true, reason: 'No popup is wired for this decision type yet' };
+}
+
+function resolveCreateTaskDecision(ctx) {
+  return acceptPendingDecision(ctx.sheet, ctx.row);
+}
+
+function resolveDecisionAction(ctx) {
+  if (ctx.action === 'No' || ctx.action === 'Auto-dismissed') {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue(ctx.action);
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    if (isApplicationPlanDecisionKey(ctx.key)) {
+      var job = getJobRowById(ctx.targetId);
       if (job) clearNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     }
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return null;
   }
+
+  ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Yes');
+  switch (ctx.actionType || inferDecisionActionType(ctx.key, ctx.targetType, ctx.workflow, ctx.task)) {
+    case 'Open popup':
+      return resolveOpenPopupDecision(ctx);
+    case 'Dismiss only':
+      ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+      applyDecisionHelperColumns(ctx.sheet, ctx.row);
+      return { ok: true, dismissedOnly: true };
+    case 'Capture data':
+    case 'Update source':
+    case 'Create task':
+    default:
+      return resolveCreateTaskDecision(ctx);
+  }
+}
+
+function resolveDecision(decisionsSheet, row, action) {
+  var ctx = decisionContextFromRow(decisionsSheet, row, action);
+  var accepted = resolveDecisionAction(ctx);
   applyDecisionHelperColumns(decisionsSheet, row);
   return accepted;
 }
@@ -1955,8 +2007,12 @@ function resolveDecision(decisionsSheet, row, action) {
 function toastForDecisionOutcome(action, accepted) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (action !== 'Yes') { ss.toast('Decision dismissed.', 'The Planner', 3); return; }
+  if (accepted && accepted.popupOpened) {
+    ss.toast('Opened the decision popup. This stays Pending until the popup saves.', 'The Planner', 5);
+    return;
+  }
   if (accepted && accepted.ok) {
-    ss.toast(accepted.reused ? 'Already linked to an existing task.' : 'Decision promoted to a Task.', 'The Planner', 3);
+    ss.toast(accepted.reused ? 'Already linked to an existing task.' : (accepted.dismissedOnly ? 'Decision handled.' : 'Decision promoted to a Task.'), 'The Planner', 3);
   } else {
     ss.toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
   }
@@ -1973,15 +2029,9 @@ function onEditDecisions(sheet, row, col, newVal, e) {
   // acceptPendingDecision's own existingTodoId guard makes re-accepting
   // idempotent rather than creating a second Task.
   var wasAlreadyResolved = e && e.oldValue && ['Yes', 'No', 'Auto-dismissed'].indexOf(String(e.oldValue)) !== -1;
-  var key = String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
-  if (decision === 'Yes' && isApplicationPlanDecisionKey(key)) {
-    sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Pending');
-    runApplicationPlanPopup(sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue(), sheet.getRange(row, COLS.DECISIONS.ID).getValue());
-    return;
-  }
   var accepted = resolveDecision(sheet, row, decision);
   renderTodayDecisionCards();
-  if (decision === 'Yes' && accepted && accepted.ok) populateToday();
+  if (decision === 'Yes' && accepted && accepted.ok && !accepted.popupOpened) populateToday();
   else requestHomeRefresh();
   if (!wasAlreadyResolved) toastForDecisionOutcome(decision, accepted);
 }
@@ -7141,14 +7191,9 @@ function handleDecisionAction(sheet, action, decisionId) {
     SpreadsheetApp.getActiveSpreadsheet().toast('That decision was already resolved. Home has been refreshed.', 'The Planner', 4);
     return;
   }
-  var key = String(decisions.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
-  if (action === 'Yes' && isApplicationPlanDecisionKey(key)) {
-    runApplicationPlanPopup(decisions.getRange(row, COLS.DECISIONS.TARGET_ID).getValue(), decisionId);
-    return;
-  }
   var accepted = resolveDecision(decisions, row, action);
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
-  if (action === 'Yes' && accepted && accepted.ok) populateToday();
+  if (action === 'Yes' && accepted && accepted.ok && !accepted.popupOpened) populateToday();
   toastForDecisionOutcome(action, accepted);
 }
 
@@ -8422,6 +8467,7 @@ function resolveApplicationPlanDecision(decisionId, todoId) {
   found.sheet.getRange(found.row, COLS.DECISIONS.DECISION).setValue('Yes');
   found.sheet.getRange(found.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
   if (todoId) found.sheet.getRange(found.row, COLS.DECISIONS.TODO_ID).setValue(todoId);
+  applyDecisionHelperColumns(found.sheet, found.row);
 }
 
 // Called from the popup. Wipes existing data (unless skipped), captures
