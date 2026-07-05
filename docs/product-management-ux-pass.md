@@ -94,6 +94,7 @@ Grounded in current `HEADERS` / `MANUAL_COLUMNS` from `Code.gs`.
 | Legacy workflow/header labels remain | Documentation / Visual design | P3 | Confusion after behavior changes | Phase 5 |
 | Snapshot/reset/repair distinction not fully productised | Recovery / Trust | P1 | User may not know what is safe or reversible | Phase 1/6 |
 | Source tabs not yet reviewed through PM/UX lens | Orientation / Workflow | P1/P2 | Fixes could overfit Home/Today while tab flows remain confusing | Phase 1/3 |
+| Header hints still expose backend wording | Orientation / Visual design | P2 | Source tabs feel like storage tables instead of calm records | Phase 1 |
 
 ## Current Improvement: Home Today State
 
@@ -119,3 +120,28 @@ Non-goals:
 - Do not make Home run Apps Script from a hyperlink.
 - Do not add people follow-up task lists to Home.
 - Do not redesign Today in this change.
+
+## Current Improvement: Workbook Header Hints
+
+User story:
+As a user scanning any tab, I need the column hints to tell me what the field means and whether I should edit it, so that I can use source tabs as records without understanding backend mechanics.
+
+Current pain:
+Several column hints used system wording such as "system link", "auto/manual", "master task queue", or terse status lists. That makes the workbook feel like a backend table and increases the chance of editing helper fields or misunderstanding a workflow.
+
+Target experience:
+Every tab's header hints use user-facing language: filled automatically, updates from linked rows, this does not create tasks by itself, work from Today, and tasks handle the actual work.
+
+Implementation:
+Copy-only changes to `HEADER_GUIDANCE` and existing `userFacingHeaderHint()` overrides. No schemas, dropdowns, cascades, formulas, or hidden-column rules changed.
+
+Acceptance tests:
+1. Header guidance still has one entry for every header.
+2. Apps Script parses successfully.
+3. Duplicate function invariant remains clean.
+4. Sectors, Organisations, People, Jobs, Conversations, Tasks, Interviews, Today, and Decisions have user-facing hints that explain role/ownership.
+
+Non-goals:
+- Do not rewrite the Guide yet.
+- Do not change column order or visibility in this pass.
+- Do not change workflow routing or task creation.

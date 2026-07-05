@@ -10195,40 +10195,40 @@ function processJobCapture(fields) {
 
 var HEADER_GUIDANCE = {
   'Sectors': {
-    'Sector ID': 'Broad sector ID. Same ID groups the parent sector and its sub-sectors.',
-    'Sector': 'Fill this for every row. Parent row: rename. Sub-sector row: move this child.',
-    'Sub-sector ID': 'Child ID. Stays with the sub-sector if it is moved or renamed.',
-    'Sub-sector': 'Leave blank for broad sector rows. Fill on child rows with the narrower area.',
-    'Status': 'Open / Retired. Retiring a parent also retires its sub-sectors.',
-    'Notes': 'Review flags and context.'
+    'Sector ID': 'Filled automatically. Links broad sector rows.',
+    'Sector': 'Broad search area. Use the same Sector for each narrower sub-sector row.',
+    'Sub-sector ID': 'Filled automatically. Stays with this sub-sector if renamed or moved.',
+    'Sub-sector': 'Narrower area under Sector. Leave blank on the broad-sector row.',
+    'Status': 'Open = in your search universe. Retired = no new daily suggestions.',
+    'Notes': 'Your context plus repair flags.'
   },
   'Organisations': {
-    'Org ID': 'system', 'Organisation': 'Type the organisation name; Home > Capture update is preferred',
-    'Sector ID': 'system link to Sectors.Sector ID', 'Sector': 'Choose a real Sector; blank becomes Needs classification',
-    'Sub-sector ID': 'system link to Sectors.Sub-sector ID', 'Sub-sector': 'Optional; choose only after Sector',
-    'Tier': 'A/B/C priority; defaults to B', 'Status': 'Mapped = known; Active suggests people/jobs; Dormant pauses org suggestions; Archived retires',
-    'Known people (count)': 'automatic count from People', 'Open opportunities (count)': 'automatic count from open Jobs', 'Last checked': 'system date; last org-level review/routing', 'Next check date': 'hidden system trigger; Active +14, Dormant +42', 'Notes': 'your context plus bracketed system flags'
+    'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Capture update for normal entry.',
+    'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the broad sector, or leave blank if it still needs classification.',
+    'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional narrower area; choose after Sector.',
+    'Tier': 'A/B/C priority for tie-breaks; defaults to B.', 'Status': 'Mapped = known; Active = suggest next moves; Dormant = pause org-level suggestions; Archived = retired.',
+    'Known people (count)': 'Updates from linked People rows.', 'Open opportunities (count)': 'Updates from linked open Jobs.', 'Last checked': 'Last org-level review date.', 'Next check date': 'Next planned org review date.', 'Notes': 'Your context plus repair flags.'
   },
   'People': {
-    'Person ID': 'system', 'Name': 'Prefer Home > Capture update; Organisation is optional', 'Organisation': 'Link to Organisations when relevant', 'Org ID': 'system',
-    'Role': 'optional', 'Relationship source': 'source / relationship context; does not route by itself',
-    'Relationship status': 'Identified / To outreach / Drafted / Sent / Replied / Scheduled / Completed / Keep warm / Closed',
-    'Next follow-up date': 'auto or manual',
-    'Reply received': 'Yes/No when known', 'Follow-up sent?': 'system', 'Outreach date': 'real outreach date', 'Conversation date': 'scheduled or completed date',
-    'Context / notes': 'source, context, next angle', 'Follow-ups sent count': 'system',
-    'Last interaction': 'automatic from completed Conversations', 'Next action': 'automatic from open Tasks', 'Linked jobs': 'automatic from Jobs'
+    'Person ID': 'Filled automatically.', 'Name': 'Contact name. Prefer Home > Capture update when adding people.', 'Organisation': 'Link when relevant; blank is okay for broad network leads.', 'Org ID': 'Filled automatically from Organisation.',
+    'Role': 'Optional role or relationship context.', 'Relationship source': 'How you found or know them; this does not create outreach by itself.',
+    'Relationship status': 'Identified, outreach, reply, conversation, keep-warm, or closed.',
+    'Next follow-up date': 'Next relationship follow-up; tasks handle the actual work.',
+    'Reply received': 'Yes when they replied.', 'Follow-up sent?': 'Filled automatically.', 'Outreach date': 'Date outreach was sent.', 'Conversation date': 'Scheduled or completed conversation date.',
+    'Context / notes': 'Relationship context, angle, and repair flags.', 'Follow-ups sent count': 'Filled automatically.',
+    'Last interaction': 'Updates from completed Conversations.', 'Next action': 'Updates from open Tasks.', 'Linked jobs': 'Updates from Jobs where this person is linked.'
   },
   'Jobs': {
-    'Job ID': 'system', 'Opportunity': 'Type the job/opportunity title first', 'Organisation': 'Add Organisation next to route tasks', 'Org ID': 'system',
-    'Deadline': 'dates/prioritises application work; does not create tasks alone', 'Application status': 'Not started / In progress / Submitted / Closed', 'Submitted date': 'date you submitted the application',
-    'Linked contacts (IDs)': 'system', 'People for this application': 'people linked through application/referral actions', 'Next response check': 'system date for checking application response',
-    'Response received': 'Auto: Waiting = No; invite/rejection = Yes',
+    'Job ID': 'Filled automatically.', 'Opportunity': 'Job or opportunity title.', 'Organisation': 'Organisation for this opportunity; used to link work.', 'Org ID': 'Filled automatically from Organisation.',
+    'Deadline': 'Application deadline. It affects priority but does not create tasks by itself.', 'Application status': 'Not started / In progress / Submitted / Closed.', 'Submitted date': 'Date you submitted the application.',
+    'Linked contacts (IDs)': 'Filled automatically from linked People.', 'People for this application': 'Contacts linked through referral/application actions.', 'Next response check': 'Next date to check for an application response.',
+    'Response received': 'Updates from Application result: Waiting = No; invite/rejection = Yes.',
     'Application result': 'Waiting / Interview invite / Rejected',
-    'Notes': 'URL/source and prep notes'
+    'Notes': 'URL, source, application context, and repair flags.'
   },
   'Interactions': {
-    'Interaction ID': 'system', 'Date': 'conversation date', 'Person ID': 'system', 'Person': 'Prefer Home > Capture update; pick or type person', 'Organisation': 'auto from person',
-    'Type': 'call, email, message, referral, etc.', 'Interaction status': 'Scheduled / Completed / Cancelled', 'Key notes': 'what changed', 'Outcome': 'drives follow-up decisions'
+    'Interaction ID': 'Filled automatically.', 'Date': 'Interaction or scheduled conversation date.', 'Person ID': 'Filled automatically from Person.', 'Person': 'Pick or type the person; Home > Capture update is preferred.', 'Organisation': 'Filled from the linked Person when known.',
+    'Type': 'Call, email, message, referral, interview, or other.', 'Interaction status': 'Scheduled / Completed / Cancelled.', 'Key notes': 'What changed or what to remember.', 'Outcome': 'May route follow-up work or decisions.'
   },
   'To-do': {
     'Task ID': 'system', 'Task': 'Master task queue — inspect, repair, audit', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
@@ -10241,22 +10241,22 @@ var HEADER_GUIDANCE = {
     'Priority rank': '1=Fixed … 6=Backlog, sort ascending', 'Linked to': 'jumps to the source row', 'On Today right now': 'auto', 'Has sub-tasks': 'auto'
   },
   'Interview rounds': {
-    'Round ID': 'system', 'Linked Job ID': 'system', 'Job (display)': 'auto', 'Org (display)': 'auto', 'Round': 'round number', 'Round type': 'recruiter, case, panel, etc.',
-    'Interview date': 'scheduled date; creates or updates prep timing', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled',
-    'Domain readiness': 'optional legacy/simple context; prep depth is planned from Tasks',
+    'Round ID': 'Filled automatically.', 'Linked Job ID': 'Filled automatically.', 'Job (display)': 'Filled from linked Job.', 'Org (display)': 'Filled from linked Job.', 'Round': 'Round number.', 'Round type': 'Recruiter, case, panel, hiring manager, or other.',
+    'Interview date': 'Scheduled date; creates or updates prep timing.', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled.',
+    'Domain readiness': 'Optional context; prep depth is planned from Tasks.',
     'Official outcome': 'Waiting / Next round / Declined / Offer / Parked; resolves pending outcome prompts',
-    'Expected response / follow-up date': 'drives Interview follow-up timing', 'Notes': 'prep plan, debrief, interviewers, and system flags'
+    'Expected response / follow-up date': 'Creates or updates interview follow-up timing.', 'Notes': 'Prep context, debrief, interviewers, and repair flags.'
   },
   "Today's plan": {
-    'Slot': 'Commit or option', 'Task': 'selected from Tasks', 'Linked Task ID': 'system', 'Estimated min': 'planned time', 'Plan': 'Commit or Option',
-    'Effort': 'light/medium/deep', 'Status': 'Planned / In progress / Blocked / Done / Deferred / Skipped', 'Actual min': 'optional', 'Why / notes': 'visible reason tags plus your notes; hover for the full Why'
+    'Slot': 'Commit or option.', 'Task': 'Selected from Tasks.', 'Linked Task ID': 'Filled automatically.', 'Estimated min': 'Planned time.', 'Plan': 'Commit or Option.',
+    'Effort': 'Light/medium/deep.', 'Status': 'Planned / In progress / Blocked / Done / Deferred / Skipped.', 'Actual min': 'Optional actual time.', 'Why / notes': 'Reason tags plus your notes; hover for the full Why.'
   },
   'Pending decisions': {
-    'Decision ID': 'system', 'Created': 'system', 'Decision key': 'system', 'Trigger': 'what happened', 'Suggested action': 'what could happen next',
-    'Target type': 'linked object type', 'Target ID': 'system', 'Suggested workflow': 'cascade type', 'Notes': 'context',
-    'Decision': 'Pending / Yes / No / Auto-dismissed', 'Decided at': 'system', 'Resulting To-do ID': 'system',
+    'Decision ID': 'Filled automatically.', 'Created': 'Filled automatically.', 'Decision key': 'Filled automatically.', 'Trigger': 'Why this decision exists.', 'Suggested action': 'What you are deciding.',
+    'Target type': 'Linked object type.', 'Target ID': 'Filled automatically.', 'Suggested workflow': 'Suggested next-step type.', 'Notes': 'Context.',
+    'Decision': 'Choose Yes or No; Auto-dismissed means the situation changed.', 'Decided at': 'Filled automatically.', 'Resulting To-do ID': 'Filled when Yes creates a task.',
     'Decision action type': 'What Yes will do: create task, open popup, capture data, update source, or dismiss',
-    'Review by': 'when this decision should be reviewed; sorts urgent decisions first', 'Linked to': 'jumps to the source row', 'Result': 'what happened after deciding'
+    'Review by': 'When this should be reviewed; urgent decisions sort first.', 'Linked to': 'Link to the source row.', 'Result': 'What happened after deciding.'
   }
 };
 
@@ -10264,6 +10264,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
   var h = String(hint || '');
   var exact = {
     'system': 'Filled automatically',
+    'system link to unblocker task': 'Filled automatically when an unblocker exists',
     'formula': 'Updates automatically',
     'auto': 'Filled automatically',
     'auto from person': 'Filled from Person when known',
@@ -10277,29 +10278,42 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     .replace(/\bformula\b/g, 'updates automatically');
 
   if (canonicalName === 'Tasks') {
-    if (name === 'Task') return 'Prefer Home/Today for daily work; edit here for repair';
-    if (name === 'Status') return 'Set Done/Skipped/Cancelled here only when repairing';
+    if (name === 'Task') return 'Work queue. Use Today for daily execution; use Tasks for repair/planning';
+    if (name === 'Workflow type') return 'Planner route for this work';
+    if (name === 'Status') return 'Done/Skipped/Cancelled route through completion';
     if (name === 'Due date') return 'Planner may set this; edit if the date is wrong';
-    if (name === 'Ready for Today') return 'Ready work can appear on Today; blocked/waiting/parent/planning work cannot';
+    if (name === 'Time estimate') return 'Planning size for Today';
+    if (name === 'Notes') return 'Why, context, and repair flags';
+    if (name === 'Commitment class') return 'How Today prioritises this work';
+    if (name === 'Plan category') return 'Theme for multi-step work';
+    if (name === 'Plan pattern') return 'Parallel or Step-based';
+    if (name === 'Step') return 'Order within a Step-based plan';
+    if (name === 'Parent task') return 'Link to the container task';
+    if (name === 'Ready for Today') return 'Ready work can appear on Today; blocked/waiting/planning work cannot';
+    if (name === 'Child progress') return 'Progress for container tasks';
+    if (name === 'Blocker') return 'What must clear before this can move';
     if (name === 'Priority rank') return 'Lower number appears earlier';
+    if (name === 'Linked to') return 'Link to the source row';
+    if (name === 'On Today right now') return 'Updates from Today';
+    if (name === 'Has sub-tasks') return 'Updates from child tasks';
     if (name === 'Source') return 'Where the task came from';
   }
   if (canonicalName === 'Decisions') {
-    if (name === 'Decision') return 'Choose Yes or No';
+    if (name === 'Decision') return 'Choose Yes or No; Auto-dismissed means the situation changed';
     if (name === 'Decided at') return 'Filled when decided';
     if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
     if (name === 'Decision action type') return 'What Yes will do';
-    if (name === 'Review by') return 'When to review this decision';
+    if (name === 'Review by') return 'When this should be reviewed; urgent decisions sort first';
     if (name === 'Result') return 'What happened after deciding';
   }
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
     if (name === 'Domain readiness') return 'Optional context; prep depth is planned from Tasks';
     if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
-    if (name === 'Expected response / follow-up date') return 'Creates or updates follow-up timing';
-    if (name === 'Notes') return 'Prep plan, debrief, interviewers, and flags';
+    if (name === 'Expected response / follow-up date') return 'Creates or updates interview follow-up timing';
+    if (name === 'Notes') return 'Prep context, debrief, interviewers, and repair flags';
   }
-  if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
+  if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route follow-up work or decisions';
   if (canonicalName === 'Organisations' && (name === 'Known people (count)' || name === 'Open opportunities (count)')) return 'Updates as linked rows are added';
   return h;
 }
