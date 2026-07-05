@@ -831,20 +831,24 @@ function clearOrgRoutingFlags(sheet, row) {
 function syncOrgReviewSchedules() {
   var sheet = getSheet('Organisations');
   if (!sheet || sheet.getLastRow() < 2) return 0;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.ORGS.NEXT_CHECK).getValues();
+  var rowCount = sheet.getLastRow() - 1;
+  var data = sheet.getRange(2, 1, rowCount, COLS.ORGS.NEXT_CHECK).getValues();
+  var nextValues = [];
   var updated = 0;
   for (var i = 0; i < data.length; i++) {
-    var row = i + 2;
     var status = normalizeOrgStatus(data[i][COLS.ORGS.STATUS - 1]);
     var nextCheck = data[i][COLS.ORGS.NEXT_CHECK - 1];
+    var nextValue = nextCheck || '';
     if ((status === 'Active' || status === 'Dormant') && !nextCheck) {
-      sheet.getRange(row, COLS.ORGS.NEXT_CHECK).setValue(nextOrgReviewDate(status));
+      nextValue = nextOrgReviewDate(status);
       updated++;
     } else if ((status === 'Mapped' || status === 'Archived') && nextCheck) {
-      sheet.getRange(row, COLS.ORGS.NEXT_CHECK).clearContent();
+      nextValue = '';
       updated++;
     }
+    nextValues.push([nextValue]);
   }
+  if (updated) sheet.getRange(2, COLS.ORGS.NEXT_CHECK, rowCount, 1).setValues(nextValues);
   return updated;
 }
 

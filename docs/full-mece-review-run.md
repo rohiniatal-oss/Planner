@@ -1363,3 +1363,26 @@ Additional maintenance-surface fix:
 
 Stage 13 decision:
 Source-tab visual polish should improve scanability of workflow state, not add dashboard summaries. This pass adds only missing status colours and version/audit alignment; it does not change schemas, cascades, dropdown values, Home contents, Today selection, or Guide text.
+
+## Stage 15 - Performance, Reliability, and Apps Script Constraints
+
+Guide-last ordering note:
+The final checklist numbers Guide as Stage 14, but the user explicitly asked to do Guide last after behaviour settles. This pass runs the non-Guide reliability stage before the final Guide rewrite.
+
+Scale assumptions:
+500 tasks, 200 people, 150 organisations, 100 jobs, 50 interviews, 500 conversations.
+
+Required output:
+
+| Function/path | Performance/reliability risk | User impact | Fix | Test |
+|---|---|---|---|---|
+| `syncOrgReviewSchedules` | Bulk-read followed by per-row writes/clears to `Next check date`. At 150 orgs this is avoidable Apps Script write overhead during repair/daily maintenance. | Repair/daily maintenance can feel slower and is more exposed to execution-time limits as org count grows. | Changed to compute the whole `Next check date` column in memory and write it once when changes exist. | Parse check, duplicate-function check, schema/config check. |
+| `backfillDecisionHelperColumns` | Applies helper columns one row at a time and resolves links/results per row. | Could become slower with a very large Decisions history. | No code change in this pass: logic includes rich links/results and is correctness-sensitive; monitor unless Decisions grows large. | Stage 15 review only. |
+| `refreshLinkedContactsDisplay` | Bulk-reads People/Jobs but writes display/notes per affected Job row. | Acceptable at 100 jobs, but worth watching if contact linking becomes heavy. | No code change in this pass; note flags require row-level lifecycle cleanup. | Stage 15 review only. |
+| `todayPlanCounts` | Reads visible Today rows cell-by-cell, but the table is capped and small. | Negligible at planned scale. | No change. | Existing Home/Today checks. |
+| `collectUpcomingItems` / `collectOpenApplications` | Full scans of Interviews/People/Jobs for Home. | Acceptable at 50 interviews / 200 people / 100 jobs; read-only and compact output. | No change; keeps Home accurate without extra helper state. | Existing Home render checks. |
+| `withDocumentLock` callers | Scheduled/repair paths use fail-closed; many direct user actions use best-effort fail-open so explicit actions are not swallowed. | Small race risk remains under contention, but user actions do not silently disappear. | No change in this pass; preserve current product choice. | Existing lock audit; later live stress test if needed. |
+| Trigger health / scheduled overlap | Daily/weekly/repair call trigger checks and record heartbeats/audit. | User can recover from missed automation through Home/Maintenance. | No new code gap found. | Existing Stage 11 audit checks. |
+
+Stage 15 decision:
+Fix the confirmed avoidable row-write loop now. Do not rewrite broader helper/link routines unless scale evidence shows they are actually slow; several row-level writes are tied to notes, rich links, or repair flags and are safer left correctness-first at the current workbook scale.
