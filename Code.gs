@@ -3138,10 +3138,13 @@ function handleInterviewTodoCompletion(todo, options) {
   } else if (todo.workflow === 'Interview follow-up') {
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview follow-up sent: ' + round.job, 'System log');
     sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(today(), 7));
+    appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview follow-up completed: ' + round.job,
+      'Record official outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
+      'Interview follow-up', 'Choose: waiting / next round / declined / offer / parked.');
   } else if (todo.workflow === 'Thank-you and debrief') {
     ensureInterviewDebriefTemplate(sheet, round.row);
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview thank-you/debrief completed: round ' + round.round + ' - ' + round.job, 'System log');
-    appendPendingDecision('INTERVIEW_OUTCOME:' + round.id, 'Interview debrief completed: ' + round.job,
+    appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview debrief completed: ' + round.job,
       'Record official outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
       'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
   } else {
@@ -3149,7 +3152,7 @@ function handleInterviewTodoCompletion(todo, options) {
     if (!sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
     createInterviewDebriefTask(round.id);
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview completed: round ' + round.round + ' - ' + round.job, 'System log');
-    appendPendingDecision('INTERVIEW_OUTCOME:' + round.id, 'Interview completed: ' + round.job,
+    appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview completed: ' + round.job,
       'Record interview outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
       'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
   }
@@ -3400,10 +3403,37 @@ function routeJobOutcome(jobId, outcome, opts) {
   return false;
 }
 
+function interviewOutcomeDecisionKey(roundId) {
+  return 'INTERVIEW_OUTCOME:' + String(roundId || '');
+}
+
+function dismissInterviewOutcomeDecision(roundId, reason) {
+  if (!roundId) return false;
+  return autoDismissPendingDecisionByKey(interviewOutcomeDecisionKey(roundId), reason || 'Interview outcome recorded');
+}
+
+function ensureInterviewFollowUpTask(roundId) {
+  var round = getRoundById(roundId);
+  if (!round) return '';
+  var sheet = getSheet('Interviews');
+  var due = round.expectedResponse || '';
+  if (!due && sheet) {
+    var base = round.interviewDate || today();
+    due = addDays(new Date(base), REPLY_DAYS_BY_ROUND_TYPE[String(round.roundType || 'Other')] || 7);
+    sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(due);
+  }
+  var id = appendTodoOnceForWorkflow('Check interview outcome: ' + round.job + (round.org ? ' at ' + round.org : ''),
+    'Interview round', roundId, round.org, 'Interview follow-up', 'Not started', due || '', '15 min',
+    'Follow up or record the official outcome for round ' + (round.round || '?') + '.', 'Auto-triggered');
+  updateOpenTodoDueForTargetWorkflow('Interview round', roundId, 'Interview follow-up', due || '');
+  return id;
+}
+
 function routeInterviewOfficialOutcome(jobId, outcome, opts) {
   opts = opts || {};
   var job = getJobRowById(jobId);
   if (!job) return false;
+  if (opts.roundId) dismissInterviewOutcomeDecision(opts.roundId, 'Outcome recorded: ' + outcome);
   if (outcome === 'Declined' || outcome === 'Rejected') {
     if (opts.roundId) setOpenTodosForTarget('Interview round', opts.roundId, 'Cancelled', 'Interview outcome recorded', ['Interview follow-up']);
     setJobStatus(jobId, 'Closed', { source: opts.source || 'round-outcome' });
@@ -3424,6 +3454,35 @@ function routeInterviewOfficialOutcome(jobId, outcome, opts) {
     return true;
   }
   return false;
+}
+
+function handleInterviewOfficialOutcome(roundId, outcome, opts) {
+  opts = opts || {};
+  var round = getRoundById(roundId);
+  var sheet = getSheet('Interviews');
+  if (!round || !sheet) return false;
+  var normalized = String(outcome || '');
+  if (normalized === 'Rejected') normalized = 'Declined';
+  if (DROPDOWNS.OFFICIAL_OUTCOME.indexOf(normalized) === -1) return false;
+  if (String(sheet.getRange(round.row, COLS.ROUNDS.STATUS).getValue() || '') !== 'Completed') {
+    markInterviewRoundCompleted(roundId, { forceLog: true });
+  }
+  sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(normalized);
+  dismissInterviewOutcomeDecision(roundId, 'Outcome recorded: ' + normalized);
+  if (normalized === 'Waiting') {
+    ensureInterviewFollowUpTask(roundId);
+    syncOpenInterviewTaskDates(roundId);
+    return true;
+  }
+  if (normalized === 'Next round') {
+    createInterviewRoundForJob(round.jobId, { roundDetails: { roundNum: (parseInt(round.round, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
+    return true;
+  }
+  return routeInterviewOfficialOutcome(round.jobId, normalized, {
+    source: opts.source || 'round-outcome',
+    roundId: roundId,
+    realDate: opts.realDate || ''
+  });
 }
 
 function fireJobStatusChanged(jobId, oldStatus, newStatus, opts) {
@@ -5390,6 +5449,19 @@ function retireObsoleteInterviewPrepTasks(roundId, desiredWorkflowMap) {
   return retired;
 }
 
+function interviewPrepWorkflowList() {
+  return ['Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review'];
+}
+
+function pauseInterviewPrepForReschedule(roundId) {
+  var count = setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview rescheduled; re-plan prep after the new date is set', interviewPrepWorkflowList());
+  var round = getRoundById(roundId);
+  var sheet = getSheet('Interviews');
+  if (round && sheet) appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-date-changed] Prep paused for reschedule; run Plan interview prep after the new date is set.');
+  if (count) syncTaskPlanningHelpers();
+  return count;
+}
+
 function scheduleInterviewRound(roundId, dateValue) {
   var round = getRoundById(roundId);
   var sheet = getSheet('Interviews');
@@ -5405,6 +5477,9 @@ function scheduleInterviewRound(roundId, dateValue) {
   return true;
 }
 
+// Legacy/simple prep generator kept for old workflows only. New scheduled
+// rounds should create Plan interview prep, then parent/child Interview prep
+// tasks from the popup.
 function createInterviewPrepTasks(roundId) {
   var round = getRoundById(roundId);
   if (!round) return 0;
@@ -5661,6 +5736,7 @@ function upsertInterviewPrepPlanBlock(round, areas, blockers, interviewerNames, 
   current = current.replace(/\[interview-prep-plan\][\s\S]*?\[\/interview-prep-plan\]\s*/g, '').trim();
   sheet.getRange(round.row, COLS.ROUNDS.NOTES).setValue((current ? current + '\n\n' : '') + block);
   appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-planned] Prep plan generated');
+  clearNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-date-changed]');
 }
 
 function parseInterviewPrepPlanBlock(notes) {
@@ -5874,25 +5950,7 @@ function onEditRounds(sheet, row, col, newVal) {
     return;
   }
   if (col === COLS.ROUNDS.OFFICIAL_OUTCOME) {
-    if (newVal && String(sheet.getRange(row, COLS.ROUNDS.STATUS).getValue() || '') !== 'Completed') {
-      markInterviewRoundCompleted(roundId, { forceLog: true });
-    }
-    if (String(newVal) === 'Waiting' && !sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
-      var waitingDate = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue() || today();
-      var waitingType = String(sheet.getRange(row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
-      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
-      syncOpenInterviewTaskDates(roundId);
-    }
-    if (String(newVal) === 'Rejected') {
-      sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Declined');
-      routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'round-outcome', roundId: roundId });
-    }
-    if (String(newVal) === 'Declined') {
-      routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'round-outcome', roundId: roundId });
-    }
-    if (String(newVal) === 'Offer') routeInterviewOfficialOutcome(jobId, 'Offer', { source: 'round-outcome', roundId: roundId });
-    if (String(newVal) === 'Parked') routeInterviewOfficialOutcome(jobId, 'Parked', { source: 'round-outcome', roundId: roundId });
-    if (String(newVal) === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
+    handleInterviewOfficialOutcome(roundId, newVal, { source: 'round-outcome' });
     refreshDerivedPlanningSurfaces();
     return;
   }
@@ -5904,6 +5962,7 @@ function onEditRounds(sheet, row, col, newVal) {
       sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).setValue('');
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue('');
       appendTodoOnceForWorkflow('Reschedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Find a new time, then update Interview date.', 'Auto-triggered');
+      pauseInterviewPrepForReschedule(roundId);
       syncOpenInterviewTaskDates(roundId);
     }
     if (String(newVal) === 'Cancelled') {
@@ -6035,6 +6094,7 @@ function checkInterviewRoundHealthFlags() {
 
     if (status === 'Completed' && (!outcome || outcome === 'Waiting') && expected && new Date(expected) < todayDate) {
       appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome] Expected response date has passed');
+      ensureInterviewFollowUpTask(roundId);
       flagged++;
     } else {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome]');
@@ -6042,6 +6102,7 @@ function checkInterviewRoundHealthFlags() {
 
     if (status === 'Completed' && notes.indexOf('[interview-debrief]') === -1) {
       appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief] Add substantive debrief notes');
+      createInterviewDebriefTask(roundId);
       flagged++;
     } else {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief]');
@@ -8432,6 +8493,7 @@ function processInterviewOnboarding(fields) {
         sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).setValue('');
         sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue('');
         appendTodoOnceForWorkflow('Reschedule interview: ' + fields.jobTitle + ' at ' + org.name, 'Interview round', round.id, org.name, 'Interview scheduling', 'Not started', '', '15 min', 'Find a new time, then update Interview date.', 'Auto-triggered');
+        pauseInterviewPrepForReschedule(round.id);
         syncOpenInterviewTaskDates(round.id);
       }
       if (fields.status === 'Cancelled') {
@@ -8441,18 +8503,7 @@ function processInterviewOnboarding(fields) {
       }
     }
     if (fields.officialOutcome && DROPDOWNS.OFFICIAL_OUTCOME.indexOf(fields.officialOutcome) !== -1) {
-      if (String(sheet.getRange(round.row, COLS.ROUNDS.STATUS).getValue() || '') !== 'Completed') markInterviewRoundCompleted(round.id, {});
-      sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(fields.officialOutcome);
-      if (fields.officialOutcome === 'Waiting' && !sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
-        var waitingDate = sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).getValue() || today();
-        var waitingType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
-        sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
-        syncOpenInterviewTaskDates(round.id);
-      }
-      if (fields.officialOutcome === 'Declined') routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'interview-onboarding', roundId: round.id });
-      if (fields.officialOutcome === 'Offer') routeInterviewOfficialOutcome(jobId, 'Offer', { source: 'interview-onboarding', roundId: round.id });
-      if (fields.officialOutcome === 'Parked') routeInterviewOfficialOutcome(jobId, 'Parked', { source: 'interview-onboarding', roundId: round.id });
-      if (fields.officialOutcome === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
+      handleInterviewOfficialOutcome(round.id, fields.officialOutcome, { source: 'interview-onboarding' });
     }
   }
   return okResult('Captured the interview and created the prep path.');
@@ -9447,8 +9498,10 @@ var HEADER_GUIDANCE = {
   },
   'Interview rounds': {
     'Round ID': 'system', 'Linked Job ID': 'system', 'Job (display)': 'auto', 'Org (display)': 'auto', 'Round': 'round number', 'Round type': 'recruiter, case, panel, etc.',
-    'Interview date': 'scheduled date; creates the prep-planning task', 'Status': 'scheduled/completed/cancelled', 'Domain readiness': 'optional context; prep depth is chosen from the Plan interview prep task', 'Official outcome': 'waiting/next/declined/offer/parked',
-    'Expected response date': 'edit if follow-up timing is wrong', 'Notes': 'prep markers, debrief, people, logistics'
+    'Interview date': 'scheduled date; creates or updates prep timing', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled',
+    'Domain readiness': 'optional legacy/simple context; prep depth is planned from Tasks',
+    'Official outcome': 'Waiting / Next round / Declined / Offer / Parked; resolves pending outcome prompts',
+    'Expected response date': 'drives Interview follow-up timing', 'Notes': 'prep plan, debrief, interviewers, and system flags'
   },
   "Today's plan": {
     'Slot': 'Commit or option', 'Task': 'selected from Tasks', 'Linked Task ID': 'system', 'Estimated min': 'planned time', 'Plan': 'Commit or Option',
@@ -9499,6 +9552,8 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
     if (name === 'Domain readiness') return 'Optional context; prep depth is planned from Tasks';
     if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
+    if (name === 'Expected response date') return 'Creates or updates follow-up timing';
+    if (name === 'Notes') return 'Prep plan, debrief, interviewers, and flags';
   }
   if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
   if (canonicalName === 'Organisations' && (name === 'Known people (count)' || name === 'Open opportunities (count)')) return 'Updates as linked rows are added';
@@ -11004,6 +11059,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Why a task appears', 'Today shows compact tags like [Fixed], [Focus], [Pipeline], [Spare], or [Pulled]. Hover the notes cell for the full reason.');
   r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you make them multi-step from Tasks > Row actions > Make selected Task multi-step.');
   r = writeKV(sheet, r, 'Source-led scans', 'Opportunity scan and People source scan are flexible pipeline-building tasks. When completed, they ask what you found; people found this way are saved as Identified, not automatic outreach.');
+  r = writeKV(sheet, r, 'Interview prep', 'Scheduled interviews create one Plan interview prep task. Completing it opens the prep popup and creates parent/child prep tasks; Today shows only ready child work.');
   r++;
 
   r = writeH2(sheet, r, 'The status labels');
@@ -11011,6 +11067,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'People', 'Relationship status runs from Identified to outreach, reply, conversation, keep-warm, or closed. Conversations are logged on the Conversations tab.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Blocked / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
+  r = writeKV(sheet, r, 'Interview outcomes', 'Waiting creates follow-up work. Next round creates the next round. Declined and Parked close the job; Offer creates offer-decision work.');
   r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed. Review by is the decision urgency date.');
   r++;
 
