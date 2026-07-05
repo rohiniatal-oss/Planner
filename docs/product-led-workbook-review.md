@@ -97,6 +97,31 @@ Category 0 acceptance standard:
 - Today must remain an execution surface, not a backlog.
 - Source tabs must remain records, not daily operating surfaces.
 
+Category 0 current workbook scan:
+
+| Surface | Product purpose | 10-second user question | Main Category 0 risk | Current fix / next action |
+|---|---|---|---|---|
+| Home | Start, decide, capture, trust system health | What needs my attention and where do I start? | Tiny action labels can imply hidden destructive behavior; Home can drift toward dashboard creep | Rename Home reset action to Redo setup with safety note; keep Home compact |
+| Today | Execute today's realistic work | What can I do now? | Capacity and recovery must stay understandable under stress | Batch end-of-day done; retest over/under-capacity messaging |
+| Tasks | Work source of truth | Why is this work ready, blocked, waiting, or planned? | Helper/status columns can feel like backend machinery | Keep Ready for Today visual; document tags later |
+| Decisions | Judgement and audit | What judgement is needed and what will Yes/No do? | Decisions can look like generic tasks if action text is vague | Router and Home cards improved; keep checking stale/missing sources |
+| Sectors | Strategic universe | What markets am I exploring? | Parent/sub-sector model needs examples | Guide examples later; keep malformed rows repairable |
+| Organisations | Target universe | Which organisations are active and why? | Active/Dormant meaning and review state can be invisible | Home/weekly summary partly improved; continue org review visibility later |
+| Jobs | Opportunity/application record | What is the application state and next step? | Direct sheet edits can feel equivalent to popup workflows when they are not | Continue Category 3 Jobs column-flow scan |
+| People | Relationship pipeline | Who is this and what should happen next? | Identified vs outreach intent can be over-automated | Keep Identified inert; follow-ups stay in Tasks/Today |
+| Interviews | Round and prep router | What round is next and what prep/outcome work exists? | Legacy prep labels can confuse the current task-based prep model | Defer label/Guide cleanup until behavior stabilizes |
+| Conversations | Interaction history | What happened, with whom, and what follow-up exists? | System logs and outcomes can look equal-weight | Keep as history; improve outcome clarity later |
+| Guide | Operating manual | How do I use this safely? | Needs to lag behavior changes until stable | Guide-last by user request |
+
+Category 0 issue queue:
+
+| Issue | Severity | Product impact | Category link | Status |
+|---|---|---|---|---|
+| Home completed-onboarding action says Reset | P1/P2 | A vague label beside a checkbox makes a destructive-adjacent path feel unsafe and unclear | 0 + 6 | Fixed: Home now says Redo setup and notes backup behavior |
+| Full workbook first-impression map missing from plan | P2 | Review could drift back into technical fixes without proving user comprehension | 0 | Fixed in this doc |
+| Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
+| Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
+
 Implemented after this review began:
 - Missing-source pending Decisions are hidden from Home and auto-dismissed during decision helper backfill.
 - Home now has a compact Needs attention strip for source repair, blocked-task recovery, stale hidden Decisions, parent review, and maintenance health.
@@ -108,6 +133,7 @@ Implemented after this review began:
 - Redo onboarding now offers a checked backup-copy option before clearing existing data, and the reset clears full data bodies plus retired header cells instead of only current schema columns.
 - Repair and daily maintenance now scan duplicate IDs across core ID columns; Home counts duplicate-ID rows as repair-needed.
 - End-of-day reconcile now uses one batch wrap-up popup for unfinished Today work instead of one blocking alert per task.
+- Home's completed-onboarding action now says "Redo setup" instead of "Reset" and explains the backup-before-clear behavior in a note.
 
 ## Pass 1 - User Journey Review
 

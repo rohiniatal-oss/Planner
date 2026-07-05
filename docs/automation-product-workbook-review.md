@@ -59,6 +59,12 @@ Category 0 acceptance standard:
 - Do not add complexity unless it reduces cognitive burden or improves trust.
 - Defer Guide updates until behavior is settled, but record Guide implications.
 
+Category 0 first implementation slice:
+
+| Change | Product problem | Automation level | Acceptance test |
+|---|---|---|---|
+| Home completed-onboarding action now says Redo setup, with a note explaining backup-before-clear behavior | The old Reset label was too vague for a destructive-adjacent setup path | L6 confirmation/supporting copy | Refresh Home after onboarding complete; the checkbox label reads Redo setup and the note explains the backup copy |
+
 Product architecture to preserve:
 
 | Surface | Product role | Boundary |

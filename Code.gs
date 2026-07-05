@@ -8631,7 +8631,10 @@ function refreshHome() {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
       .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
-    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1).setValue('Reset').setFontSize(9).setFontColor('#7A7974');
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
+      .setValue('Redo setup')
+      .setNote('Reopens onboarding. If existing planner data would be cleared, the setup flow offers a backup copy first.')
+      .setFontSize(9).setFontColor('#7A7974');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue('Welcome back. Let’s get you organised for today.').setFontColor('#5F625E');
   }
   var guideSheetForHome = getSheet('Guide');
