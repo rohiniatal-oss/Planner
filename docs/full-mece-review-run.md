@@ -576,6 +576,33 @@ Acceptance tests:
 2. Hidden Today helper columns remain auto/system-owned.
 3. No Today selection, status sync, or refresh logic changes.
 
+## Issue: People Outreach date was editable but styled/configured as system-owned
+
+Severity: P3
+
+Stage: 4
+Area: Column ownership and field lineage
+Tab/surface: People
+Column/function: `MANUAL_COLUMNS`, `onEditPeople`, `COLS.PEOPLE.OUTREACH_DATE`
+
+Evidence:
+- Code evidence: `onEditPeople` has a dedicated branch for `COLS.PEOPLE.OUTREACH_DATE`; editing it can move a person to `Outreach sent`, recalculate follow-up date, and update the open follow-up task due date.
+- Code evidence: `MANUAL_COLUMNS.People` did not include `OUTREACH_DATE`, so the column looked system-owned.
+
+Current behaviour:
+The user could edit Outreach date and trigger workflow logic, but the visual ownership model did not identify it as user-editable.
+
+Expected behaviour:
+If a direct user edit drives outreach state, the column should be marked as manual.
+
+Fix implemented:
+Added `COLS.PEOPLE.OUTREACH_DATE` to `MANUAL_COLUMNS.People`.
+
+Acceptance tests:
+1. People `Outreach date` is styled as a manual/editable column.
+2. Existing outreach-date cascade behaviour is unchanged.
+3. Auto-only People helper columns remain system-styled.
+
 ## Issue: Repair all tabs rewrote existing Guide before Guide-last
 
 Severity: P2
