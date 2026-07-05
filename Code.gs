@@ -11661,6 +11661,17 @@ function showAllColumns() {
   SpreadsheetApp.getActiveSpreadsheet().toast('Hidden columns shown for inspection.', 'The Planner', 3);
 }
 
+function restoreHiddenColumns() {
+  CANONICAL_TAB_ORDER.forEach(function (name) {
+    var sheet = getSheet(name);
+    if (!sheet || !SHEET_TO_HEADER_KEY[name]) return;
+    var len = sheetHeaderLength(name);
+    try { sheet.showColumns(1, len); } catch (err) { }
+    hiddenColumnsFor(name).forEach(function (col) { try { sheet.hideColumns(col); } catch (err) { } });
+  });
+  SpreadsheetApp.getActiveSpreadsheet().toast('Normal hidden columns restored.', 'The Planner', 3);
+}
+
 function applyColumnWidths() {
   Object.keys(COLUMN_WIDTHS).forEach(function (headerKey) {
     var canonical = Object.keys(SHEET_TO_HEADER_KEY).filter(function (n) { return SHEET_TO_HEADER_KEY[n] === headerKey; })[0];
@@ -13845,7 +13856,7 @@ function buildMenu() {
       .addItem('Find people at selected Organisation', 'rowActionFindPeopleAtSelectedOrg')
       .addItem('Scan jobs at selected Organisation', 'rowActionScanJobsAtSelectedOrg')
       .addSeparator()
-      .addItem('Decide on market map for selected Sub-sector', 'rowActionSearchOrgsForSubsector')
+      .addItem('Queue market-map decision for selected Sub-sector', 'rowActionSearchOrgsForSubsector')
       .addItem('Break selected Sector into sub-sectors', 'rowActionBreakDownSelectedSector')
       .addSeparator()
       .addItem('Plan selected Job application', 'rowActionPrepSelectedJob')
@@ -13877,9 +13888,11 @@ function buildMenu() {
       .addItem('Review active organisations', 'weeklyReview')
       .addSeparator()
       .addItem('Save backup copy', 'savePlannerSnapshot')
-      .addItem('Start fresh: backup, then clear data', 'startFreshPlannerData')
       .addSeparator()
-      .addItem('Show hidden columns for troubleshooting', 'showAllColumns'))
+      .addItem('Show hidden columns for troubleshooting', 'showAllColumns')
+      .addItem('Restore normal hidden columns', 'restoreHiddenColumns')
+      .addSeparator()
+      .addItem('Start fresh: backup, then clear data', 'startFreshPlannerData'))
     .addToUi();
 }
 
