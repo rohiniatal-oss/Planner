@@ -2481,6 +2481,20 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
   return false;
 }
 
+function findOpenTodoForTargetWorkflow(objType, objId, workflow) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !objId || !workflow) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== String(objType)) continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
+    if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
+    if (!isOpenTodoStatus(String(data[i][COLS.TODO.STATUS - 1]))) continue;
+    return { row: i + 2, id: String(data[i][COLS.TODO.ID - 1] || ''), data: data[i] };
+  }
+  return null;
+}
+
 // Kept in step with isTodoDuplicate's fuzzy match (same threshold + now
 // the same workflow requirement) — this finds the specific task that
 // caused appendTodoWithSource's dedup rejection, so acceptPendingDecision
@@ -3146,7 +3160,7 @@ function handleInterviewTodoCompletion(todo, options) {
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview thank-you/debrief completed: round ' + round.round + ' - ' + round.job, 'System log');
     appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview debrief completed: ' + round.job,
       'Record official outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
-      'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
+      'Interview follow-up', 'Choose: waiting / next round / declined / offer / parked.');
   } else {
     sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Completed');
     if (!sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
@@ -3154,7 +3168,7 @@ function handleInterviewTodoCompletion(todo, options) {
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview completed: round ' + round.round + ' - ' + round.job, 'System log');
     appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview completed: ' + round.job,
       'Record interview outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
-      'Interview follow-up', 'Choose: waiting / next round / rejected / offer / parked.');
+      'Interview follow-up', 'Choose: waiting / next round / declined / offer / parked.');
   }
 }
 
@@ -3475,6 +3489,7 @@ function handleInterviewOfficialOutcome(roundId, outcome, opts) {
     return true;
   }
   if (normalized === 'Next round') {
+    setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Next round recorded', ['Interview follow-up']);
     createInterviewRoundForJob(round.jobId, { roundDetails: { roundNum: (parseInt(round.round, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
     return true;
   }
@@ -5453,6 +5468,20 @@ function interviewPrepWorkflowList() {
   return ['Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review'];
 }
 
+function interviewExpectedResponseLooksAuto(interviewDate, expectedResponse) {
+  if (!expectedResponse) return true;
+  var interview = parseDateOr(interviewDate, '');
+  var expected = parseDateOr(expectedResponse, '');
+  if (!interview || !expected) return false;
+  var expectedKey = formatDateHuman(expected);
+  var seen = {};
+  Object.keys(REPLY_DAYS_BY_ROUND_TYPE).forEach(function (roundType) {
+    seen[formatDateHuman(addDays(interview, REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7))] = true;
+  });
+  seen[formatDateHuman(addDays(interview, 7))] = true;
+  return !!seen[expectedKey];
+}
+
 function pauseInterviewPrepForReschedule(roundId) {
   var count = setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview rescheduled; re-plan prep after the new date is set', interviewPrepWorkflowList());
   var round = getRoundById(roundId);
@@ -5551,9 +5580,12 @@ function workflowOpensCompletionPopup(workflow) {
 function createInterviewPrepPlanningTask(roundId) {
   var round = getRoundById(roundId);
   if (!round) return '';
-  return appendTodoOnceForWorkflow('Plan interview prep: ' + round.job + (round.org ? ' at ' + round.org : ''),
+  var id = appendTodoOnceForWorkflow('Plan interview prep: ' + round.job + (round.org ? ' at ' + round.org : ''),
     'Interview round', roundId, round.org, 'Plan interview prep', 'Not started', today(), '15 min',
     'Choose prep areas and effort bands. This generates the actual interview prep tasks.', 'Auto-triggered');
+  if (id) return id;
+  var existing = findOpenTodoForTargetWorkflow('Interview round', roundId, 'Plan interview prep');
+  return existing ? existing.id : '';
 }
 
 function interviewPrepKey(roundId, areaKey, band, seq) {
@@ -5933,8 +5965,11 @@ function onEditRounds(sheet, row, col, newVal) {
   if (col === COLS.ROUNDS.ROUND_TYPE && newVal) {
     var interviewDateForType = sheet.getRange(row, COLS.ROUNDS.INTERVIEW_DATE).getValue();
     if (interviewDateForType) {
-      sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDateForType), REPLY_DAYS_BY_ROUND_TYPE[String(newVal)] || 7));
-      syncOpenInterviewTaskDates(roundId);
+      var currentExpected = sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue();
+      if (interviewExpectedResponseLooksAuto(interviewDateForType, currentExpected)) {
+        sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDateForType), REPLY_DAYS_BY_ROUND_TYPE[String(newVal)] || 7));
+        syncOpenInterviewTaskDates(roundId);
+      }
     }
     refreshDerivedPlanningSurfaces();
     return;
@@ -10720,12 +10755,13 @@ function rowActionPlanPrepForSelectedInterview() {
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var roundId = String(sheet.getRange(row, COLS.ROUNDS.ID).getValue() || '');
   if (!roundId) { SpreadsheetApp.getUi().alert('That row does not have a Round ID. Add the interview from Jobs or Home first.'); return; }
+  var todoId = '';
   withDocumentLock(function () {
-    createInterviewPrepPlanningTask(roundId);
+    todoId = createInterviewPrepPlanningTask(roundId);
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionPlanPrepForSelectedInterview' });
-  runInterviewPrepPlanPopup(roundId, '');
+  runInterviewPrepPlanPopup(roundId, todoId);
 }
 
 // v7.4 §4.2 — Multi-day Phase 2: break a Multi-day Task into real
