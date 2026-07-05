@@ -104,83 +104,153 @@ Do not do:
 - Do not add a large missed-days dashboard.
 - Do not auto-complete, reset, or defer work.
 
-## Stage 1 - Surface Roles And Navigation
+## Stage 1 - Surface Roles And Navigation (Restarted)
 
 Required output:
 
 | Surface | Current role | Target role | User action here | Should not do | Current gap | Fix |
 |---|---|---|---|---|---|---|
-| Home | Command centre and capture surface. `refreshHome` renders setup/trust, attention, Decisions, capture, Today state, open applications, upcoming, refresh utility. | Same: start here, decide, capture, see urgent state. | Start setup, decide, capture update, open Today, inspect critical warnings. | Raw dashboard or dense source table. | Needs live visual retest and Home/Today consistency proof. | Stage 8 Home cockpit review before new Home edits. |
-| Today | Execution surface. `bootstrapToday` renders plan controls, build/refresh, committed/options table, Needs planning, Progress, End of day. | Same: do work now, adjust capacity, recover blocked work. | Change focus/minutes/energy, build/refresh plan, update task status, wrap up. | Backlog or capture surface. | Menu row movement labels are generic; visual retest still needed. | P3 copy fix can be batched after issue/user story. |
-| Tasks | Work source of truth with task, status, readiness, blockers, priority, links. | Same: own task existence/readiness and planning detail. | Inspect/repair/sequencing, not daily default execution. | Judgement queue or Home replacement. | Helper fields may feel backend-heavy; no visual-weight review yet. | Stage 7/12 Tasks pass. |
-| Decisions | Judgement queue and audit. Home shows active top queue; Decisions stores full context/result. | Same: judgement/audit, not work execution. | Decide Yes/No, audit result. | Task table. | Need verify every action type is truthful and popup decisions stay pending until success. | Stage 9 Decisions vs Tasks pass. |
-| Sectors | Durable search-space records. | Broad/narrow search universe records. | Maintain taxonomy and exploration status. | Daily operating surface. | Parent/sub-sector examples and lineage still need final checklist review. | Stage 4 column lineage and Stage 6 sector workflows. |
-| Organisations | Durable target-universe records. | Org classification/status/review record. | Maintain org identity, sector, status, review state. | CRM dashboard or daily queue. | Review cadence may be hidden; Active/Dormant behaviour needs re-verification. | Stage 4/5/6 org review. |
-| Jobs | Durable opportunity/application record. | Application state/source of truth. | Capture opportunity, application status/result, linked people. | Own application execution tasks. | Status/result/response model needs re-verification against final checklist. | Stage 4/5/6 Jobs pass. |
-| People | Durable relationship record. | Person identity, source, relationship status, next action helpers. | Track relationship state and context. | Force outreach from discovery. | People/Conversations combined flow needs final checklist verification. | Stage 4/5/6 People pass. |
-| Conversations | Interaction history and outcome router. | Log scheduled/completed/cancelled interactions and route follow-up. | Record what happened and outcome. | Replace People or Tasks. | Manual log could feel like operating surface if outcomes unclear. | Stage 4/5/6 Conversations pass. |
-| Interviews | Round/prep/outcome record. | Track interview schedule, prep routing, outcome/follow-up. | Maintain round status and outcome. | Store hidden prep plan instead of task-led prep. | Prep plan must be verified as tasks, not buried notes. | Stage 4/6 Interviews pass. |
-| Guide | Product manual. | Explain stable behaviour last. | Self-serve help after UI is stable. | Substitute for clear UI. | Current `rewriteGuide` may lag behaviour; user asked Guide last. | Stage 14 after behaviour settles. |
+| Home | Command centre and capture surface. `refreshHome` renders setup/trust, attention, Decisions, capture, Today state, open applications, upcoming, then utility refresh. | Start here, decide, capture, see urgent state. | Start/redo setup, resolve decisions, capture update, open/build Today, inspect warnings. | Raw data table, dense dashboard, ordinary task list. | Home role is right in code, but still needs rendered Home/Today consistency proof. | Stage 8 Home cockpit review; no new Home sections until then. |
+| Today | Execution surface. `bootstrapToday` renders controls, build/refresh, committed/options table, Needs planning, Progress, End of day. | Do work now, adjust capacity, recover blocked/planning work. | Change focus/minutes/energy, build/refresh, update status, wrap up. | Backlog, source record, capture surface. | Role is right in code; needs Stage 7 task-readiness/capacity tests and visual scan. | Stage 7 Today execution review. |
+| Tasks | Work source of truth. `HEADERS['To-do']` includes status, due/time, readiness, blockers, parent/child, links. | Own task existence, readiness, sequencing, blocking, and audit context. | Inspect/repair/sequencing; source for Today selection. | Judgement queue, daily cockpit, source-record replacement. | Helper fields are numerous; visual weight and column ownership need later review. | Stage 4 column lineage + Stage 7 Tasks/Today. |
+| Decisions | Judgement queue and audit. `HEADERS['Pending decisions']` includes Decision, action type, Review by, Linked to, Result. | Own judgement and decision audit. | Decide Yes/No, understand consequence, audit result. | Second task table. | Need verify action type router and popup-pending behaviour in Stage 9. | Stage 9 Decisions vs Tasks separation. |
+| Sectors | Source tab for search-space taxonomy. Hidden Sector/Sub-sector IDs; visible Sector/Sub-sector/Status/Notes. | Durable broad/narrow search universe records. | Maintain taxonomy and exploration state. | Daily execution surface. | Parent/sub-sector model still needs full column lineage and examples later. | Stage 4 Sectors lineage + Stage 6 sector workflows. |
+| Organisations | Source tab for target universe. Hidden IDs/review dates; visible org/classification/status/counts/notes. | Durable organisation classification/status/review record. | Maintain org identity, sector/sub-sector, tier/status, review state. | CRM dashboard or daily queue. | Review cadence may be hidden to users; Active/Dormant semantics need later verification. | Stage 4/5/6 Organisations review. |
+| Jobs | Source tab for opportunities/applications. Visible Opportunity, Organisation, Deadline, Application status/result, contacts, notes. | Durable opportunity/application state. | Capture opportunity and application facts. | Own application task execution. | Status/result/response navigation needs later verification. | Stage 4/5/6 Jobs review. |
+| People | Source tab for relationship records. Visible person identity, relationship source/status, next action helpers, linked jobs. | Durable relationship record, not outreach automation. | Track person context and relationship stage. | Force outreach from discovery. | People/Conversations flow must prove no outreach task spam. | Stage 4/5/6 People review. |
+| Conversations | Source/history tab for interactions. Visible date/person/type/status/notes/outcome. | Interaction history plus outcome router. | Log what happened and any follow-up outcome. | Replace People or Tasks. | Outcome routing clarity needs later review. | Stage 4/5/6 Conversations review. |
+| Interviews | Source tab for interview rounds. Visible job/org display, round/date/status/readiness/outcome/follow-up/notes. | Round/prep/outcome record, with prep work routed through Tasks. | Track interview schedule/status/outcome. | Store prep plan only as hidden notes. | Must verify prep plan flows to Tasks, not buried notes. | Stage 4/6 Interviews review. |
+| Guide | Product manual. `rewriteGuide` exists and Repair currently rewrites Guide. | Explain stable behaviour after surfaces settle. | Self-serve help after UI is stable. | Substitute for clear UI. | Guide content may lag changed behaviour; user explicitly wants Guide last. | Stage 14 only after behaviour/code settles. |
+
+Stage 1 evidence map from current code:
+
+| Verification item | Evidence checked | Result | Remaining proof needed |
+|---|---|---|---|
+| Home is not a raw data table | `refreshHome` sections: setup, attention, Decisions, capture, Today, open applications, upcoming, refresh utility | Pass in code structure | Rendered Home visual scan in Stage 8/13 |
+| Today is not a backlog | `bootstrapToday` control rows and commit/options/needs-planning/progress/EOD sections; `stagedTodaySelection` owns selection | Pass in code structure | Stage 7 tests for blocked/parent/broken-link exclusions |
+| Tasks owns work existence | `HEADERS['To-do']`, `HEADER_GUIDANCE['To-do']`, hidden helper columns | Pass in schema intent | Stage 4 column ownership and Stage 7 readiness |
+| Decisions owns judgement | `HEADERS['Pending decisions']` includes Decision/action type/review/result fields | Pass in schema intent | Stage 9 router and popup-pending verification |
+| Source tabs are records | `SHEET_TO_HEADER_KEY`, `HEADER_GUIDANCE`, `hiddenColumnsFor`, `CANONICAL_TAB_ORDER` | Pass in architecture | Stage 4 column lineage by tab |
+| Guide explains stable behaviour | Guide is last in `CANONICAL_TAB_ORDER`; final checklist defers Guide | Pass as target rule | Stage 14 after behaviour settles |
+| Capture starts from Home where possible | Home has `Capture update`; header hints say "Prefer Home > Capture update"; menu still offers Capture update escape hatch | Pass | Verify popup parity in Stage 6 |
+| Daily execution starts from Today | Home links to Today; menu and Today checkbox say Build / refresh Today's plan | Pass | Verify Home/Today state consistency in Stage 8 |
 
 Stage 1 findings:
 
-## Issue: Today row movement menu labels are too context-dependent
+## Issue: Home/Today navigation still needs rendered consistency proof
 
-Severity: P3
+Severity: P1/P2
 
 Stage: 1
 Area: Surface roles and navigation
-Tab/surface: Today menu
-Column/function: `buildMenu`
+Tab/surface: Home / Today
+Column/function: `refreshHome`, `todayPlanCounts`, `bootstrapToday`, `populateTodayImpl`
 
 Evidence:
-- Sheet evidence: Not live-tested in menu.
-- Code evidence: `buildMenu` labels are `Move selected row up` and `Move selected row down` inside the Today submenu.
-- User experience evidence: The actions only work meaningfully for Today rows, but the label relies on submenu context.
+- Sheet evidence: Not live-tested in this restarted pass.
+- Code evidence: `refreshHome` uses `todayPlanCounts()` to decide whether Home says "Open Today to build plan", "Open Today", or "Start working"; `todayPlanCounts()` can mark a visible plan as `unverified` when build-date evidence is missing.
+- User experience evidence: Earlier user screenshots showed trust breaks when Home and Today appeared to disagree, so rendered-state proof matters.
 
 Current behaviour:
-The Today submenu uses generic row movement labels.
+Code is designed to keep Home state aligned with Today, including an unverified fallback.
 
 Expected behaviour:
-Visible actions should name the surface or outcome when detached from the sheet context.
+Home should never tell the user "Not built yet" when Today visibly has a current usable plan, and should never say "Start working" before committed work exists.
 
 User impact:
-Minor ambiguity.
+If Home and Today disagree, the Planner feels stale even if the underlying tasks are correct.
 
 Workflow impact:
-None on data flow.
+Daily user may stop trusting Home as the command centre.
+
+Data/integrity impact:
+No direct data corruption, but high trust impact.
+
+Automation boundary:
+L1/L2 surfacing. Home reads and warns; it should not silently mutate the plan except through explicit refresh actions.
+
+Recommended fix:
+- Code change: None until Stage 8 reproduces a failing state.
+- Sheet/layout change: Live visual/state test required.
+- Dropdown/header/copy change: None yet.
+- Repair/backfill: None yet.
+- Guide update: Guide-last only if final behaviour changes.
+
+Acceptance tests:
+1. With no Today build, Home says `Open Today to build plan`.
+2. With Today built and zero committed tasks, Home says `Open Today`, not `Start working`.
+3. With Today built and committed rows, Home says `Start working`.
+4. If Today has visible rows but missing build-date evidence, Home flags the state as unverified rather than pretending it is cleanly current.
+
+Do not do:
+- Do not add a dashboard block to Home.
+- Do not make a Home hyperlink run Apps Script.
+- Do not patch Home copy before the Stage 8 scenario proves the exact issue.
+
+## Issue: Guide can be regenerated before the Guide-last phase
+
+Severity: P2/P3
+
+Stage: 1
+Area: Surface roles and navigation
+Tab/surface: Guide / Maintenance
+Column/function: `repairAllTabsImpl`, `rewriteGuide`
+
+Evidence:
+- Sheet evidence: Not live-tested in this pass.
+- Code evidence: `repairAllTabsImpl` calls `rewriteGuide()`.
+- User experience evidence: The user explicitly asked to update Guide last, after behaviour settles.
+
+Current behaviour:
+Repair all tabs currently rewrites the Guide as part of a broad repair run.
+
+Expected behaviour:
+Guide content should be considered final only in Stage 14 after behaviour and surface copy settle. Repair may still need to ensure the tab exists, but content changes should not become the source of truth for unfinished behaviour.
+
+User impact:
+Guide can appear more authoritative than the currently reviewed behaviour.
+
+Workflow impact:
+Users may follow stale or premature instructions.
 
 Data/integrity impact:
 None.
 
 Automation boundary:
-L1/L4 visible execution control.
+L1 documentation/repair helper.
 
 Recommended fix:
-- Code change: Rename to `Move selected Today row up` and `Move selected Today row down`.
-- Sheet/layout change: None.
-- Dropdown/header/copy change: Menu copy only.
+- Code change: Do not change now; evaluate in Stage 14 or Stage 3 repair inventory whether Repair should preserve Guide content until Guide-last.
+- Sheet/layout change: None yet.
+- Dropdown/header/copy change: None yet.
 - Repair/backfill: None.
-- Guide update: Not needed until Guide-last, if at all.
+- Guide update: Stage 14 only.
 
 Acceptance tests:
-1. The Today submenu names the selected Today row in movement actions.
-2. The functions called remain `moveTodayRowUp` and `moveTodayRowDown`.
-3. No schema, dropdown, onEdit, or Today selection logic changes.
+1. Guide update work is not treated as complete before Stage 14.
+2. Repair behaviour is reviewed in Stage 3 before changing `rewriteGuide` calls.
+3. The final Guide reflects the settled Home/Today/Tasks/Decisions/source-tab behaviour.
 
 Do not do:
-- Do not change row movement behaviour.
-- Do not add more menu actions.
+- Do not rewrite Guide content now.
+- Do not use Guide copy to compensate for unclear UI.
+
+Already verified after restart:
+
+| Prior issue | Current evidence | Status |
+|---|---|---|
+| Today row movement menu labels were too context-dependent | `buildMenu` now uses `Move selected Today row up` and `Move selected Today row down`, calling the same `moveTodayRowUp` / `moveTodayRowDown` functions | Fixed in `e3c9dc3`; no further action unless live menu differs |
 
 ## Initial Implementation Backlog
 
-| Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests |
-|---|---|---|---|---|---|---|
-| Today row movement menu labels are too context-dependent | P3 | 1/12 | Minor menu ambiguity | None | Batch 5 UX/copy | Menu labels change only; functions unchanged |
-| Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Batch 2 or 5, depending on finding | Home stale-state scenario has one clear next action |
-| Home/Today live visual retest still pending | P1/P2 | 1/8/13 | Trust depends on rendered state matching code | Live sheet or Apps Script sync | Batch 2 | Home ready/not-built/stale states verified |
+| Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests | Status |
+|---|---|---|---|---|---|---|---|
+| Home/Today navigation still needs rendered consistency proof | P1/P2 | 1/8/13 | Trust depends on rendered Home matching Today | Live sheet or Apps Script sync | Batch 2 | Home ready/not-built/stale states verified | Open |
+| Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Batch 2 or 5, depending on finding | Home stale-state scenario has one clear next action | Open |
+| Guide can be regenerated before the Guide-last phase | P2/P3 | 1/3/14 | Guide may look authoritative before behaviour settles | Repair inventory and Guide-last stage | Batch 6 or Stage 3 repair decision | Repair/Guide behaviour reviewed before content change | Open |
+| Today row movement menu labels are too context-dependent | P3 | 1/12 | Minor menu ambiguity | None | Batch 5 UX/copy | Menu labels change only; functions unchanged | Fixed in `e3c9dc3` |
 
-## Selected Implementation Batch - Batch 5 UX/Copy
+## Completed Implementation Batch - Batch 5 UX/Copy
 
 Implementation item: Today row movement menu labels are too context-dependent.
 
@@ -209,5 +279,8 @@ Non-goals:
 - Do not add new menu items.
 - Do not update the Guide yet.
 
+Result:
+Implemented in `e3c9dc3`. Current `buildMenu` labels are `Move selected Today row up` and `Move selected Today row down`; function targets are unchanged.
+
 Next required stage before broader code:
-Stage 2 data integrity, identity, and trust, unless the user chooses to implement the tiny P3 Today menu copy item as a scoped Batch 5 fix.
+Stage 2 data integrity, identity, and trust. Do not implement broader fixes until Stage 2 review outputs exist.
