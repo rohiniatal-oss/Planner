@@ -10353,7 +10353,7 @@ var HEADER_GUIDANCE = {
   },
   'Interactions': {
     'Interaction ID': 'Filled automatically.', 'Date': 'Interaction or scheduled conversation date.', 'Person ID': 'Filled automatically from Person.', 'Person': 'Pick or type the person; Home > Capture update is preferred.', 'Organisation': 'Filled from the linked Person when known.',
-    'Type': 'Call, email, message, referral, interview, or other.', 'Interaction status': 'Scheduled / Completed / Cancelled.', 'Key notes': 'What changed or what to remember.', 'Outcome': 'May route follow-up work or decisions.'
+    'Type': 'Call, email, message, referral, interview, or other.', 'Interaction status': 'Scheduled / Completed / Cancelled.', 'Key notes': 'What changed or what to remember.', 'Outcome': 'Use after Completed; can route follow-up, referral, or opportunity work.'
   },
   'To-do': {
     'Task ID': 'system', 'Task': 'Master task queue — inspect, repair, audit', 'Linked object type': 'system', 'Linked object ID': 'system', 'Org': 'system', 'Workflow type': 'system',
@@ -12599,11 +12599,11 @@ function buildMenu() {
     .addSubMenu(ui.createMenu('Capture update')
       .addItem('Explore broad sectors', 'addNewSector')
       .addItem('Organisations found from exploration', 'addExplorationOrganisations')
-      .addItem('Organisation / target', 'addNewOrganisation')
-      .addItem('Person / contact', 'addNewPerson')
-      .addItem('Job / opportunity', 'addNewJob')
-      .addItem('Conversation / interaction', 'addNewInteraction')
-      .addItem('Interview / round', 'addNewInterview'))
+      .addItem('Target organisation', 'addNewOrganisation')
+      .addItem('Person or contact', 'addNewPerson')
+      .addItem('Job or opportunity', 'addNewJob')
+      .addItem('Conversation or interaction', 'addNewInteraction')
+      .addItem('Interview round', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Row actions')
       .addItem('Start pursuing selected Organisation', 'rowActionStartPursuingSelectedOrg')
       .addItem('Create people-search task for selected Organisation', 'rowActionFindPeopleAtSelectedOrg')

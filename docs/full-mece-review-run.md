@@ -869,6 +869,51 @@ Acceptance tests:
 3. The main menu uses outcome language for setup/automation controls.
 4. No Guide rewrite is triggered by this stage.
 
+## Stage 12B - All-Tab Stage 1-12 Backfill Before Visual Review
+
+User correction:
+Stage 1-12 review must cover all workbook tabs, not only Home/Today/Tasks/Decisions. Source tabs are part of the product surface and must be checked before Stage 13.
+
+Tabs covered:
+Home, Today, Decisions, Tasks, Sectors, Organisations, Jobs, People, Conversations, Interviews, Guide deferred to Stage 14.
+
+Mechanical all-tab checks:
+
+| Check | Evidence | Result |
+|---|---|---|
+| `COLS` max matches `HEADERS` length | Node/vm verifier over all schema groups | Clean: Sectors 6/6, Organisations 13/13, People 17/17, Jobs 13/13, Conversations 9/9, Tasks 30/30, Interviews 12/12, Decisions 16/16, Today 9/9 |
+| Duplicate column indexes | Same verifier | Clean |
+| Manual/wrap/width config references | Corrected verifier for list maps and width maps | Clean |
+| Source-tab edit handlers | `onEditSectors`, `onEditOrgs`, `onEditJobs`, `onEditPeople`, `onEditInteractions`, `onEditRounds` | Present |
+| Source-tab capture handlers | `processSectorOnboarding`, `processOrgOnboarding`, `processJobCapture`, `processPeopleOnboarding`, `processConversationCapture`, `processInterviewOnboarding` | Present |
+| Source-tab completion handlers | Sector/Organisation/Job/Person/Interview completion handlers plus source-led scan handler | Present |
+| Source-tab repair/health handlers | Sector/org taxonomy, jobs/people health, conversations person links, interview health, duplicate IDs | Present |
+| Home/Today refresh after source changes | `refreshDerivedPlanningSurfaces`, `requestHomeRefresh`, `renderTodayDecisionCards`, popup save refresh paths | Present across source edit/capture paths inspected |
+
+All-tab Stage 1-12 coverage summary:
+
+| Stage | All-tab finding | Fix in this backfill |
+|---|---|---|
+| 1 Surface roles/navigation | Source tabs remain source-of-truth/detail surfaces; menus still expose them through Capture update and row actions | Capture update labels clarified |
+| 2 Data integrity/trust | All schemas/config references are internally aligned | None |
+| 3 Lifecycle/safety | Source-tab repair paths exist and safe reset/snapshot audit already covered | None |
+| 4 Column ownership/lineage | Source-tab manual/system helper columns are in config and bounded | None |
+| 5 State/dropdown semantics | Source-tab dropdown integrity rules include source statuses/outcomes | None |
+| 6 Cross-tab workflows | Source tabs flow into Tasks/Decisions/Today/Home via edit/capture/completion handlers | None |
+| 7 Today execution | Source changes refresh derived planning surfaces rather than making source tabs execution surfaces | None |
+| 8 Home cockpit | Source-tab changes surface as Home decisions/attention/upcoming/open applications where relevant | None |
+| 9 Decisions vs Tasks | Source tab judgement paths route through Decisions; concrete work routes to Tasks | None |
+| 10 Automation | Source-tab automation boundaries remain: flags/decisions/popups/tasks, no silent strategic/social action | None |
+| 11 Observability | Source repairs/duplicates/orphans land in row notes/Home attention/maintenance audit | None |
+| 12 Copy/micro-UX | Source-tab menu labels and Conversations outcome hint had minor ambiguity | Fixed |
+
+Stage 12B implementation:
+- Changed Capture update menu labels from slash shorthand to user-language labels: Target organisation, Person or contact, Job or opportunity, Conversation or interaction, Interview round.
+- Changed Conversations `Outcome` header guidance to: `Use after Completed; can route follow-up, referral, or opportunity work.`
+
+Stage 12B decision:
+No new logic changes. The all-tab backfill found only copy-level source-surface issues in current code. Continue to Stage 13 only after this checkpoint is verified and committed.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
