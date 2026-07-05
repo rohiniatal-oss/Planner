@@ -966,10 +966,11 @@ function ensureOrgClassificationState(orgRow) {
 }
 
 function applyOrganisationStatusFromCapture(org, status, tier) {
-  if (!org || !org.row) return;
+  if (!org || !org.row) return false;
   var sheet = getSheet('Organisations');
-  if (!sheet) return;
+  if (!sheet) return false;
   var normalized = normalizeOrgStatus(status);
+  var previousStatus = normalizeOrgStatus(sheet.getRange(org.row, COLS.ORGS.STATUS).getValue());
   if (tier) sheet.getRange(org.row, COLS.ORGS.TIER).setValue(normalizeTier(tier));
   sheet.getRange(org.row, COLS.ORGS.STATUS).setValue(normalized);
   clearNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[review-routed]');
@@ -977,8 +978,9 @@ function applyOrganisationStatusFromCapture(org, status, tier) {
   if (normalized !== 'Active') clearNoteFlag(sheet, org.row, COLS.ORGS.NOTES, '[active-empty]');
   if (normalized === 'Archived') clearOrgRoutingFlags(sheet, org.row);
   scheduleOrgReviewForRow(sheet, org.row, normalized, { stampLastChecked: true });
-  if (normalized === 'Active') {
+  if (normalized === 'Active' && previousStatus !== 'Active') {
     fireOrgActiveCascade(org.id, org.name);
+    return true;
   } else if (normalized === 'Dormant') {
     autoDismissPendingForTarget('Organisation', org.id, 'Organisation marked Dormant');
     setOpenTodosForTarget('Organisation', org.id, 'Skipped', 'Organisation parked/dormant');
@@ -986,6 +988,7 @@ function applyOrganisationStatusFromCapture(org, status, tier) {
     autoDismissPendingForTarget('Organisation', org.id, 'Organisation archived');
     setOpenTodosForTarget('Organisation', org.id, 'Cancelled', 'Organisation archived');
   }
+  return false;
 }
 
 // Auto-promotion is deliberately narrower than a manual Active edit: it
@@ -1965,8 +1968,7 @@ function resolveOpenPopupDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[popup-fallback] No popup was wired; created a manual follow-up task');
-  return resolveCreateTaskDecision(ctx);
+  return keepDecisionPendingForMissingRoute(ctx, '[popup-route-missing]', 'No popup is wired for this decision type yet');
 }
 
 function decisionKeySuffix(key, prefix) {
@@ -2042,8 +2044,14 @@ function resolveCaptureDataDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[capture-fallback] No capture popup was wired; created a manual follow-up task');
-  return resolveCreateTaskDecision(ctx);
+  return keepDecisionPendingForMissingRoute(ctx, '[capture-route-missing]', 'No capture route is wired for this decision type yet');
+}
+
+function keepDecisionPendingForMissingRoute(ctx, flag, reason) {
+  ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, flag + ' ' + reason);
+  applyDecisionHelperColumns(ctx.sheet, ctx.row);
+  return { ok: false, pending: true, missingRoute: true, reason: reason };
 }
 
 function resolveUpdateSourceDecision(ctx) {
@@ -2073,8 +2081,7 @@ function resolveUpdateSourceDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[update-source-fallback] No source-update popup was wired; created a manual follow-up task');
-  return resolveCreateTaskDecision(ctx);
+  return keepDecisionPendingForMissingRoute(ctx, '[update-source-route-missing]', 'No source-update route is wired for this decision type yet');
 }
 
 function resolveCreateTaskDecision(ctx) {
@@ -2127,6 +2134,8 @@ function toastForDecisionOutcome(action, accepted) {
   }
   if (accepted && accepted.ok) {
     ss.toast(accepted.reused ? 'Already linked to an existing task.' : (accepted.dismissedOnly ? 'Decision handled.' : 'Decision promoted to a Task.'), 'The Planner', 3);
+  } else if (accepted && accepted.missingRoute) {
+    ss.toast('Decision kept Pending: ' + accepted.reason + '.', 'The Planner', 6);
   } else {
     ss.toast('Decision could not create a Task. It was kept Pending with a note.', 'The Planner', 6);
   }
@@ -8732,16 +8741,18 @@ function processOrgOnboarding(fields) {
   if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
-  var created = 0, reused = 0;
+  var created = 0, reused = 0, activeRoutes = 0;
   names.forEach(function (name) {
     var hasTaxonomyInput = !!(fields.sector || fields.subsector);
     var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B', deferClassification: hasTaxonomyInput });
     if (org && org.existing) reused++; else if (org) created++;
-    applyOrganisationStatusFromCapture(org, status, fields.tier || 'B');
+    if (applyOrganisationStatusFromCapture(org, status, fields.tier || 'B') || (org && !org.existing && status === 'Active')) activeRoutes++;
     if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
     else if (org) ensureOrgClassificationState(org.row);
   });
-  var suffix = status === 'Active' ? ' Marked Active — a Decision to find people/scan jobs was created for each (not a direct Task).' : ' Status: ' + status + '.';
+  var suffix = status === 'Active'
+    ? (activeRoutes ? ' Marked Active - decisions to find people/scan jobs were queued where newly needed.' : ' Status: Active. No new people/job-scan decisions were needed.')
+    : ' Status: ' + status + '.';
   return okResult('Captured ' + names.length + ' organisation(s): ' + created + ' new, ' + reused + ' existing.' + suffix);
 }
 
