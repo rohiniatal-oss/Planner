@@ -316,7 +316,7 @@ var DROPDOWNS = {
   DOMAIN_READINESS: ['Strong', 'Refresh needed', 'Weak or new'],
   OFFICIAL_OUTCOME: ['Waiting', 'Next round', 'Declined', 'Offer', 'Parked'],
 
-  TODAY_STATUS: ['Planned', 'In progress', 'Done', 'Deferred', 'Skipped'],
+  TODAY_STATUS: ['Planned', 'In progress', 'Blocked', 'Done', 'Deferred', 'Skipped'],
   // v7.4: Option rows get a smaller status list — 'Pull in' promotes the
   // row into Commit on the spot instead of waiting for the next refresh.
   TODAY_STATUS_OPTION: ['Deferred', 'Done', 'Pull in'],
@@ -6833,12 +6833,42 @@ function compareForStage(energyLow) {
   };
 }
 
+function buildCurrentTaskStateForToday() {
+  var sheet = getSheet('Tasks');
+  var byId = {};
+  if (!sheet || sheet.getLastRow() < 2) return byId;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var ctx = buildTaskPlanningContext(data);
+  for (var i = 0; i < data.length; i++) {
+    var id = String(data[i][COLS.TODO.ID - 1] || '');
+    if (!id) continue;
+    byId[id] = {
+      exists: true,
+      status: String(data[i][COLS.TODO.STATUS - 1] || ''),
+      readyState: deriveReadyForTodayFromRow(data[i], ctx),
+      task: String(data[i][COLS.TODO.TASK - 1] || ''),
+      estMin: parseTimeEst(String(data[i][COLS.TODO.TIME_EST - 1] || '30 min')),
+      effort: String(data[i][COLS.TODO.EFFORT_TYPE - 1] || ''),
+      cls: String(data[i][COLS.TODO.COMMITMENT_CLASS - 1] || '')
+    };
+  }
+  return byId;
+}
+
+function preservedTodayRowStillExecutable(rs, currentState) {
+  if (!rs || !rs.todoId || !currentState) return false;
+  if (isTerminalTodoStatus(currentState.status)) return false;
+  if (currentState.status === 'Blocked') return rs.status === 'Blocked';
+  return currentState.readyState === 'Ready' || currentState.status === 'In progress';
+}
+
 // The staged selector itself. Returns { commit: [...], options: [...] }.
 function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   var tierLookup = buildOrgTierLookup();
   var pool = collectTaskPool(focus, tierLookup);
   var byId = {};
   pool.forEach(function (p) { byId[p.todoId] = p; });
+  var currentStateById = buildCurrentTaskStateForToday();
   var energyLow = energy === 'Low';
 
   var commit = [];
@@ -6847,6 +6877,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   var bufferMin = availableMinutes <= 30 ? 0 : Math.max(15, Math.round(availableMinutes * 0.1));
   var capacity = Math.max(0, availableMinutes - bufferMin);
   var minutesUsed = 0;
+  var requiredMin = 0;
 
   function preserved(todoId) {
     var rs = previousState.byTodoId[todoId];
@@ -6859,12 +6890,15 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     var p = preserved(item.todoId);
     commit.push({ todoId: item.todoId, task: item.task, estMin: item.estMin, effort: item.effort, reason: reason, tags: p.tags, userNote: p.userNote });
     minutesUsed += item.estMin || 0;
+    if (item.cls === 'Fixed' || item.cls === 'Blocking') requiredMin += item.estMin || 0;
   }
 
   // Stage 1 — manually pulled-in tasks (locked or explicitly pulled)
   previousState.ordered.forEach(function (rs) {
     if (!rs.todoId || !(rs.locked || rs.pulled)) return;
-    var candidate = byId[rs.todoId] || { todoId: rs.todoId, task: rs.task, estMin: rs.estMin, effort: rs.effort };
+    var current = currentStateById[rs.todoId];
+    if (!preservedTodayRowStillExecutable(rs, current)) return;
+    var candidate = byId[rs.todoId] || { todoId: rs.todoId, task: current.task || rs.task, estMin: current.estMin || rs.estMin, effort: current.effort || rs.effort, cls: current.cls };
     addCommit(candidate, rs.locked ? 'locked in place' : 'manually pulled into Today');
   });
 
@@ -6872,9 +6906,9 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // Done/Skipped/Cancelled today, so the day's record doesn't vanish on refresh)
   previousState.ordered.forEach(function (rs) {
     if (!rs.todoId || usedIds[rs.todoId]) return;
-    var touchedToday = rs.status === 'In progress' || rs.status === 'Done' || rs.status === 'Skipped' || rs.status === 'Cancelled';
+    var touchedToday = rs.status === 'In progress' || rs.status === 'Blocked' || rs.status === 'Done' || rs.status === 'Skipped' || rs.status === 'Cancelled';
     if (!touchedToday) return;
-    var candidate = byId[rs.todoId] || { todoId: rs.todoId, task: rs.task, estMin: rs.estMin, effort: rs.effort };
+    if (!currentStateById[rs.todoId]) return;
     usedIds[rs.todoId] = true;
     commit.push({
       todoId: rs.todoId, task: rs.task, estMin: rs.estMin, effort: rs.effort,
@@ -6979,7 +7013,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // Stage 10 — everything not in commit or options simply isn't written
   // to Today. It's still fully visible and workable from Tasks.
 
-  return { commit: commit, options: options, minutesUsed: minutesUsed, bufferMin: bufferMin };
+  return { commit: commit, options: options, minutesUsed: minutesUsed, requiredMin: requiredMin, bufferMin: bufferMin };
 }
 
 function populateToday() {
@@ -6987,6 +7021,21 @@ function populateToday() {
   // serialised too. When called from an already-locked context (edits,
   // dailyMaintenance) the re-entrancy guard runs the body directly.
   return withDocumentLock(populateTodayImpl, { label: 'populateToday' });
+}
+
+function todayCapacityHeadline(selection, availableMinutes) {
+  var planned = selection.minutesUsed || 0;
+  var required = selection.requiredMin || 0;
+  var taskText = selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's');
+  if (!selection.commit.length) {
+    return selection.options.length
+      ? 'Today is ready - nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
+      : 'Today is ready - nothing committed yet.';
+  }
+  if (required > availableMinutes) return 'Deadline/blocking work exceeds capacity - ' + planned + ' min planned against ' + availableMinutes + ' available';
+  if (planned > availableMinutes) return 'Today is over capacity - ' + planned + ' min planned against ' + availableMinutes + ' available';
+  if (planned > Math.round(availableMinutes * 0.85)) return 'Today is tight - ' + taskText + ' - ' + planned + ' of ' + availableMinutes + ' min planned';
+  return 'Today is realistic - ' + taskText + ' - ' + planned + ' of ' + availableMinutes + ' min planned';
 }
 
 function populateTodayImpl() {
@@ -7029,6 +7078,7 @@ function populateTodayImpl() {
       ? 'Today’s plan is ready — nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
       : 'Today’s plan is ready — nothing committed yet.');
   clearTodayPlanHeadlineValidation(sheet);
+  headline = todayCapacityHeadline(selection, availableMinutes);
   sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()));
 
   renderTodayDecisionCards();
@@ -7412,6 +7462,14 @@ function pullSelectedTaskIntoToday() {
   if (!todoId || !task) { SpreadsheetApp.getUi().alert('That row does not have a Task ID and task.'); return; }
 
   withDocumentLock(function () {
+    var allData = active.getLastRow() > 1 ? active.getRange(2, 1, active.getLastRow() - 1, HEADERS['To-do'].length).getValues() : [];
+    var planningCtx = buildTaskPlanningContext(allData);
+    var selectedData = active.getRange(row, 1, 1, HEADERS['To-do'].length).getValues()[0];
+    var readyState = deriveReadyForTodayFromRow(selectedData, planningCtx);
+    if (readyState !== 'Ready') {
+      SpreadsheetApp.getUi().alert('Cannot pull this into Today', 'Ready for Today is "' + (readyState || 'blank') + '". Fix the blocker/planning issue on Tasks first.', SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
+    }
     var todaySheet = getSheet('Today');
     if (!todaySheet) { bootstrapToday(); todaySheet = getSheet('Today'); }
     for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
@@ -7745,9 +7803,10 @@ function hardResetHomeSheet(sheet) {
 // A row counts as Commit unless its Slot cell starts with 'O' (Option
 // rows are written as 'O1', 'O2', ... by writeTodayRow).
 function todayPlanCounts() {
-  var result = { built: false, commit: 0, minutes: 0, options: 0 };
+  var result = { built: false, commit: 0, minutes: 0, options: 0, headline: '' };
   var sheet = getSheet('Today');
   if (!sheet) return result;
+  result.headline = String(sheet.getRange('B3').getValue() || '');
   var builtDate = getTodayPlanBuiltDate();
   var noteDate = todayPlanDateFromNote(sheet.getRange('B3').getNote());
   var t = today().getTime();
@@ -7921,6 +7980,7 @@ function refreshHome() {
   var heroText = 'Not built yet.';
   if (planCounts.built && planCounts.commit > 0) heroText = 'Ready — ' + planCounts.commit + ' tasks, ' + planCounts.minutes + ' minutes.';
   else if (planCounts.built) heroText = 'Built — nothing committed today.';
+  if (planCounts.built && planCounts.headline) heroText = planCounts.headline;
   sheet.getRange(HOME_PLAN_STATUS_ROW, 2, 1, 5).merge().setValue(heroText).setFontWeight('bold').setFontColor('#1B474D');
   var todaySheetForLink = getSheet('Today');
   if (todaySheetForLink) {
@@ -9429,7 +9489,7 @@ var STATUS_COLOR_MAP = {
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'To outreach': '#FEF7CD', 'Outreach drafted': '#FEF7CD', 'Outreach sent': '#C2DBFF', 'Replied': '#B6E3E0', 'Conversation scheduled': '#D2E3FC', 'Conversation completed': '#CEEAD6', 'Keep warm': '#FEF7CD', 'Closed': '#EAE3DD' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
   'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
-  "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
+  "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
   'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#EAE3DD' } }
 };
 
