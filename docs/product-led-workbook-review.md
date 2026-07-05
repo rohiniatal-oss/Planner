@@ -121,6 +121,7 @@ Category 0 issue queue:
 | Home completed-onboarding action says Reset | P1/P2 | A vague label beside a checkbox makes a destructive-adjacent path feel unsafe and unclear | 0 + 6 | Fixed: Home now says Redo setup and notes backup behavior |
 | Full workbook first-impression map missing from plan | P2 | Review could drift back into technical fixes without proving user comprehension | 0 | Fixed in this doc |
 | Home Needs attention action is too generic | P1/P2 | Blocked/parent task recovery could incorrectly point users to Repair all tabs | 0 + 4 | Fixed: Home now picks an action hint based on the attention types |
+| Home maintenance issue can expose backend trigger names | P2 | A repair warning can show handler names/timestamps instead of a user-actionable automation problem | 0 + 4 + 5 | Fixed: Home formats maintenance errors with user-facing automation names |
 | Maintenance menu says Full refresh | P1/P2 | Users cannot tell whether refresh is safe or reset-like | 0 + 6 | Fixed: menu says Refresh derived data (safe), and success toast says source rows were not cleared |
 | Menu says Capture update popups | P2 | Exposes implementation instead of the user action | 0 + 5 | Fixed: menu now says Capture update |
 | Capture submenu labels are raw tab nouns | P2 | Short labels like Job/Person/Interview assume the user already knows the data model | 0 + 5 | Fixed: labels now say Job / opportunity, Person / contact, Interview / round, etc. |
@@ -150,6 +151,7 @@ Implemented after this review began:
 - End-of-day reconcile now uses one batch wrap-up popup for unfinished Today work instead of one blocking alert per task.
 - Home's completed-onboarding action now says "Redo setup" instead of "Reset" and explains the backup-before-clear behavior in a note.
 - Home Needs attention now gives a contextual action hint: Today/Tasks for blocked or parent-task recovery, Maintenance for repair/health items.
+- Home maintenance issues now use user-facing automation names instead of handler names or raw timestamps.
 - Maintenance now exposes the non-destructive refresh as "Refresh derived data (safe)" and confirms that source rows were not cleared.
 - The menu now uses "Capture update" instead of "Capture update popups" so it describes the user action, not the implementation.
 - Capture update menu labels now explain the user object being captured, e.g. Job / opportunity and Person / contact.

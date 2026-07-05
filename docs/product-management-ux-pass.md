@@ -300,3 +300,27 @@ Non-goals:
 - Do not change source-led workflow logic.
 - Do not add new row actions.
 - Do not move row actions out of the menu in this pass.
+
+## Current Improvement: Home Automation Health Copy
+
+User story:
+As a user reading Home, I need automation-health warnings to name the Planner capability that needs attention, not the Apps Script function that failed.
+
+Current pain:
+`checkTriggerHealth()` recorded missing handler names such as `dailyMaintenance`, and Home could display the raw maintenance error with timestamp and internal label.
+
+Target experience:
+Home says the planner automation is incomplete and names user-facing capabilities: edit actions and popups, daily refresh, afternoon reminder, and weekly review.
+
+Implementation:
+Trigger-health messages now use user-facing labels, and Home formats stored maintenance errors before display. No automation schedule, trigger creation, or repair behavior changed.
+
+Acceptance tests:
+1. Missing automation health stores user-facing capability names.
+2. Home maintenance issue text strips the internal timestamp/label.
+3. The setup status dialog still shows the schedule timing for daily/weekly automation.
+
+Non-goals:
+- Do not add a new Home dashboard section.
+- Do not change trigger schedules.
+- Do not change repair behavior.

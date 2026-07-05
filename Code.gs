@@ -503,7 +503,14 @@ function readMaintenanceHealth() {
     var weeklyDate = new Date(weeklyRaw);
     weeklyStale = !isNaN(weeklyDate.getTime()) && ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000);
   }
-  return { daily: dailyRaw, weekly: weeklyRaw, weeklySummary: weeklySummary, error: error, stale: stale, weeklyStale: weeklyStale };
+  return { daily: dailyRaw, weekly: weeklyRaw, weeklySummary: weeklySummary, error: error, errorText: maintenanceErrorForHome(error), stale: stale, weeklyStale: weeklyStale };
+}
+
+function maintenanceErrorForHome(error) {
+  var text = String(error || '').trim();
+  if (!text) return '';
+  var match = text.match(/^\d{4}-\d{2}-\d{2}T[^ ]+\s+[^:]+:\s*(.+)$/);
+  return match ? match[1] : text;
 }
 
 function today() {
@@ -6740,11 +6747,11 @@ function handleEdit(e) {
 // installer and the status report can never drift apart.
 var EDIT_TRIGGER_HANDLER = 'handleEdit';
 var TIME_TRIGGER_SPECS = [
-  { handler: 'dailyMaintenance', desc: 'daily ~08:15',
+  { handler: 'dailyMaintenance', desc: 'daily ~08:15', userLabel: 'daily refresh',
     build: function (tz) { return ScriptApp.newTrigger('dailyMaintenance').timeBased().atHour(8).nearMinute(15).everyDays(1).inTimezone(tz); } },
-  { handler: 'middayNudge', desc: 'daily ~16:00',
+  { handler: 'middayNudge', desc: 'daily ~16:00', userLabel: 'afternoon reminder',
     build: function (tz) { return ScriptApp.newTrigger('middayNudge').timeBased().atHour(16).nearMinute(0).everyDays(1).inTimezone(tz); } },
-  { handler: 'weeklyReview', desc: 'Sunday ~21:00',
+  { handler: 'weeklyReview', desc: 'Sunday ~21:00', userLabel: 'weekly review',
     build: function (tz) { return ScriptApp.newTrigger('weeklyReview').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(21).nearMinute(0).inTimezone(tz); } }
 ];
 
@@ -6803,10 +6810,10 @@ function ensureTriggersInstalled(opts) {
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     if (opts.force) deleteTriggersFor(spec.handler, ScriptApp.EventType.CLOCK);
     if (triggerExists(spec.handler, ScriptApp.EventType.CLOCK)) {
-      report.timeAlready.push(spec.handler);
+      report.timeAlready.push(spec.userLabel || spec.desc || spec.handler);
     } else {
       spec.build(tz).create();
-      report.timeCreated.push(spec.handler);
+      report.timeCreated.push(spec.userLabel || spec.desc || spec.handler);
     }
   });
 
@@ -6853,14 +6860,14 @@ function showTriggerStatus() {
 function checkTriggerHealth() {
   var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
   var missing = [];
-  if (!editOn) missing.push(EDIT_TRIGGER_HANDLER);
+  if (!editOn) missing.push('edit actions and popups');
   TIME_TRIGGER_SPECS.forEach(function (spec) {
-    if (!triggerExists(spec.handler, ScriptApp.EventType.CLOCK)) missing.push(spec.handler);
+    if (!triggerExists(spec.handler, ScriptApp.EventType.CLOCK)) missing.push(spec.userLabel || spec.desc || spec.handler);
   });
   var props = maintenanceProps();
   props.setProperty('lastTriggerHealthCheckAt', new Date().toISOString());
   props.setProperty('lastTriggerHealthStatus', missing.length ? 'Missing: ' + missing.join(', ') : 'OK');
-  if (missing.length) recordMaintenanceError('triggerHealth', 'Missing trigger(s): ' + missing.join(', '));
+  if (missing.length) recordMaintenanceError('setupHealth', 'Planner automation incomplete: ' + missing.join(', '));
   else props.deleteProperty('lastMaintenanceError');
   return { ok: !missing.length, missing: missing };
 }
@@ -8753,7 +8760,7 @@ function refreshHome() {
 
   var maint = readMaintenanceHealth();
   if (maint.error || maint.stale) {
-    var maintText = maint.error ? ('Maintenance issue: ' + maint.error) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Run daily maintenance now.';
+    var maintText = maint.error ? ('Maintenance issue: ' + (maint.errorText || maint.error)) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Run daily maintenance now.';
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklyStale) {
