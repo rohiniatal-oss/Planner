@@ -35,7 +35,7 @@
  *     do a single bulk getValues() instead of per-field reads.
  *   - Triggers: all trigger wiring flows through ONE idempotent,
  *     check-before-create engine (ensureTriggersInstalled). A dedicated
- *     "Planner setup" menu (setUpTriggers + showTriggerStatus) lets you
+ *     "Setup & automation" menu (setUpTriggers + showTriggerStatus) lets you
  *     attach and verify wiring explicitly; repairAllTabs/fullRefresh force
  *     a trigger check on every run; and onOpen reports — rather than
  *     blindly nags about — the installable edit trigger's status. Simple
@@ -79,7 +79,7 @@
  *
  * ONBOARDING
  * ----------
- *   "Set up / add starting facts" captures facts through popups and
+ *   "Add or update starting facts" captures facts through popups and
  *   keeps existing planner data. Starting fresh is a separate Maintenance
  *   action with an explicit backup-first destructive confirmation. Sector
  *   onboarding is 3 explicit stages:
@@ -95,9 +95,9 @@
  *   1. Back up the sheet (File → Make a copy).
  *   2. Paste this entire file as Code.gs (replacing everything else).
  *   3. Reload the sheet.
- *   4. In The Planner menu, run Planner setup > Turn on Planner actions.
- *   5. Run Maintenance > Repair sheet layout and dropdowns (safe to re-run).
- *   6. Start from Home, or run The Planner > Set up / add starting facts.
+ *   4. In The Planner menu, run Setup & automation > Turn on Planner.
+ *   5. Run Maintenance > Repair sheet layout (safe to re-run).
+ *   6. Start from Home, or run The Planner > Add or update starting facts.
  */
 
 // =============================================================
@@ -228,8 +228,11 @@ var HEADERS = {
 var SHEET_TO_HEADER_KEY = {
   'Home': null,
   'Today': "Today's plan",
+  '— Review & Tasks —': null,
   'Decisions': 'Pending decisions',
   'Tasks': 'To-do',
+  '— Source Tabs —': null,
+  '— Help —': null,
   'Sectors': 'Sectors',
   'Organisations': 'Organisations',
   'Jobs': 'Jobs',
@@ -252,7 +255,9 @@ var LEGACY_TAB_NAMES = {
   'Decisions': ['Pending decisions', 'Pending Decisions', 'Suggestions']
 };
 
-var CANONICAL_TAB_ORDER = ['Home', 'Today', 'Decisions', 'Tasks', 'Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations', 'Guide'];
+var CANONICAL_TAB_ORDER = ['Home', 'Today', '— Review & Tasks —', 'Decisions', 'Tasks', '— Source Tabs —', 'Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations', '— Help —', 'Guide'];
+var TAB_DIVIDER_TABS = ['— Review & Tasks —', '— Source Tabs —', '— Help —'];
+var LEGACY_TAB_DIVIDER_TABS = ['— Work —', '— Sources —', '— Queues —', '— Records —'];
 var ZONE_WORK_TABS = ['Home', 'Today', 'Decisions', 'Tasks'];
 var ZONE_DATA_TABS = ['Sectors', 'Organisations', 'Jobs', 'People', 'Interviews', 'Conversations'];
 var ZONE_REF_TABS = ['Guide'];
@@ -262,7 +267,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.9';
+var SCRIPT_VERSION = 'v7.8.0';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -381,7 +386,7 @@ function coerceResult(result, fallbackMessage) {
 
 function popupExceptionResult(context, err) {
   Logger.log(context + ': ' + (err && err.stack ? err.stack : err));
-  return failResult('Something went wrong while saving. Run Maintenance > Repair sheet layout and dropdowns, then try again.', '', 'SERVER_ERROR');
+  return failResult('Something went wrong while saving. Run Maintenance > Repair sheet layout, then try again.', '', 'SERVER_ERROR');
 }
 
 // v7.3.1: Serialises covered mutating paths behind a single document lock so
@@ -393,7 +398,7 @@ function popupExceptionResult(context, err) {
 // IMPORTANT (v7.3.1 fix): if the lock can't be acquired within the
 // timeout, fn is STILL RUN (unguarded) rather than silently skipped. In a
 // single-user planner, lock contention is rare, but a user clicking
-// "Build / refresh Today's plan" and getting NOTHING (no plan, no date update, no error)
+// "Build or refresh Today" and getting NOTHING (no plan, no date update, no error)
 // is far worse than a once-in-a-blue-moon race. Correctness of the visible
 // action wins; the lock is best-effort protection, not a gate that can
 // swallow a user's explicit command. The earlier "skip on miss" behavior
@@ -2027,7 +2032,7 @@ function resolveOpenPopupDecision(ctx) {
   }
   var captureType = sourceUpdateCaptureTypeForDecision(ctx);
   if (captureType) return runDecisionCapturePopup(ctx, captureType);
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision route is not configured; run Repair sheet layout and dropdowns, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision route is not configured; run Repair sheet layout, then review this row');
 }
 
 function decisionKeySuffix(key, prefix) {
@@ -2141,7 +2146,7 @@ function resolveCaptureDataDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision capture route is not configured; run Repair sheet layout and dropdowns, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision capture route is not configured; run Repair sheet layout, then review this row');
 }
 
 function keepDecisionPendingForMissingRoute(ctx, flag, reason) {
@@ -2184,7 +2189,7 @@ function resolveUpdateSourceDecision(ctx) {
   }
   captureType = sourceUpdateCaptureTypeForDecision(ctx);
   if (captureType) return runDecisionCapturePopup(ctx, captureType);
-  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision source-update route is not configured; run Repair sheet layout and dropdowns, then review this row');
+  return keepDecisionPendingForMissingRoute(ctx, '[route-error]', 'Decision source-update route is not configured; run Repair sheet layout, then review this row');
 }
 
 function sourceUpdateCaptureTypeForDecision(ctx) {
@@ -6959,7 +6964,7 @@ function showTriggerStatus() {
   var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
   var lines = [];
   lines.push('Edit actions and popups: ' + (editOn ? '\u2705 on' : '\u274c off'));
-  if (!editOn) lines.push('   \u2192 Run "Planner setup \u2192 Turn on Planner actions" to make Home, Today, and Add or update respond.');
+  if (!editOn) lines.push('   \u2192 Run "Setup & automation \u2192 Turn on Planner" to make Home, Today, and Add or update respond.');
   lines.push('');
   lines.push('Daily/weekly automation:');
   TIME_TRIGGER_SPECS.forEach(function (spec) {
@@ -7199,7 +7204,7 @@ function bootstrapToday() {
 
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
-    .setValue("Build / refresh Today's plan").setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+    .setValue('Build or refresh Today').setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setNote("Tick to rebuild Today from Tasks using the current focus, minutes, and energy.");
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1).setNote("Build / refresh preserves same-day notes and locked or pulled rows, then re-fits work from Tasks.");
 
@@ -7673,7 +7678,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
 }
 
 function populateToday() {
-  // v7.3: guarded so the direct menu path ("Build / refresh Today's plan") is
+  // v7.3: guarded so the direct menu path ("Build or refresh Today") is
   // serialised too. When called from an already-locked context (edits,
   // dailyMaintenance) the re-entrancy guard runs the body directly.
   return withDocumentLock(populateTodayImpl, { label: 'populateToday' });
@@ -8717,8 +8722,8 @@ function homeAttentionActionHint(items) {
   });
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
   if (hasTaskRecovery) return 'Open Today > Needs planning or Tasks row actions';
-  if (hasRepair) return 'Use Maintenance > Repair sheet layout and dropdowns';
-  if (hasMaintenance) return 'Use The Planner > Restart today';
+  if (hasRepair) return 'Use Maintenance > Repair sheet layout';
+  if (hasMaintenance) return 'Use The Planner > Catch up after time away';
   return 'Review the highlighted planner items';
 }
 
@@ -8944,7 +8949,7 @@ function refreshHome() {
   try { editReady = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT); } catch (err) { Logger.log('refreshHome trigger check: ' + err); }
   if (!editReady) {
     sheet.getRange(3, 2, 1, 7).merge()
-      .setValue('⚠ One-time setup needed: open The Planner > Planner setup > Turn on Planner actions, or dropdowns, popups, and checkboxes will not respond.')
+      .setValue('⚠ One-time setup needed: open The Planner > Setup & automation > Turn on Planner, or dropdowns, popups, and checkboxes will not respond.')
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
   }
 
@@ -8957,10 +8962,10 @@ function refreshHome() {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
     }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue(editReady ? 'Start onboarding' : 'Turn on Planner actions to start')
+      .setValue(editReady ? 'Start onboarding' : 'Turn on Planner to start')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue(editReady ? 'Use the checkbox above or The Planner > Set up / add starting facts. Existing planner data is kept.' : 'Run The Planner > Planner setup > Turn on Planner actions, then come back here.')
+      .setValue(editReady ? 'Use the checkbox above or The Planner > Add or update starting facts. Existing planner data is kept.' : 'Run The Planner > Setup & automation > Turn on Planner, then come back here.')
       .setWrap(true).setFontColor('#5F625E');
   } else if (shouldShowSetupCard(profile)) {
     if (editReady) {
@@ -8969,10 +8974,10 @@ function refreshHome() {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
     }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue(editReady ? 'Continue onboarding' : 'Turn on Planner actions to continue')
+      .setValue(editReady ? 'Continue onboarding' : 'Turn on Planner to continue')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     var nextItem = nextIncompleteChecklistItem(profile);
-    var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Planner setup > Turn on Planner actions, then continue onboarding.';
+    var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Setup & automation > Turn on Planner, then continue onboarding.';
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue(detail).setWrap(true).setFontColor('#5F625E');
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
@@ -9033,7 +9038,7 @@ function refreshHome() {
   }
   var planSubline = taskQueueSummary();
   if (planCounts.unverified) planSubline = planSubline + ' Today has a visible plan, but the build date is not verified - refresh Today if this looks stale.';
-  if (!planCounts.built) planSubline = planSubline + " On Today, tick Build / refresh Today's plan.";
+  if (!planCounts.built) planSubline = planSubline + " On Today, tick Build or refresh Today.";
   else if (planCounts.commit === 0) planSubline = planSubline + ' Open Today to see options, or add more available minutes.';
   sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(planSubline).setFontSize(9).setFontColor('#8A8D87');
 
@@ -9083,10 +9088,10 @@ function refreshHome() {
   var maint = readMaintenanceHealth();
   if (shouldShowRestartTodayCue(maint, planCounts)) {
     var maintText = maint.error
-      ? ('Restart today: use The Planner > Restart today. Maintenance issue: ' + (maint.errorText || maint.error))
+      ? ('Catch up after time away: use The Planner > Catch up after time away. Maintenance issue: ' + (maint.errorText || maint.error))
       : (maint.weeklyStale
-        ? 'Restart today: use The Planner > Restart today. This refreshes due tasks, reviews active organisations, rebuilds Today, and updates Home.'
-        : 'Restart today: use The Planner > Restart today. This refreshes due tasks, rebuilds Today, and updates Home.');
+        ? 'Catch up after time away: use The Planner > Catch up after time away. This refreshes due tasks, reviews active organisations, rebuilds Today, and updates Home.'
+        : 'Catch up after time away: use The Planner > Catch up after time away. This refreshes due tasks, rebuilds Today, and updates Home.');
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklySummary) {
@@ -9358,7 +9363,7 @@ function buildSetupHtml() {
     ' if(btn)btn.disabled=true;' +
     ' status.textContent="Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status"),btn=document.getElementById("submitButton");if(!res.ok){if(btn)btn.disabled=false;status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
-    ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout and dropdowns, then try again.";})' +
+    ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout, then try again.";})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetMode:resetMode,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
@@ -9949,7 +9954,7 @@ function buildCaptureHtml(captureType, decisionId, presetFields) {
     'for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
-    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout and dropdowns, then try again.";})' +
+    '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair sheet layout, then try again.";})' +
     '.completeCaptureFromPopup({captureType:cfg.captureType,decisionId:cfg.decisionId,fields:fields});}</script>';
 }
 
@@ -11028,10 +11033,45 @@ function hideSystemColumns() { applyColumnLayout(); }
 
 function applyTodayTableHeaderStyle() { applyRichTextHeaders('Today'); }
 
+function isTabDividerName(name) {
+  return TAB_DIVIDER_TABS.indexOf(String(name || '')) !== -1;
+}
+
+function tabDividerTitle(name) {
+  return String(name || '').replace(/[—-]/g, '').trim();
+}
+
+function tabDividerDescription(name) {
+  if (name === '— Review & Tasks —') {
+    return 'Planner-managed Decisions and Tasks. Use Home and Today for daily work; open these when you need to inspect or correct the queue.';
+  }
+  if (name === '— Source Tabs —') {
+    return 'Source tabs hold durable records: sectors, organisations, jobs, people, interviews, and conversations.';
+  }
+  return 'Reference and help.';
+}
+
+function ensureTabDividerSheet(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getSheet(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+  sheet.clear();
+  sheet.clearConditionalFormatRules();
+  try { sheet.getDataRange().clearDataValidations(); } catch (err) { }
+  sheet.setHiddenGridlines(true);
+  sheet.setTabColor(ZONE_REF_COLOR);
+  sheet.setColumnWidth(1, 30);
+  sheet.setColumnWidth(2, 260);
+  sheet.setColumnWidth(3, 560);
+  sheet.getRange(2, 2).setValue(tabDividerTitle(name)).setFontSize(16).setFontWeight('bold').setFontColor(HEADER_COLOR);
+  sheet.getRange(4, 2, 1, 2).merge().setValue(tabDividerDescription(name)).setFontSize(10).setFontColor(ZONE_REF_COLOR).setWrap(true);
+  return sheet;
+}
+
 function reorderAndColourTabs() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   CANONICAL_TAB_ORDER.forEach(function (name, idx) {
-    var sheet = getSheet(name);
+    var sheet = isTabDividerName(name) ? ensureTabDividerSheet(name) : getSheet(name);
     if (!sheet) return;
     ss.setActiveSheet(sheet);
     ss.moveActiveSheet(idx + 1);
@@ -11039,11 +11079,16 @@ function reorderAndColourTabs() {
   ZONE_WORK_TABS.forEach(function (n) { var s = getSheet(n); if (s) s.setTabColor(ZONE_WORK_COLOR); });
   ZONE_DATA_TABS.forEach(function (n) { var s = getSheet(n); if (s) s.setTabColor(ZONE_DATA_COLOR); });
   ZONE_REF_TABS.forEach(function (n) { var s = getSheet(n); if (s) s.setTabColor(ZONE_REF_COLOR); });
+  TAB_DIVIDER_TABS.forEach(function (n) { var s = getSheet(n); if (s) s.setTabColor(ZONE_REF_COLOR); });
 }
 
 function isLegacySpacerSheetName(name) {
   var compact = String(name || '').replace(/\s/g, '');
   return /^(?:\||│)+$/.test(compact);
+}
+
+function isLegacyTabDividerName(name) {
+  return LEGACY_TAB_DIVIDER_TABS.indexOf(String(name || '')) !== -1;
 }
 
 function isSheetEmpty(sheet) {
@@ -11067,6 +11112,10 @@ function hideLegacyUtilityTabs() {
   if (dashboard) deleteSheetIfSafe(dashboard);
 
   ss.getSheets().slice().forEach(function (sheet) {
+    if (isLegacyTabDividerName(sheet.getName())) {
+      deleteSheetIfSafe(sheet);
+      return;
+    }
     if (!isLegacySpacerSheetName(sheet.getName())) return;
     if (isSheetEmpty(sheet)) {
       deleteSheetIfSafe(sheet);
@@ -12168,7 +12217,7 @@ function buildBreakdownHtml(todoId, taskTitle) {
     '<form id="form"></form><button class="primary" type="button" onclick="submitBreakdown()">Create child tasks</button><div id="status"></div>' +
     '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.taskTitle;var f=document.getElementById("form");' +
     'for(var i=0;i<6;i++){var r=document.createElement("div");r.className="row";var t=document.createElement("input");t.type="text";t.placeholder="Child task "+(i+1);t.name="text"+i;var s=document.createElement("select");s.name="time"+i;cfg.timeOptions.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);});var step=document.createElement("input");step.type="number";step.min="1";step.value=i+1;step.name="step"+i;var notes=document.createElement("input");notes.type="text";notes.placeholder="Optional notes";notes.name="notes"+i;notes.className="notes";r.appendChild(t);r.appendChild(s);r.appendChild(step);r.appendChild(notes);f.appendChild(r);}' +
-    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}if(!subtasks.length){document.getElementById("status").textContent="Add at least one child task.";return;}document.getElementById("status").textContent="Creating child tasks...";google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(err){document.getElementById("status").textContent="Could not create child tasks. Run Maintenance > Repair sheet layout and dropdowns, then try again.";}).completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
+    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}if(!subtasks.length){document.getElementById("status").textContent="Add at least one child task.";return;}document.getElementById("status").textContent="Creating child tasks...";google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(err){document.getElementById("status").textContent="Could not create child tasks. Run Maintenance > Repair sheet layout, then try again.";}).completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
 }
 
 function completeBreakdownFromPopup(parentTodoId, payload) {
@@ -12436,8 +12485,8 @@ function rewriteGuide() {
   sheet.getRange(r, 2).setValue('The Planner - Guide').setFontSize(16).setFontWeight('bold').setFontColor('#1B474D'); r += 2;
 
   r = writeH2(sheet, r, 'Start here');
-  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Planner setup > Turn on Planner actions. This is the one-time step that lets popups, dropdowns, checkboxes, and automation respond.');
-  r = writeKV(sheet, r, '2. Add starting facts', 'Use The Planner > Set up / add starting facts. Setup adds or updates facts; it does not clear planner data.');
+  r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Setup & automation > Turn on Planner. This is the one-time step that lets popups, dropdowns, checkboxes, and automation respond.');
+  r = writeKV(sheet, r, '2. Add starting facts', 'Use The Planner > Add or update starting facts. Setup adds or updates facts; it does not clear planner data.');
   r = writeKV(sheet, r, '3. Start from Home', 'Home is the cockpit: decide, capture what changed, check the month shape, then move into Today.');
   r = writeKV(sheet, r, '4. Work from Today', 'Today is the execution surface. It pulls ready work from Tasks and preserves same-day notes, Done/Blocked status, and locked or pulled rows.');
   r = writeKV(sheet, r, 'Starting fresh', 'Only use The Planner > Maintenance > Start fresh when you really want to clear planner data. It creates a full backup copy first.');
@@ -12447,10 +12496,10 @@ function rewriteGuide() {
   r = writeKV(sheet, r, '1. Open Home', 'Resolve decisions first. Confirm runs the action shown on the card. Not now dismisses it. Skip keeps it pending and hides it until Home is refreshed.');
   r = writeKV(sheet, r, '2. Add updates', 'Use Home > Add or update for new jobs, people, conversations, interviews, organisations, sectors, or task updates.');
   r = writeKV(sheet, r, '3. Check the cockpit', 'Home shows Today state, open applications, scheduled conversations/interviews, and this month\'s pipeline shape without making Home a raw dashboard.');
-  r = writeKV(sheet, r, '4. Build Today', "Open Today. Change Today focus, Available minutes, or Energy if needed; those controls rebuild the plan immediately. Use Build / refresh when Tasks changed elsewhere.");
+  r = writeKV(sheet, r, '4. Build Today', "Open Today. Change Today focus, Available minutes, or Energy if needed; those controls rebuild the plan immediately. Use Build or refresh Today when Tasks changed elsewhere.");
   r = writeKV(sheet, r, '5. Do the work', 'Work from Today. Mark rows In progress, Blocked, Done, Deferred, or Skipped. Pull in an Option if you decide to do it.');
   r = writeKV(sheet, r, '6. Close the day', 'Use the End of day checkbox on Today to carry, defer, block, or skip unfinished work in one batch.');
-  r = writeKV(sheet, r, 'Returning after days away', 'Use The Planner > Restart today. It catches up due work and gives you one calm path back into Home and Today.');
+  r = writeKV(sheet, r, 'Returning after days away', 'Use The Planner > Catch up after time away. It catches up due work and gives you one calm path back into Home and Today.');
   r++;
 
   r = writeH2(sheet, r, 'Capturing updates');
@@ -12463,6 +12512,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'What each tab is for');
+  r = writeKV(sheet, r, 'Tab order', 'Home and Today are the daily surfaces. Decisions and Tasks are planner-managed review/work queues. Source tabs are the durable records. Guide is last.');
   r = writeKV(sheet, r, 'Home', 'Start here. It is for decisions, capture, urgent state, open applications, upcoming scheduled items, and month-level rhythm.');
   r = writeKV(sheet, r, 'Today', 'Do work here. Today is rebuilt from Tasks, but it is not the source of truth.');
   r = writeKV(sheet, r, 'Tasks', 'The work queue and source of truth for executable work, readiness, blockers, sequencing, and task completion routing.');
@@ -12500,9 +12550,9 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Automation and safety');
-  r = writeKV(sheet, r, 'Daily and weekly refresh', 'Planner setup installs time triggers. They catch due tasks, health checks, and weekly organisation review even if the sheet is not open.');
-  r = writeKV(sheet, r, 'Repair', 'Maintenance > Repair sheet layout and dropdowns rebuilds headers, dropdowns, formulas, helper links, and generated tabs without clearing planner data.');
-  r = writeKV(sheet, r, 'Snapshot', 'Maintenance > Save full backup copy creates a timestamped full spreadsheet copy in Google Drive.');
+  r = writeKV(sheet, r, 'Daily and weekly refresh', 'Setup & automation installs time triggers. They catch due tasks, health checks, and weekly organisation review even if the sheet is not open.');
+  r = writeKV(sheet, r, 'Repair', 'Maintenance > Repair sheet layout rebuilds headers, dropdowns, formulas, helper links, and generated tabs without clearing planner data.');
+  r = writeKV(sheet, r, 'Snapshot', 'Maintenance > Save backup copy creates a timestamped full spreadsheet copy in Google Drive.');
   r = writeKV(sheet, r, 'Start fresh', 'Maintenance > Start fresh creates a backup, then fully clears planner data bodies and rebuilds the tabs. It is separate from setup.');
   r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use Show hidden columns for troubleshooting when you need to inspect links.');
   r = writeKV(sheet, r, 'Colours', 'Colours help scanning. The text value is always the source of truth.');
@@ -12510,11 +12560,11 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Troubleshooting');
   r = writeKV(sheet, r, 'Menu missing', 'Run Extensions > Apps Script > onOpen, then reload the sheet.');
-  r = writeKV(sheet, r, 'Popups or checkboxes do nothing', 'Run The Planner > Planner setup > Turn on Planner actions.');
+  r = writeKV(sheet, r, 'Popups or checkboxes do nothing', 'Run The Planner > Setup & automation > Turn on Planner.');
   r = writeKV(sheet, r, 'Home looks stale', 'Use The Planner > Refresh Home, or tick the Home refresh checkbox.');
-  r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
-  r = writeKV(sheet, r, 'Returning after time away', 'Use The Planner > Restart today before working the plan.');
-  r = writeKV(sheet, r, 'Formatting or dropdowns look wrong', 'Use The Planner > Maintenance > Repair sheet layout and dropdowns.');
+  r = writeKV(sheet, r, 'Today looks stale', 'Use The Planner > Today > Build or refresh Today.');
+  r = writeKV(sheet, r, 'Returning after time away', 'Use The Planner > Catch up after time away before working the plan.');
+  r = writeKV(sheet, r, 'Formatting or dropdowns look wrong', 'Use The Planner > Maintenance > Repair sheet layout.');
   r = writeKV(sheet, r, 'Broken links or flags', 'Rows with repair flags stay visible for correction. Fix the linked source row or run Repair if the issue is structural.');
   r++;
 
@@ -12926,7 +12976,7 @@ function uninstallTimeTriggers() {
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     removed += deleteTriggersFor(spec.handler, ScriptApp.EventType.CLOCK);
   });
-  SpreadsheetApp.getActiveSpreadsheet().toast('Turned off daily/weekly automation (' + removed + ' setup item(s) removed). Edit actions are untouched — use Planner setup for those.', 'The Planner', 5);
+  SpreadsheetApp.getActiveSpreadsheet().toast('Turned off daily/weekly automation (' + removed + ' setup item(s) removed). Edit actions are untouched — use Setup & automation for those.', 'The Planner', 5);
 }
 
 // =============================================================
@@ -12936,61 +12986,61 @@ function uninstallTimeTriggers() {
 function buildMenu() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('The Planner')
-    .addItem('Set up / add starting facts', 'runSetupInterview')
-    .addItem("Build / refresh Today's plan", 'populateToday')
-    .addItem('Restart today', 'restartToday')
+    .addItem('Add or update starting facts', 'runSetupInterview')
+    .addItem('Build or refresh Today', 'populateToday')
+    .addItem('Catch up after time away', 'restartToday')
     .addItem('Refresh Home', 'refreshHome')
     .addItem('Add one-off task', 'addAdHocTodo')
     .addSeparator()
     .addSubMenu(ui.createMenu('Today')
-      .addItem("Build / refresh Today's plan", 'populateToday')
-      .addItem("Add selected Task to Today's plan", 'pullSelectedTaskIntoToday')
-      .addItem('Add more time to Today', 'topUpToday')
-      .addItem('Keep selected Today row in place', 'lockTodayRow')
-      .addItem('Let selected Today row move again', 'unlockTodayRow')
+      .addItem('Build or refresh Today', 'populateToday')
+      .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
+      .addItem('Add time to Today', 'topUpToday')
+      .addItem('Keep selected Today row fixed', 'lockTodayRow')
+      .addItem('Let selected Today row re-rank', 'unlockTodayRow')
       .addItem('Move selected Today row up', 'moveTodayRowUp')
       .addItem('Move selected Today row down', 'moveTodayRowDown'))
     .addSubMenu(ui.createMenu('Add or update')
-      .addItem('Explore broad sectors', 'addNewSector')
-      .addItem('Organisations found from exploration', 'addExplorationOrganisations')
-      .addItem('Target organisation', 'addNewOrganisation')
-      .addItem('Person or contact', 'addNewPerson')
-      .addItem('Job or opportunity', 'addNewJob')
-      .addItem('Conversation or interaction', 'addNewInteraction')
-      .addItem('Interview round', 'addNewInterview'))
+      .addItem('Add broad sectors', 'addNewSector')
+      .addItem('Add organisations found', 'addExplorationOrganisations')
+      .addItem('Add target organisation', 'addNewOrganisation')
+      .addItem('Add person', 'addNewPerson')
+      .addItem('Add job', 'addNewJob')
+      .addItem('Log conversation', 'addNewInteraction')
+      .addItem('Add interview round', 'addNewInterview'))
     .addSubMenu(ui.createMenu('Row actions')
       .addItem('Start pursuing selected Organisation', 'rowActionStartPursuingSelectedOrg')
-      .addItem('Create people-search task for selected Organisation', 'rowActionFindPeopleAtSelectedOrg')
-      .addItem('Create job-scan task for selected Organisation', 'rowActionScanJobsAtSelectedOrg')
-      .addItem('Start application plan for selected Job', 'rowActionPrepSelectedJob')
-      .addItem('Create referral-search task for selected Job', 'rowActionReferralSearchSelectedJob')
-      .addItem('Ask whether to market-map selected Sub-sector', 'rowActionSearchOrgsForSubsector')
-      .addItem('Create sub-sector entry task for selected Sector', 'rowActionBreakDownSelectedSector')
+      .addItem('Find people at selected Organisation', 'rowActionFindPeopleAtSelectedOrg')
+      .addItem('Scan jobs at selected Organisation', 'rowActionScanJobsAtSelectedOrg')
+      .addItem('Plan selected Job application', 'rowActionPrepSelectedJob')
+      .addItem('Look for referral for selected Job', 'rowActionReferralSearchSelectedJob')
+      .addItem('Decide on market map for selected Sub-sector', 'rowActionSearchOrgsForSubsector')
+      .addItem('Break selected Sector into sub-sectors', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected Job', 'rowActionAddInterviewRound')
       .addItem('Plan prep for selected Interview', 'rowActionPlanPrepForSelectedInterview')
-      .addItem('Make selected Task multi-step', 'rowActionBreakDownSelectedTask')
+      .addItem('Break selected Task into steps', 'rowActionBreakDownSelectedTask')
       .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
       .addItem('Unblock selected Task', 'rowActionUnblockSelectedTask')
       .addItem('Defer selected Task 3 days', 'rowActionDeferSelectedTask')
       .addSeparator()
-      .addItem('Link existing contact to selected Job', 'linkContactToJob')
+      .addItem('Link contact to selected Job', 'linkContactToJob')
       .addItem('Log conversation for selected row', 'logInteractionForRow')
       .addItem('Close selected Person/Job row', 'softCloseRow'))
-    .addSubMenu(ui.createMenu('Planner setup')
-      .addItem('\u2605 Turn on Planner actions (run this first)', 'setUpTriggers')
-      .addItem('Check setup status', 'showTriggerStatus')
+    .addSubMenu(ui.createMenu('Setup & automation')
+      .addItem('Turn on Planner', 'setUpTriggers')
+      .addItem('Check setup', 'showTriggerStatus')
       .addSeparator()
-      .addItem('Repair dropdowns, popups, and checkboxes', 'installEditTrigger')
-      .addItem('Turn off dropdowns, popups, and checkboxes', 'uninstallEditTrigger')
-      .addItem('Repair daily/weekly refresh', 'installTimeTriggers')
-      .addItem('Turn off daily/weekly refresh', 'uninstallTimeTriggers'))
+      .addItem('Fix popups and checkboxes', 'installEditTrigger')
+      .addItem('Turn off popups and checkboxes', 'uninstallEditTrigger')
+      .addItem('Turn on daily/weekly automation', 'installTimeTriggers')
+      .addItem('Turn off daily/weekly automation', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
-      .addItem('Repair sheet layout and dropdowns', 'repairAllTabs')
-      .addItem('Catch up due tasks and health checks', 'dailyMaintenance')
-      .addItem('Review active organisations now', 'weeklyReview')
+      .addItem('Repair sheet layout', 'repairAllTabs')
+      .addItem('Catch up due work', 'dailyMaintenance')
+      .addItem('Review active organisations', 'weeklyReview')
       .addSeparator()
-      .addItem('Save full backup copy', 'savePlannerSnapshot')
-      .addItem('Start fresh (backup, then clear planner data)', 'startFreshPlannerData')
+      .addItem('Save backup copy', 'savePlannerSnapshot')
+      .addItem('Start fresh: backup, then clear data', 'startFreshPlannerData')
       .addSeparator()
       .addItem('Show hidden columns for troubleshooting', 'showAllColumns'))
     .addToUi();
@@ -13014,6 +13064,6 @@ function onOpen() {
   if (editReady) {
     ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
-    ss.toast('The Planner loaded, but edit actions are not on yet. Run \u201cThe Planner \u2192 Planner setup \u2192 Turn on Planner actions\u201d once so onboarding and Add or update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
+    ss.toast('The Planner loaded, but edit actions are not on yet. Run \u201cThe Planner \u2192 Setup & automation \u2192 Turn on Planner\u201d once so onboarding and Add or update work reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
 }
