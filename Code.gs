@@ -2944,6 +2944,7 @@ function deriveReadyForTodayFromRow(row, ctx) {
   if (isTerminalTodoStatus(status)) return 'Done';
   if (status === 'Blocked') return 'Blocked';
   if (taskHasBrokenSourceNotes(row[COLS.TODO.NOTES - 1])) return 'Needs planning';
+  if (String(row[COLS.TODO.NOTES - 1] || '').indexOf('[duplicate-open-task]') !== -1) return 'Needs planning';
   if (taskLinkedSourceIsTerminal(row, ctx)) return 'Needs planning';
   if (ctx.childrenByParent[id] && ctx.childrenByParent[id].length) return 'Parent';
   if (String(row[COLS.TODO.TIME_EST - 1] || '') === 'Multi-day') return 'Needs planning';
@@ -7719,6 +7720,7 @@ function needsPlanningReasonForRow(row, ctx) {
 
   if (status !== 'Not started' && status !== 'In progress') return null;
   if (taskHasBrokenSourceNotes(notes)) return { reason: 'Broken or missing source link', suggestedAction: 'Repair the linked source row before doing this task' };
+  if (notes.indexOf('[duplicate-open-task]') !== -1) return { reason: 'Duplicate linked task', suggestedAction: 'Review the duplicate row, then cancel or keep one task' };
   if (taskLinkedSourceIsTerminal(row, ctx)) return { reason: 'Linked source is closed, parked, or retired', suggestedAction: 'Cancel this task, reopen the source, or relink it to live work' };
   if (readyState === 'Needs planning') return { reason: 'Needs breakdown or a usable time estimate', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
   if (notes.indexOf('[parent-ready]') !== -1) return { reason: 'Child tasks are done; source update still needs recording', suggestedAction: 'Complete the parent task to open the required popup' };
@@ -8448,8 +8450,8 @@ function taskQueueSummary() {
     if (cls === 'Fixed') fixedCount++;
     if (cls === 'Blocking') blocking++;
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
-    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready|orphaned-link|orphaned-sector|orphaned-org)\]/.test(notes)) needAttention++;
-    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1 || taskHasBrokenSourceNotes(notes) || taskLinkedSourceIsTerminal(row, ctx)) needPlanning++;
+    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready|orphaned-link|orphaned-sector|orphaned-org|duplicate-open-task)\]/.test(notes)) needAttention++;
+    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1 || notes.indexOf('[duplicate-open-task]') !== -1 || taskHasBrokenSourceNotes(notes) || taskLinkedSourceIsTerminal(row, ctx)) needPlanning++;
     if (status === 'Blocked') blockedCount++;
     if (taskHasBrokenSourceNotes(notes)) brokenLinks++;
   });
@@ -8511,6 +8513,10 @@ function collectHomeAttentionItems() {
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
   var duplicateIds = scanDuplicateIdValues(false);
   if (duplicateIds.count) items.push(duplicateIds.count + ' duplicate ID row' + (duplicateIds.count === 1 ? '' : 's') + ' need repair');
+  var duplicateTasks = scanDuplicateOpenTasks(false);
+  if (duplicateTasks.count) items.push(duplicateTasks.count + ' duplicate open task' + (duplicateTasks.count === 1 ? '' : 's') + ' need review');
+  var duplicateDecisions = scanDuplicatePendingDecisions(false);
+  if (duplicateDecisions.count) items.push(duplicateDecisions.count + ' duplicate pending decision' + (duplicateDecisions.count === 1 ? '' : 's') + ' need review');
   return items;
 }
 
@@ -8522,7 +8528,7 @@ function homeAttentionActionHint(items) {
   items.forEach(function (item) {
     var text = String(item || '');
     if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
-    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('duplicate ID') !== -1) hasRepair = true;
+    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
     if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
   });
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then run Maintenance if repair remains';
@@ -10585,7 +10591,7 @@ function applyStatusColorCoding() {
       .setBackground('#F7F7F5').setFontColor('#B0AEA4')
       .setRanges([fullRowRange]).build());
     ccRules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|orphaned-link|orphaned-sector|orphaned-org|no-date|needs planning|needs breakdown|parent-still-open|parent-ready|blocked)\\]"),NOT(' + terminalFormula + '))')
+      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|orphaned-link|orphaned-sector|orphaned-org|no-date|needs planning|needs breakdown|parent-still-open|parent-ready|duplicate-open-task|blocked)\\]"),NOT(' + terminalFormula + '))')
       .setBackground('#FDE9D9')
       .setRanges([fullRowRange]).build());
 
@@ -11244,6 +11250,80 @@ function scanDuplicateIdValues(writeFlags) {
     bySheet[sheetName] = (bySheet[sheetName] || 0) + sectorOnlyDuplicates.bySheet[sheetName];
   });
   return { count: count, bySheet: bySheet };
+}
+
+function duplicateOpenTaskKey(row) {
+  var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '').trim();
+  var objId = String(row[COLS.TODO.OBJ_ID - 1] || '').trim();
+  var workflow = String(row[COLS.TODO.WORKFLOW - 1] || '').trim();
+  if (!objType || objType === 'None' || !objId || !workflow) return '';
+  return [objType, objId, workflow].join('|');
+}
+
+function scanDuplicateOpenTasks(writeFlags) {
+  var sheet = getSheet('Tasks');
+  var result = { count: 0, bySheet: {} };
+  if (!sheet || sheet.getLastRow() < 2) return result;
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var rowsByKey = {};
+  values.forEach(function (row, idx) {
+    if (!isOpenTodoStatus(String(row[COLS.TODO.STATUS - 1] || ''))) return;
+    var key = duplicateOpenTaskKey(row);
+    if (!key) return;
+    if (!rowsByKey[key]) rowsByKey[key] = [];
+    rowsByKey[key].push(idx + 2);
+  });
+
+  values.forEach(function (row, idx) {
+    var sheetRow = idx + 2;
+    var key = duplicateOpenTaskKey(row);
+    var duplicateRows = (key && isOpenTodoStatus(String(row[COLS.TODO.STATUS - 1] || '')))
+      ? (rowsByKey[key] || []).filter(function (r) { return r !== sheetRow; })
+      : [];
+    if (duplicateRows.length) {
+      result.count++;
+      result.bySheet.Tasks = (result.bySheet.Tasks || 0) + 1;
+      if (writeFlags) appendNoteFlag(sheet, sheetRow, COLS.TODO.NOTES, '[duplicate-open-task] Same linked workflow is also open on row(s): ' + duplicateRows.join(', '));
+    } else if (writeFlags) {
+      clearNoteFlag(sheet, sheetRow, COLS.TODO.NOTES, '[duplicate-open-task]');
+    }
+  });
+
+  return result;
+}
+
+function scanDuplicatePendingDecisions(writeFlags) {
+  var sheet = getSheet('Decisions');
+  var result = { count: 0, bySheet: {} };
+  if (!sheet || sheet.getLastRow() < 2) return result;
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
+  var rowsByKey = {};
+  values.forEach(function (row, idx) {
+    if (String(row[COLS.DECISIONS.DECISION - 1] || '') !== 'Pending') return;
+    var key = String(row[COLS.DECISIONS.KEY - 1] || '').trim();
+    if (!key) return;
+    if (!rowsByKey[key]) rowsByKey[key] = [];
+    rowsByKey[key].push(idx + 2);
+  });
+
+  values.forEach(function (row, idx) {
+    var sheetRow = idx + 2;
+    var key = String(row[COLS.DECISIONS.KEY - 1] || '').trim();
+    var duplicateRows = (key && String(row[COLS.DECISIONS.DECISION - 1] || '') === 'Pending')
+      ? (rowsByKey[key] || []).filter(function (r) { return r !== sheetRow; })
+      : [];
+    if (duplicateRows.length) {
+      result.count++;
+      result.bySheet.Decisions = (result.bySheet.Decisions || 0) + 1;
+      if (writeFlags) appendNoteFlag(sheet, sheetRow, COLS.DECISIONS.NOTES, '[duplicate-pending-decision] Same decision key is also pending on row(s): ' + duplicateRows.join(', '));
+    } else if (writeFlags) {
+      clearNoteFlag(sheet, sheetRow, COLS.DECISIONS.NOTES, '[duplicate-pending-decision]');
+    }
+  });
+
+  return result;
 }
 
 function materializeDueTasks() {
@@ -12356,6 +12436,8 @@ function repairAllTabsImpl() {
   syncPeopleHelperColumns();
   scanInvalidDropdownValues(true);
   scanDuplicateIdValues(true);
+  scanDuplicateOpenTasks(true);
+  scanDuplicatePendingDecisions(true);
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
   backfillDecisionHelperColumns();
@@ -12418,6 +12500,8 @@ function dailyMaintenance() {
     syncPeopleHelperColumns();
     scanInvalidDropdownValues(true);
     scanDuplicateIdValues(true);
+    scanDuplicateOpenTasks(true);
+    scanDuplicatePendingDecisions(true);
     populateToday();
     refreshHome();
     checkTriggerHealth();

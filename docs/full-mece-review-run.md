@@ -312,8 +312,8 @@ Required output:
 | Visible labels match hidden IDs | Orgs, Jobs, People, Interviews, Tasks, Decisions | rename propagation, helper sync, `writeLinkedTo`, linked display helpers | Multiple sync helpers exist: `propagateOrganisationRename`, `syncSectorLinkedLabels`, `refreshLinkedContactsDisplay`, `syncPeopleHelperColumns` | Full column-by-column proof belongs to Stage 4 | Defer to Stage 4 lineage tables | Rename scenario tests by tab |
 | Deleted sources create orphan flags | Jobs, People, Tasks, Decisions, Orgs, Sectors, Interviews, Conversations | `checkOrgOrphans`, `detectSectorOrphans`, `syncJobsPeopleHealthFlags`, interview/conversation health flags | Orphan notes are appended and Home can count broken/source-repair needs | Need live repair run proof; no scoped code gap confirmed here | Verify in Stage 2/13 with scenarios after code sync | Delete/clear source rows and run repair/daily maintenance |
 | Duplicate IDs detected | Core tabs | `scanDuplicateIdValues`, `syncJobsPeopleHealthFlags`, interview health flags | Generic scanner covers Org/Job/Person/Interaction/Round/Task/Decision and Sub-sector IDs | Sector-only parent `SEC-*` duplicates are missed because Sector ID is intentionally shared with child rows | Add custom sector-only duplicate detection | Repair/daily maintenance flags duplicate sector-only IDs |
-| Duplicate open tasks detected | Tasks | `appendTodoOnceForWorkflow`, `openTodoExistsForTargetWorkflow` | Creation paths dedupe by object/workflow for generated work | No full scanner for pre-existing duplicate manual tasks in this slice | Defer to Tasks/Today Stage 7 unless evidence shows live duplicates | Generated cascade creates/reuses one open task |
-| Duplicate pending decisions detected | Decisions | `findDecisionByKey`, `pendingDecisionExistsForTargetWorkflow`, `appendPendingDecision` | Decision keys prevent many duplicate pending decisions | Need Stage 9 proof for every decision route | Defer to Decisions stage | Re-trigger each decision route and verify one pending item |
+| Duplicate open tasks detected | Tasks | `appendTodoOnceForWorkflow`, `openTodoExistsForTargetWorkflow`, `scanDuplicateOpenTasks` | Creation paths dedupe by object/workflow for generated work; repair/daily maintenance now flag pre-existing duplicate open linked tasks | Fixed in this pass | Keep non-destructive; do not auto-merge duplicates | Two open Tasks with same linked object/workflow get `[duplicate-open-task]` and Home attention |
+| Duplicate pending decisions detected | Decisions | `findDecisionByKey`, `pendingDecisionExistsForTargetWorkflow`, `appendPendingDecision`, `scanDuplicatePendingDecisions` | Decision keys prevent many duplicate pending decisions; repair/daily maintenance now flag duplicate pending decision keys | Fixed in this pass | Keep non-destructive; do not auto-dismiss duplicate judgement | Two pending Decisions with same key get `[duplicate-pending-decision]` and Home attention |
 | Formulas match script logic | Orgs, Tasks, Home summaries | Formula repair helpers and script-side count maps | `repairOrganisationsFormulas`, script count maps, helper backfills exist | Full formula parity needs Stage 4 table | Defer to column lineage | Compare formula outputs with script maps |
 | Dropdown validations are current | All strict dropdown tabs | `dropdownIntegrityRules`, `scanInvalidDropdownValues`, `refreshAllDropdowns` | Repair/daily maintenance flag invalid values in row Notes; Home counts invalid dropdowns | Needs live repair proof; no scoped code gap confirmed here | Verify later; no code change now | Invalid legacy value gets `[invalid-value]` |
 | Helper columns are in sync | Tasks, People, Jobs, Decisions, Home | `backfillTaskHelperColumns`, `syncPeopleHelperColumns`, `backfillDecisionHelperColumns`, `refreshHome` | Repair/daily maintenance refresh helpers | Needs current scenario proof; no scoped code gap confirmed here | Defer to Stage 4/7/9 scenario tests | Link/update rows and verify helper cells refresh |
@@ -321,6 +321,50 @@ Required output:
 | Closed/cancelled source states do not keep active downstream work | Tasks, Decisions, source tabs | `taskLinkedSourceIsTerminal`, `deriveReadyForTodayFromRow`, source terminal cleanup paths | Terminal linked source makes task `Needs planning` and Home can flag source repair | Needs workflow-specific cleanup tests later | Defer to Stage 6/7 | Close/archive source and verify linked work leaves Today |
 
 Stage 2 findings:
+
+## Issue: Duplicate open Tasks and pending Decisions were only creation-guarded
+
+Severity: P2
+
+Stage: 2
+Area: Data integrity, identity, and trust
+Tab/surface: Tasks / Decisions / Home / Maintenance
+Column/function: `appendTodoOnceForWorkflow`, `findDecisionByKey`, `scanDuplicateOpenTasks`, `scanDuplicatePendingDecisions`, `collectHomeAttentionItems`
+
+Evidence:
+- Code evidence: Before this pass, generated creation paths used dedupe checks, but there was no scanner for duplicates already present from imports, manual edits, or older bugs.
+- User experience evidence: Duplicate executable work can appear in Today, and duplicate judgement can appear on Home, without a repair flag explaining why.
+
+Current behaviour:
+New generated items are usually deduped, but old/pre-existing duplicates were not systematically surfaced.
+
+Expected behaviour:
+The Planner should flag duplicate open linked Tasks and duplicate pending Decisions so the user can inspect and repair them.
+
+User impact:
+Reduces confusion where the same work or decision appears twice.
+
+Workflow impact:
+Today and Home become more trustworthy because duplicate work/judgement is visible as a repair issue.
+
+Data/integrity impact:
+No data is deleted or merged automatically.
+
+Automation boundary:
+L1/L2 trust surfacing. Detect and flag; do not choose the winning duplicate.
+
+Fix implemented:
+- Added `scanDuplicateOpenTasks(writeFlags)` for open linked Tasks sharing object type, object ID, and workflow.
+- Added `scanDuplicatePendingDecisions(writeFlags)` for Pending Decisions sharing the same decision key.
+- Added both scanners to Repair all tabs, daily maintenance, and Home attention counts.
+- Added `[duplicate-open-task]` to task attention/planning summaries and Ready-for-Today derivation so duplicates are not treated as clean execution work.
+
+Acceptance tests:
+1. Two open linked Tasks with the same object/workflow get `[duplicate-open-task]`.
+2. Closed/done duplicate historical Tasks are ignored.
+3. Two Pending Decisions with the same key get `[duplicate-pending-decision]`.
+4. Non-pending duplicate historical Decisions are ignored.
+5. Home attention includes duplicate counts but does not auto-delete anything.
 
 ## Issue: Duplicate broad Sector IDs on sector-only rows are not detected
 
