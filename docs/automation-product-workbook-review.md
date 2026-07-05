@@ -51,7 +51,7 @@ Recent product decision:
 | Source row IDs and helper fields | L1 | L1 | Mechanical facts. | User should not manage IDs/helpers. | Keep. |
 | Broken source task readiness | L2/L1 | L2 + Today exclusion | Broken work is not executable. | False-ready Today task. | Mostly done; retest. |
 | Invalid dropdown values | L2 | L2 | Old/imported values are stale-state problems. | Hidden invalid state can break cascades. | Implemented: repair/maintenance scan flags row Notes; Home counts invalid values. |
-| Duplicate IDs | Notes-only L2 | L2 with Home surfacing | IDs are integrity backbone. | Wrong links, duplicate cascades. | Add/verify top-level count in Home attention later. |
+| Duplicate IDs | L2 | L2 with Home surfacing | IDs are integrity backbone. | Wrong links, duplicate cascades. | Implemented: repair/maintenance scan flags duplicate IDs; Home counts duplicate-ID rows. |
 | People discovery | L1 capture | L1 only | Discovery is not intent to contact. | Outreach spam. | Keep no-outreach rule. |
 | Apply decision | L3/L5 | L3 then L5 | Strategic judgement before task creation. | App tasks before intent. | Keep application planning popup. |
 | Interview prep | L5 then L4 | L5 then L4 | Prep depth needs details; tasks are work. | Too many/too shallow prep tasks. | Keep; clean legacy labels later. |
@@ -98,7 +98,7 @@ Recent product decision:
 |---|---|---|---|---|---|
 | Old/imported invalid dropdown values | Data tabs | User cannot see why cascades fail or silently normalize. | Implemented: repair/maintenance scan flags invalid values in row Notes; Home counts invalid values. | L2 | Done |
 | Redo onboarding can destroy data | Setup popup | User may want to save existing planner state before reseeding. | Implemented: checked backup-copy option before clearing; backup failure aborts reset. | L5 | Done |
-| Duplicate IDs | Hidden ID columns | Links can silently point to wrong row. | Repair scan counts/flags duplicate IDs and Home attention surfaces it. | L2 | P1/P2 |
+| Duplicate IDs | Hidden ID columns | Links can silently point to wrong row. | Implemented: repair scan counts/flags duplicate IDs and Home attention surfaces it. | L2 | Done |
 | End-of-day unfinished work | Today | One modal per unfinished task is heavy. | Batch popup with carry/block/defer choices. | L5 | P2 |
 | Notes tag meanings | Tasks/source tabs | Tags drive logic but are not self-serve. | Guide tag dictionary later. | Documentation | P2 Guide-last |
 | Legacy interview prep workflows | Tasks dropdown | New model uses generic `Interview prep` parent/children; legacy labels can confuse. | Header/Guide clarify legacy, or retire from fresh creation if safe. | P3 | P3 |
@@ -130,7 +130,7 @@ Recent product decision:
 | Missing trigger | Home | Prominent banner | Good | Keep. |
 | Broken/terminal source work | Home/Today/Tasks | Home attention + Today Needs planning | Good | Retest. |
 | Invalid dropdown values | Source row Notes + Home attention | Repair/maintenance scan + Home count | Good | Keep. |
-| Duplicate IDs | Home attention + source notes | Notes/backstop only | Not top-level enough | Add count later. |
+| Duplicate IDs | Home attention + source notes | Repair/maintenance scan + Home count | Good | Keep. |
 | Weekly review output | Home utility | Summary visible | Good | Keep compact. |
 | People follow-up work | Today/Tasks | Due tasks materialize; not Home Upcoming | Correct boundary | Keep out of Home. |
 | Scheduled conversations | Home Upcoming | Visible | Good | Keep. |
@@ -142,7 +142,7 @@ Recent product decision:
 |---|---|---|---|---|
 | Invalid dropdown values are not fully scanned during repair/maintenance | Trust/Recovery | Done | Imported/stale states can break cascades without a clear row-level repair signal. | Phase 1 |
 | Redo onboarding lacks a save-before-clear path | Trust/Recovery | Done | Existing data could be wiped before the user had a fallback copy. | Phase 1 |
-| Duplicate IDs are not top-level enough | Trust/Recovery | P1/P2 | Hidden duplicate IDs can break links and make actions hit the wrong source row. | Phase 1 |
+| Duplicate IDs are not top-level enough | Trust/Recovery | Done | Hidden duplicate IDs can break links and make actions hit the wrong source row. | Phase 1 |
 | End-of-day unfinished workflow is too modal-heavy | Execution/Recovery | P2 | Heavy days become a popup gauntlet. | Phase 2 |
 | Legacy interview prep labels remain in dropdowns | Orientation/Workflow | P3 | Users may see two prep models. | Phase 4/5 |
 | Guide/tag dictionary missing | Documentation | P2 | User cannot self-serve automation tags. | Guide-last |

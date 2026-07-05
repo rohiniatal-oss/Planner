@@ -13,6 +13,7 @@ Implemented after this review began:
 - Product decision: People follow-up tasks stay in Today/Tasks; Home Upcoming stays focused on scheduled conversations, interviews, and application checks.
 - Repair and daily maintenance now scan strict dropdown columns, flag invalid values in row Notes, and Home counts invalid dropdown values as repair-needed.
 - Redo onboarding now offers a checked backup-copy option before clearing existing data, and the reset clears full data bodies plus retired header cells instead of only current schema columns.
+- Repair and daily maintenance now scan duplicate IDs across core ID columns; Home counts duplicate-ID rows as repair-needed.
 
 ## Pass 1 - User Journey Review
 
@@ -129,7 +130,7 @@ Representative risks from current schema:
 | Maintenance stale/error | properties | Home attention strip + utility note | Good | none | Home attention strip | Done |
 | Invalid dropdown values | strict dropdowns/repair | scan flags invalid values during repair/maintenance | Good | repair tabs/daily maintenance | Home attention + row notes | Done |
 | Destructive onboarding reset | setup popup | optional backup copy + full body clear | Good | setup reset | popup confirmation and backup checkbox | Done |
-| Duplicate IDs | health flags | notes only | not top-level | repair/manual | notes | P2 |
+| Duplicate IDs | repair/maintenance duplicate scan | row notes + Home count | Good | repair/manual | Home attention + row notes | Done |
 
 ## Pass 9 - Home and Today Cockpit Review
 

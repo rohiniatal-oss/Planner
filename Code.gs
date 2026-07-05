@@ -8404,6 +8404,8 @@ function collectHomeAttentionItems() {
   if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
   var invalidDropdowns = scanInvalidDropdownValues(false);
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
+  var duplicateIds = scanDuplicateIdValues(false);
+  if (duplicateIds.count) items.push(duplicateIds.count + ' duplicate ID row' + (duplicateIds.count === 1 ? '' : 's') + ' need repair');
   return items;
 }
 
@@ -10978,6 +10980,50 @@ function scanInvalidDropdownValues(writeFlags) {
   return { count: count, bySheet: bySheet };
 }
 
+function duplicateIdIntegrityRules() {
+  return [
+    { sheet: 'Sectors', headerKey: 'Sectors', idCol: COLS.SECTORS.SUBSECTOR_ID, notesCol: COLS.SECTORS.NOTES, label: 'Sub-sector ID', flag: '[duplicate-subsector-id]' },
+    { sheet: 'Organisations', headerKey: 'Organisations', idCol: COLS.ORGS.ID, notesCol: COLS.ORGS.NOTES, label: 'Org ID', flag: '[duplicate-org-id]' },
+    { sheet: 'Jobs', headerKey: 'Jobs', idCol: COLS.JOBS.ID, notesCol: COLS.JOBS.NOTES, label: 'Job ID', flag: '[duplicate-job-id]' },
+    { sheet: 'People', headerKey: 'People', idCol: COLS.PEOPLE.ID, notesCol: COLS.PEOPLE.NOTES, label: 'Person ID', flag: '[duplicate-person-id]' },
+    { sheet: 'Conversations', headerKey: 'Interactions', idCol: COLS.INTERACTIONS.ID, notesCol: COLS.INTERACTIONS.NOTES, label: 'Interaction ID', flag: '[duplicate-interaction-id]' },
+    { sheet: 'Interviews', headerKey: 'Interview rounds', idCol: COLS.ROUNDS.ID, notesCol: COLS.ROUNDS.NOTES, label: 'Round ID', flag: '[duplicate-round-id]' },
+    { sheet: 'Tasks', headerKey: 'To-do', idCol: COLS.TODO.ID, notesCol: COLS.TODO.NOTES, label: 'To-do ID', flag: '[duplicate-task-id]' },
+    { sheet: 'Decisions', headerKey: 'Pending decisions', idCol: COLS.DECISIONS.ID, notesCol: COLS.DECISIONS.NOTES, label: 'Decision ID', flag: '[duplicate-decision-id]' }
+  ];
+}
+
+function scanDuplicateIdValues(writeFlags) {
+  var count = 0;
+  var bySheet = {};
+  duplicateIdIntegrityRules().forEach(function (rule) {
+    var sheet = getSheet(rule.sheet);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    var width = HEADERS[rule.headerKey].length;
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+    var rowsById = {};
+    values.forEach(function (row, idx) {
+      var id = String(row[rule.idCol - 1] || '').trim();
+      if (!id) return;
+      if (!rowsById[id]) rowsById[id] = [];
+      rowsById[id].push(idx + 2);
+    });
+    values.forEach(function (row, idx) {
+      var id = String(row[rule.idCol - 1] || '').trim();
+      var sheetRow = idx + 2;
+      var duplicateRows = id ? (rowsById[id] || []).filter(function (r) { return r !== sheetRow; }) : [];
+      if (duplicateRows.length) {
+        count++;
+        bySheet[rule.sheet] = (bySheet[rule.sheet] || 0) + 1;
+        if (writeFlags) appendNoteFlag(sheet, sheetRow, rule.notesCol, rule.flag + ' ' + rule.label + ' also used on row(s): ' + duplicateRows.join(', '));
+      } else if (writeFlags) {
+        clearNoteFlag(sheet, sheetRow, rule.notesCol, rule.flag);
+      }
+    });
+  });
+  return { count: count, bySheet: bySheet };
+}
+
 function materializeDueTasks() {
   var created = 0, todayDate = today();
 
@@ -12082,6 +12128,7 @@ function repairAllTabsImpl() {
   repairInteractionPersonLinks();
   syncPeopleHelperColumns();
   scanInvalidDropdownValues(true);
+  scanDuplicateIdValues(true);
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
   backfillDecisionHelperColumns();
@@ -12143,6 +12190,7 @@ function dailyMaintenance() {
     repairInteractionPersonLinks();
     syncPeopleHelperColumns();
     scanInvalidDropdownValues(true);
+    scanDuplicateIdValues(true);
     populateToday();
     refreshHome();
     checkTriggerHealth();
