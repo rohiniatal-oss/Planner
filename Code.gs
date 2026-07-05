@@ -8113,7 +8113,7 @@ function endOfDayReconcile() {
   var sheet = getSheet('Today');
   if (!sheet) { SpreadsheetApp.getUi().alert('Today tab not found.'); return; }
   var ui = SpreadsheetApp.getUi();
-  var doneCount = 0, carried = 0, deferred = 0, skipped = 0, blocked = 0;
+  var doneCount = 0;
   var unfinished = [];
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
@@ -8128,60 +8128,98 @@ function endOfDayReconcile() {
     ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | No unfinished tasks to reconcile.', ui.ButtonSet.OK);
     return;
   }
-  var summary = ui.alert('End-of-day: ' + unfinished.length + ' unfinished task(s)',
-    'YES = carry all over\nNO = defer all 3 days\nCANCEL = choose task by task',
-    ui.ButtonSet.YES_NO_CANCEL);
-  if (summary === ui.Button.YES) {
-    carried = unfinished.length;
-    unfinished.forEach(function (item) { addTodayRowTag(sheet, item.row, '[Carried]'); });
-    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: 0 | Blocked: 0 | Skipped: 0', ui.ButtonSet.OK);
-    return;
-  }
-  if (summary === ui.Button.NO) {
-    unfinished.forEach(function (item) {
-      deferred++;
-      if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
-      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
-    });
-    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: 0 | Deferred: ' + deferred + ' | Blocked: 0 | Skipped: 0', ui.ButtonSet.OK);
-    return;
-  }
-  unfinished.forEach(function (item) {
-    var resp = ui.alert('End-of-day: unfinished', '"' + item.task + '"\n\nYES = carry over  NO = defer 3 days  CANCEL = more options', ui.ButtonSet.YES_NO_CANCEL);
-    if (resp === ui.Button.YES) {
-      carried++;
-      addTodayRowTag(sheet, item.row, '[Carried]');
-    }
-    else if (resp === ui.Button.NO) {
-      deferred++;
-      if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
-      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
-    } else {
-      var more = ui.alert('End-of-day: more options', '"' + item.task + '"\n\nYES = mark blocked  NO = skip  CANCEL = carry over', ui.ButtonSet.YES_NO_CANCEL);
-      if (more === ui.Button.YES) {
-        var reasonResp = ui.prompt('What is blocking this?', 'Add the blocker reason:', ui.ButtonSet.OK_CANCEL);
-        if (reasonResp.getSelectedButton() === ui.Button.OK && reasonResp.getResponseText().trim()) {
-          blocked++;
-          if (item.todoId) markTodoBlockedFromToday(String(item.todoId), reasonResp.getResponseText().trim());
-          sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Blocked');
-          addTodayRowTag(sheet, item.row, '[Blocked]');
+  showEndOfDayReconcilePopup(doneCount, unfinished);
+}
+
+function showEndOfDayReconcilePopup(doneCount, unfinished) {
+  var data = {
+    doneCount: doneCount || 0,
+    items: (unfinished || []).map(function (item) {
+      return { row: item.row, todoId: String(item.todoId || ''), task: String(item.task || '') };
+    })
+  };
+  var html = HtmlService.createHtmlOutput(buildEndOfDayReconcileHtml(data)).setWidth(760).setHeight(620).setTitle('Wrap up today');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Wrap up today');
+}
+
+function buildEndOfDayReconcileHtml(data) {
+  var json = JSON.stringify(data || { doneCount: 0, items: [] });
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:20px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}' +
+    'p{margin:6px 0 14px;color:#5F625E;font-size:13px;line-height:1.4;}' +
+    '.toolbar{display:flex;gap:10px;align-items:center;margin:12px 0 14px;}' +
+    'select,textarea{box-sizing:border-box;width:100%;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#28251D;font-size:13px;padding:8px;}' +
+    '.default{width:190px;}' +
+    'table{border-collapse:collapse;width:100%;font-size:13px;background:#FFF;}' +
+    'th{background:#1B474D;color:#FFF;text-align:left;padding:8px;font-size:12px;}' +
+    'td{border-bottom:1px solid #E1E3DD;padding:8px;vertical-align:top;}' +
+    '.task{font-weight:bold;line-height:1.35;}' +
+    '.reason{display:none;margin-top:6px;min-height:42px;}' +
+    '.hint{font-size:11px;color:#7A7974;margin-top:4px;}' +
+    '.primary{margin-top:16px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:16px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#28251D;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}' +
+    '</style>' +
+    '<h2>Wrap up today</h2>' +
+    '<p>' + (data.doneCount || 0) + ' done. Choose what should happen to each unfinished item.</p>' +
+    '<div class="toolbar"><span class="hint">Default for all</span><select id="defaultAction" class="default" onchange="applyDefault()"><option value="carry">Carry over</option><option value="defer">Defer 3 days</option><option value="blocked">Blocked</option><option value="skip">Skip</option></select></div>' +
+    '<table><thead><tr><th style="width:48%">Task</th><th style="width:170px">Action</th><th>Blocker reason</th></tr></thead><tbody id="rows"></tbody></table>' +
+    '<button class="primary" onclick="save()">Save wrap-up</button><button class="secondary" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';' +
+    'var actions=[["carry","Carry over"],["defer","Defer 3 days"],["blocked","Blocked"],["skip","Skip"]];' +
+    'function esc(s){return String(s||"").replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}' +
+    'function render(){var body=document.getElementById("rows");body.innerHTML="";(data.items||[]).forEach(function(item,idx){var tr=document.createElement("tr");var opts=actions.map(function(a){return "<option value=\\""+a[0]+"\\">"+a[1]+"</option>";}).join("");tr.innerHTML="<td><div class=\\"task\\">"+esc(item.task)+"</div></td><td><select id=\\"action_"+idx+"\\" onchange=\\"toggleReason("+idx+")\\">"+opts+"</select></td><td><textarea class=\\"reason\\" id=\\"reason_"+idx+"\\" placeholder=\\"What is blocking this?\\"></textarea></td>";body.appendChild(tr);toggleReason(idx);});}' +
+    'function toggleReason(idx){var action=document.getElementById("action_"+idx).value;document.getElementById("reason_"+idx).style.display=action==="blocked"?"block":"none";}' +
+    'function applyDefault(){var val=document.getElementById("defaultAction").value;(data.items||[]).forEach(function(_,idx){document.getElementById("action_"+idx).value=val;toggleReason(idx);});}' +
+    'function save(){var status=document.getElementById("status");var items=(data.items||[]).map(function(item,idx){return {row:item.row,todoId:item.todoId,task:item.task,action:document.getElementById("action_"+idx).value,reason:document.getElementById("reason_"+idx).value};});for(var i=0;i<items.length;i++){if(items[i].action==="blocked"&&!String(items[i].reason||"").trim()){status.textContent="Add a blocker reason, or choose Carry over instead.";document.getElementById("reason_"+i).focus();return;}}status.textContent="Saving wrap-up...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Today.";}).completeEndOfDayReconcileFromPopup({items:items});}' +
+    'render();</script>';
+}
+
+function completeEndOfDayReconcileFromPopup(payload) {
+  payload = payload || {};
+  var items = payload.items || [];
+  if (!items.length) return okResult('No unfinished tasks to reconcile.');
+  return withDocumentLock(function () {
+    var sheet = getSheet('Today');
+    if (!sheet) return failResult('Today tab not found.', '', 'TODAY_NOT_FOUND');
+    var counts = { carried: 0, deferred: 0, blocked: 0, skipped: 0 };
+    var priorBatch = EDIT_BATCH_CONTEXT;
+    EDIT_BATCH_CONTEXT = { deferTaskRefresh: true, needsDecisionRender: false, needsHomeRefresh: false };
+    try {
+      items.forEach(function (item) {
+        var row = parseInt(item.row, 10);
+        if (!row || row < TODAY_TABLE_FIRST_ROW || row > TODAY_TABLE_LAST_ROW) return;
+        var todoId = String(item.todoId || sheet.getRange(row, COLS.TODAY.TODO_ID).getValue() || '');
+        var action = String(item.action || 'carry');
+        if (action === 'defer') {
+          counts.deferred++;
+          if (todoId) deferTodoById(todoId, 3, 'eod');
+          sheet.getRange(row, COLS.TODAY.STATUS).setValue('Deferred');
+        } else if (action === 'blocked') {
+          var reason = String(item.reason || '').trim();
+          if (!reason) reason = 'Blocked - add reason';
+          counts.blocked++;
+          if (todoId) markTodoBlockedFromToday(todoId, reason);
+          sheet.getRange(row, COLS.TODAY.STATUS).setValue('Blocked');
+          addTodayRowTag(sheet, row, '[Blocked]');
+        } else if (action === 'skip') {
+          counts.skipped++;
+          if (todoId) completeTodo(todoId, 'Skipped', { source: 'eod' });
+          sheet.getRange(row, COLS.TODAY.STATUS).setValue('Skipped');
         } else {
-          carried++;
-          addTodayRowTag(sheet, item.row, '[Carried]');
+          counts.carried++;
+          addTodayRowTag(sheet, row, '[Carried]');
         }
-      } else if (more === ui.Button.NO) {
-        skipped++;
-        if (item.todoId) completeTodo(String(item.todoId), 'Skipped', { source: 'eod' });
-        sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Skipped');
-      } else {
-        carried++;
-        addTodayRowTag(sheet, item.row, '[Carried]');
-      }
+      });
+    } finally {
+      EDIT_BATCH_CONTEXT = priorBatch;
     }
-  });
-  populateToday();
-  refreshHome();
-  ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: ' + deferred + ' | Blocked: ' + blocked + ' | Skipped: ' + skipped, ui.ButtonSet.OK);
+    populateToday();
+    refreshHome();
+    return okResult('Wrap-up saved. Carried: ' + counts.carried + ' | Deferred: ' + counts.deferred + ' | Blocked: ' + counts.blocked + ' | Skipped: ' + counts.skipped + '.');
+  }, { label: 'completeEndOfDayReconcileFromPopup', timeoutMs: 30000 });
 }
 
 function checkMorningCarryForward() {

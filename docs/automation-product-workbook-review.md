@@ -56,7 +56,7 @@ Recent product decision:
 | Apply decision | L3/L5 | L3 then L5 | Strategic judgement before task creation. | App tasks before intent. | Keep application planning popup. |
 | Interview prep | L5 then L4 | L5 then L4 | Prep depth needs details; tasks are work. | Too many/too shallow prep tasks. | Keep; clean legacy labels later. |
 | Offer handling | L5/L3 | L6-ish confirmation/popup | High consequence. | Silent acceptance/rejection impossible. | Keep explicit popup/decision. |
-| End-of-day unfinished work | Modal per task | L5 batch popup | Needs context and recovery choices. | Popup gauntlet, missed blocker capture. | Later UX pass. |
+| End-of-day unfinished work | L5 batch popup | L5 batch popup | Needs context and recovery choices. | Popup gauntlet, missed blocker capture. | Implemented: one Today wrap-up popup with per-task actions. |
 
 ## Pass 3 - Workflow Lineage Summary
 
@@ -99,7 +99,7 @@ Recent product decision:
 | Old/imported invalid dropdown values | Data tabs | User cannot see why cascades fail or silently normalize. | Implemented: repair/maintenance scan flags invalid values in row Notes; Home counts invalid values. | L2 | Done |
 | Redo onboarding can destroy data | Setup popup | User may want to save existing planner state before reseeding. | Implemented: checked backup-copy option before clearing; backup failure aborts reset. | L5 | Done |
 | Duplicate IDs | Hidden ID columns | Links can silently point to wrong row. | Implemented: repair scan counts/flags duplicate IDs and Home attention surfaces it. | L2 | Done |
-| End-of-day unfinished work | Today | One modal per unfinished task is heavy. | Batch popup with carry/block/defer choices. | L5 | P2 |
+| End-of-day unfinished work | Today | One modal per unfinished task is heavy. | Implemented: one batch popup with carry/block/defer/skip choices. | L5 | Done |
 | Notes tag meanings | Tasks/source tabs | Tags drive logic but are not self-serve. | Guide tag dictionary later. | Documentation | P2 Guide-last |
 | Legacy interview prep workflows | Tasks dropdown | New model uses generic `Interview prep` parent/children; legacy labels can confuse. | Header/Guide clarify legacy, or retire from fresh creation if safe. | P3 | P3 |
 
@@ -134,7 +134,7 @@ Recent product decision:
 | Weekly review output | Home utility | Summary visible | Good | Keep compact. |
 | People follow-up work | Today/Tasks | Due tasks materialize; not Home Upcoming | Correct boundary | Keep out of Home. |
 | Scheduled conversations | Home Upcoming | Visible | Good | Keep. |
-| End-of-day blockers | Today/EOD popup | Modal gauntlet | Too much friction | Batch popup later. |
+| End-of-day blockers | Today/EOD popup | Batch wrap-up popup | Good | Keep. |
 
 ## Prioritized Issues
 
@@ -143,7 +143,7 @@ Recent product decision:
 | Invalid dropdown values are not fully scanned during repair/maintenance | Trust/Recovery | Done | Imported/stale states can break cascades without a clear row-level repair signal. | Phase 1 |
 | Redo onboarding lacks a save-before-clear path | Trust/Recovery | Done | Existing data could be wiped before the user had a fallback copy. | Phase 1 |
 | Duplicate IDs are not top-level enough | Trust/Recovery | Done | Hidden duplicate IDs can break links and make actions hit the wrong source row. | Phase 1 |
-| End-of-day unfinished workflow is too modal-heavy | Execution/Recovery | P2 | Heavy days become a popup gauntlet. | Phase 2 |
+| End-of-day unfinished workflow is too modal-heavy | Execution/Recovery | Done | Heavy days become a popup gauntlet. | Phase 2 |
 | Legacy interview prep labels remain in dropdowns | Orientation/Workflow | P3 | Users may see two prep models. | Phase 4/5 |
 | Guide/tag dictionary missing | Documentation | P2 | User cannot self-serve automation tags. | Guide-last |
 

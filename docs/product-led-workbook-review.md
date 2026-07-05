@@ -14,6 +14,7 @@ Implemented after this review began:
 - Repair and daily maintenance now scan strict dropdown columns, flag invalid values in row Notes, and Home counts invalid dropdown values as repair-needed.
 - Redo onboarding now offers a checked backup-copy option before clearing existing data, and the reset clears full data bodies plus retired header cells instead of only current schema columns.
 - Repair and daily maintenance now scan duplicate IDs across core ID columns; Home counts duplicate-ID rows as repair-needed.
+- End-of-day reconcile now uses one batch wrap-up popup for unfinished Today work instead of one blocking alert per task.
 
 ## Pass 1 - User Journey Review
 
@@ -39,7 +40,7 @@ Implemented after this review began:
 | Tab | Purpose | User should do here | User should not do here | Target state | Main current issue | Recommended fix |
 |---|---|---|---|---|---|---|
 | Home | Command centre | Decide, capture, orient, start Today | Inspect raw data | Critical warnings, decisions, Today, capture, snapshot | Main trust loops now visible; keep live-testing layout | Keep compact, avoid dashboard creep |
-| Today | Execution surface | Do ready work, block/defer/complete | Capture source data | Only executable work plus needs-planning section | Good after terminal-source guard; still needs live UX checks | Keep; later EOD polish |
+| Today | Execution surface | Do ready work, block/defer/complete | Capture source data | Only executable work plus needs-planning section | Good after terminal-source guard; EOD is now batch-based | Keep; live retest |
 | Tasks | Work source of truth | Inspect/repair/sequence/block work | Act as daily surface | Ready state honest and visual | Stronger now; notes tags still hidden logic | Document tags later; keep helper colors |
 | Decisions | Judgement/audit | Review queue and audit outcomes | Become task table | Action type truthful; stale decisions not on Home | Stale decisions are hidden/auto-dismissed; keep audit readable | Keep |
 | Sectors | Strategic universe | Define sector/sub-sector rows | Track work execution | Parent/child clear, retired safe | Needs visual examples, mostly docs | Guide later |
@@ -55,7 +56,7 @@ Implemented after this review began:
 | Tab | First impression | Load | Visual hierarchy | Scanability | Affordance | Feedback | Empty states | Recovery | Main UX fix |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | Home | 4 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | Live visual retest after deploy |
-| Today | 4 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | Later EOD batch choices |
+| Today | 4 | 3 | 4 | 4 | 4 | 4 | 4 | 4 | Live retest batch EOD wrap-up |
 | Tasks | 3 | 2 | 3 | 3 | 3 | 3 | n/a | 4 | De-emphasize helpers further later |
 | Decisions | 3 | 3 | 3 | 3 | 3 | 4 | n/a | 3 | Missing-source decisions cleanup |
 | Sectors | 3 | 3 | 3 | 3 | 3 | 3 | n/a | 3 | Examples/docs |
@@ -131,6 +132,7 @@ Representative risks from current schema:
 | Invalid dropdown values | strict dropdowns/repair | scan flags invalid values during repair/maintenance | Good | repair tabs/daily maintenance | Home attention + row notes | Done |
 | Destructive onboarding reset | setup popup | optional backup copy + full body clear | Good | setup reset | popup confirmation and backup checkbox | Done |
 | Duplicate IDs | repair/maintenance duplicate scan | row notes + Home count | Good | repair/manual | Home attention + row notes | Done |
+| End-of-day unfinished work | Today wrap-up popup | one batch action table | Good | Today end-of-day checkbox | modal summary | Done |
 
 ## Pass 9 - Home and Today Cockpit Review
 
@@ -165,6 +167,7 @@ Representative risks from current schema:
 | Home critical warnings are not first-class | P1/P2 | Done | Product cockpit should surface broken/stale/maintenance before work | warning summary helper |
 | Source-led scan no-results path | P2 | Done | Better UX, not integrity | source result popup |
 | Weekly review summary not visible enough | P2 | Done | Reduces "what happened?" anxiety | Home warning/snapshot |
+| End-of-day unfinished workflow is too modal-heavy | P2 | Done | Heavy days should not become a popup gauntlet | batch Today wrap-up popup |
 | Notes/tag logic undocumented | P2 | Guide last | User cannot self-serve repair | Guide dictionary |
 | Legacy interview prep workflows still visible | P3 | Guide/header later | May confuse but current routing works | Guide/header pass |
 
