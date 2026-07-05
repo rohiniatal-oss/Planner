@@ -637,6 +637,30 @@ Stage 6 workflow trace from current code:
 Stage 6 decision:
 No new code change in this pass. Earlier restarted work already fixed the cross-tab identity gap where a no-org Person could fork into a duplicate Person ID when later captured with an org. Current cross-tab traces preserve the core model: source tabs hold records, Decisions asks judgement, Tasks owns executable work, and Today pulls only ready tasks.
 
+## Stage 7 - Today Execution System
+
+Required output:
+
+| Today element | Current behaviour | Expected behaviour | Gap | Fix | Test |
+|---|---|---|---|---|---|
+
+Stage 7 Today execution trace:
+
+| Today element | Current behaviour | Expected behaviour | Gap | Fix | Test |
+|---|---|---|---|---|---|
+| Task selection | `collectTaskPool` includes only Tasks with status `Not started`/`In progress` and `Ready for Today = Ready` | Today should only show executable work | No new gap found | None | Broken-link, parent, waiting child, blocked, unplanned multi-day, terminal, and closed-source tasks are excluded by readiness |
+| Capacity logic | `stagedTodaySelection` uses a buffer, required Fixed/Blocking work, capacity-gated Keep-alive/Active/Pipeline/Backlog/final-fit passes, then Options | A realistic plan with visible over-capacity/tightness | No new gap found | None | 15-minute day with a 20-minute flexible task becomes no commit + Option, unless explicitly locked/required and then headline flags capacity |
+| Pipeline/spare capacity | Pipeline-building, backlog, and final-fit passes can fill remaining capacity | Do not leave useful capacity idle | No new gap found | None | No-deadline pipeline tasks flow in when they fit |
+| Options | Remaining near misses are shown as Options; Option rows use `Deferred`, `Done`, `Pull in` | Options are actionable but not committed | No new gap found | None | Option can be pulled in or completed directly |
+| Manual pull | `pullSelectedTaskIntoToday` checks `deriveReadyForTodayFromRow` and rejects non-ready Tasks | User cannot force broken/blocked/container work into Today | No new gap found | None | Manual pull rejects non-ready task with alert |
+| Locked/pulled preservation | Preserved only if task still exists and is executable or already in progress/blocked appropriately | Refresh should preserve real work without preserving impossible source state | No new gap found | None | Closed/terminal/broken task is not preserved as executable |
+| Today -> Tasks/source sync | `onEditToday` routes status changes through `completeTodo`, same as Tasks; popup-required work opens the right popup first | Updating Today should flow back through Tasks and source tabs | No new gap found | None | Submit/response/referral/prep/source-scan completions open popups and do not silently mark Done |
+| Needs planning | `collectNeedsPlanningTasks` explains blocker, duplicate, broken-link, terminal-source, parent, multi-day, and planning issues | Recovery work should be visible without becoming executable | No new gap found | None | Needs planning gives reason + suggested action |
+| End-of-day | `endOfDayReconcile` exists behind Today checkbox | Daily wrap-up should be on Today, not menu-only | Deeper UX review may still happen later | Defer | Stage 13 visual/interaction scan |
+
+Stage 7 decision:
+No new code change in this pass. The current Today engine already addresses the earlier user concerns about spare-capacity pipeline work, no-fit options, direct Option completion, and Today status changes flowing back through Tasks/source cascades.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
