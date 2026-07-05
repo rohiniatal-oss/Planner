@@ -520,6 +520,18 @@ Stage 3 lifecycle decision:
 |---|---|---|
 | `Dashboard` tab | Not in `CANONICAL_TAB_ORDER`, not in `SHEET_TO_HEADER_KEY`, not referenced by any workflow; only appears in `hideLegacyUtilityTabs` cleanup | Delete as obsolete legacy surface during repair/refresh cleanup |
 
+Stage 3 re-check from `a0d8017`:
+
+| Lifecycle area | Current-code status | Stage 3 decision |
+|---|---|---|
+| Destructive reset | `completeSetupFromPopup` validates payload, confirms populated reset, optionally creates backup copy before `resetPlannerDataForOnboarding`, and records reset audit | Covered for current pass; live popup test remains Stage 13 |
+| Data body clearing | `clearSheetBody` restores current headers and clears body content, notes, validations, and formatting across the sheet's full used width | Covered; no stale out-of-schema data should survive onboarding reset |
+| Snapshot | `savePlannerSnapshot` copies the spreadsheet and records snapshot properties | Covered; restore remains intentionally manual via backup copy |
+| Repair | `repairAllTabsImpl` rewrites schemas/helpers/generated Home/Today surfaces and now preserves an existing Guide | Covered; Guide content update deferred to Stage 14 |
+| Refresh | `fullRefreshImpl` runs safe maintenance/display refresh and legacy cleanup | Covered; label now says `Refresh planner links and display (safe)` |
+| Legacy tabs | `hideLegacyUtilityTabs` deletes obsolete `Dashboard` and empty spacer tabs, hides non-empty spacer tabs | Covered; Dashboard is not a Planner data surface |
+| Migration | `migrateWorkbookSchema` and migration helpers are schema-preserving by intent | Defer performance/large workbook proof to Stage 15 |
+
 ## Issue: Repair all tabs rewrote existing Guide before Guide-last
 
 Severity: P2
