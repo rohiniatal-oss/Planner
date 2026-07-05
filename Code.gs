@@ -3548,7 +3548,7 @@ function handleInterviewOfficialOutcome(roundId, outcome, opts) {
     markInterviewRoundCompleted(roundId, { forceLog: true });
   }
   sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(normalized);
-  dismissInterviewOutcomeDecision(roundId, 'Outcome recorded: ' + normalized);
+  if (!opts.skipDecisionDismiss) dismissInterviewOutcomeDecision(roundId, 'Outcome recorded: ' + normalized);
   if (normalized === 'Waiting') {
     ensureInterviewFollowUpTask(roundId);
     syncOpenInterviewTaskDates(roundId);
@@ -9423,7 +9423,7 @@ function completeInterviewOutcomeFromPopup(payload) {
       if (!round) return failResult('I could not find that interview round.', '', 'ROUND_NOT_FOUND');
       var outcome = String(payload.outcome || '');
       if (DROPDOWNS.OFFICIAL_OUTCOME.indexOf(outcome) === -1) return failResult('Pick a valid interview outcome.', 'outcome', 'INVALID_OUTCOME');
-      handleInterviewOfficialOutcome(round.id, outcome, { source: 'interview-outcome-popup' });
+      handleInterviewOfficialOutcome(round.id, outcome, { source: 'interview-outcome-popup', skipDecisionDismiss: true });
       resolvePopupDecision(payload.decisionId, '', 'Interview outcome recorded: ' + outcome);
       populateToday();
       refreshHome();
