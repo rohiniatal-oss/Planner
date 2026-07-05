@@ -8873,6 +8873,31 @@ function createPlannerBackupCopy() {
   return { name: copy.getName(), url: copy.getUrl(), id: copy.getId() };
 }
 
+function savePlannerSnapshot() {
+  try {
+    var backup = createPlannerBackupCopy();
+    maintenanceProps().setProperty('lastPlannerSnapshotAt', new Date().toISOString());
+    maintenanceProps().setProperty('lastPlannerSnapshotName', backup.name);
+    maintenanceProps().setProperty('lastPlannerSnapshotUrl', backup.url);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Backup copy saved: ' + backup.name, 'The Planner', 8);
+    return backup;
+  } catch (err) {
+    recordMaintenanceError('savePlannerSnapshot', err && err.message ? err.message : String(err));
+    SpreadsheetApp.getUi().alert('Backup copy could not be created. No planner data was changed.');
+    return null;
+  }
+}
+
+function recordPlannerResetAudit(details) {
+  details = details || {};
+  var props = maintenanceProps();
+  props.setProperty('lastPlannerResetAt', new Date().toISOString());
+  props.setProperty('lastPlannerResetRowsCleared', String(details.rowsCleared || 0));
+  props.setProperty('lastPlannerResetEntryPoint', String(details.entryPoint || ''));
+  props.setProperty('lastPlannerResetBackupName', details.backup && details.backup.name ? String(details.backup.name) : '');
+  props.setProperty('lastPlannerResetBackupUrl', details.backup && details.backup.url ? String(details.backup.url) : '');
+}
+
 function plannerDataRowCount() {
   var tabs = ['Sectors', 'Organisations', 'Jobs', 'People', 'Conversations', 'Interviews', 'Tasks', 'Decisions'];
   return tabs.reduce(function (count, name) {
@@ -8969,7 +8994,7 @@ function buildSetupHtml() {
     ' showStep(3);}' +
     'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
+    ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s) from Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions. Use the backup copy if you need to recover cleared data. Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
     ' var backupBeforeReset=resetConfirmed&&document.getElementById("backupBeforeReset")&&document.getElementById("backupBeforeReset").checked;' +
     ' status.textContent=resetConfirmed?(backupBeforeReset?"Creating backup copy, then clearing data...":"Clearing existing data and saving..."):"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
@@ -9397,10 +9422,11 @@ function completeSetupFromPopup(payload) {
   var validation = validateOnboardingPayload(goal, entryPoint, fields);
   if (!validation.ok) return validation;
   var shouldReset = goal !== 'skipped' && entryPoint !== 'skip';
-  if (shouldReset && plannerDataRowCount() > 0 && payload.resetConfirmed !== true) {
+  var rowsBeforeReset = shouldReset ? plannerDataRowCount() : 0;
+  if (shouldReset && rowsBeforeReset > 0 && payload.resetConfirmed !== true) {
     var resp = SpreadsheetApp.getUi().alert(
       'Clear existing planner data?',
-      'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Continue?',
+      'This clears all Sectors/Organisations/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Make a backup first if you may need to recover it. Continue?',
       SpreadsheetApp.getUi().ButtonSet.YES_NO);
     if (resp !== SpreadsheetApp.getUi().Button.YES) return failResult('Setup cancelled. Existing planner data was not changed.', '', 'SETUP_RESET_CANCELLED');
   }
@@ -9415,7 +9441,10 @@ function completeSetupFromPopup(payload) {
           return failResult('Backup copy could not be created, so existing data was not cleared. Try again, or untick the backup option if you already saved a copy.', '', 'SETUP_BACKUP_FAILED');
         }
       }
-      if (shouldReset) resetPlannerDataForOnboarding();
+      if (shouldReset) {
+        resetPlannerDataForOnboarding();
+        recordPlannerResetAudit({ rowsCleared: rowsBeforeReset, entryPoint: entryPoint, backup: backup });
+      }
 
       var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
       if (!result.ok) return result;
@@ -9435,7 +9464,7 @@ function completeSetupFromPopup(payload) {
       var todaySheet = getSheet('Today');
       if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
       var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
-      if (backup) suffix += ' Backup copy created: ' + backup.name + '.';
+      if (backup) suffix += ' Backup copy created: ' + backup.name + '. Use that copy if you need to recover cleared data.';
       result.message = (result.message || 'Onboarding saved.') + suffix;
       return result;
     } catch (err) {
@@ -12461,6 +12490,7 @@ function buildMenu() {
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')
       .addItem('Run weekly review now', 'weeklyReview')
+      .addItem('Save backup copy', 'savePlannerSnapshot')
       .addItem('Refresh derived data (safe)', 'refreshAllDerivedData')
       .addItem('Recalculate task priority', 'recalculateTaskPriorityFromMenu')
       .addItem('Show hidden columns', 'showAllColumns'))

@@ -395,3 +395,90 @@ Verification:
 
 Next required stage before broader code:
 Stage 2 data integrity, identity, and trust. Do not implement broader fixes until Stage 2 review outputs exist.
+
+## Stage 3 - Data Lifecycle And Safety
+
+Required output:
+
+| Action/function | Type | Destructive? | Data affected | Backup before action? | Confirmation? | Restore path? | Fix |
+|---|---|---:|---|---:|---:|---:|---|
+| `runSetupInterview` -> `completeSetupFromPopup` -> `resetPlannerDataForOnboarding` | Reset through redo setup | Yes | Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, Decisions bodies | Optional, default checked in popup | Yes, but current visible text was too generic | Manual recovery from backup copy only | Strengthen confirmation text, keep backup option, record reset audit |
+| `createPlannerBackupCopy` | Snapshot primitive | No | Copies whole spreadsheet | N/A | N/A | The copy is the recovery artifact | Add user-facing `savePlannerSnapshot` menu action |
+| `repairAllTabs` | Repair/migration | No intended data deletion; can rewrite generated structures/helpers | Headers, dropdowns, helper columns, Today/Home/Guide generated surfaces, repair flags | No | No | Not a restore path | Preserve as repair; Guide rewrite remains a Stage 14/Guide-last review item |
+| `fullRefresh` / `refreshAllDerivedData` | Refresh | No | Derived data, dropdowns, Home/Today helpers | No | No | N/A | Current menu says safe; no Stage 3 code change |
+| `dailyMaintenance` / `weeklyReview` | Scheduled maintenance | No intended data deletion | Derived helpers, due tasks, review summaries, Home/Today | No | No | N/A | Defer deeper cadence/observability to Stage 11 |
+| `migrateWorkbookSchema` and migration helpers | Migration | Potentially shape-changing, designed to preserve row data | Sectors, Organisations, Jobs, Conversations schema/data ranges | No | No | No automatic rollback | Defer migration-specific proof to Stage 15 unless a failing scenario appears |
+| Trigger uninstall actions | Automation setup change | No planner data deletion | Installable triggers only | No | Menu action only | Reinstall through Setup & automation | User-facing enough for now; no data lifecycle fix |
+
+Required classifications:
+
+| Action type | User meaning in current code |
+|---|---|
+| Refresh | Recompute derived surfaces and helpers; source rows should remain intact |
+| Repair | Fix workbook structure, headers, helper formulas, dropdowns, flags, and generated tabs; source rows should remain intact |
+| Snapshot | Save a full spreadsheet backup copy |
+| Reset | Clear planner data bodies before redo onboarding; requires explicit confirmation and should offer backup |
+| Restore | Not implemented; recovery is manual from a saved spreadsheet copy |
+| Migration | Change schema/layout safely while preserving existing row meaning |
+
+Stage 3 findings:
+
+## Issue: Redo-setup reset warning was not specific enough and had no reset audit
+
+Severity: P1
+
+Stage: 3
+Area: Data lifecycle and safety
+Tab/surface: Setup popup / Maintenance menu / document properties
+Column/function: `buildSetupHtml`, `completeSetupFromPopup`, `resetPlannerDataForOnboarding`, `createPlannerBackupCopy`, `buildMenu`
+
+Evidence:
+- Code evidence: `clearSheetBody` clears each data tab body across the full used width, so the wipe itself is broad enough. The popup offered a default-checked backup option, but the client-side confirmation only said it would clear an existing row count and did not name affected tabs or recovery path.
+- Code evidence: `completeSetupFromPopup` created a backup before reset when requested, but did not write a durable reset audit property.
+- Product evidence: Stage 3 requires destructive actions to list affected data, confirm explicitly, offer snapshot, leave an audit note, and provide a recovery instruction.
+
+Current behaviour:
+Redo setup can safely create a backup and clear the correct data tabs, but the user-facing warning is too compressed for a destructive action and the reset leaves no durable audit record.
+
+Expected behaviour:
+Redo setup names the affected tabs, reminds the user that the backup copy is the recovery path, and records reset metadata after a successful clear. Users can also save a backup copy from Maintenance without starting a reset.
+
+User impact:
+The user has a clearer last chance before data deletion and a visible safety path before experimenting with setup/repair.
+
+Workflow impact:
+Snapshot, reset, and refresh are more clearly separated. Restore remains intentionally manual from a full spreadsheet copy.
+
+Data/integrity impact:
+Medium-high. The previous flow protected data with a default backup, but weak warning/audit made recovery less trustworthy.
+
+Automation boundary:
+L1/L2. Make destructive setup clearer and auditable; do not implement automatic restore.
+
+Recommended fix:
+- Code change: Add user-facing `savePlannerSnapshot()`.
+- Code change: Add `recordPlannerResetAudit(details)` document-property audit.
+- Code change: Strengthen the setup confirmation copy to name all affected data tabs and recovery from backup.
+- Menu change: Add `Maintenance > Save backup copy`.
+- Guide update: Guide-last.
+
+Acceptance tests:
+1. Maintenance menu has a non-destructive `Save backup copy` action.
+2. Redo-setup confirmation names Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, and Decisions.
+3. Backup failure aborts before reset, preserving existing behaviour.
+4. Successful reset records `lastPlannerResetAt`, cleared row count, entry point, and backup name/url when present.
+5. No restore function is introduced.
+
+Do not do:
+- Do not implement automatic restore casually.
+- Do not change onboarding capture semantics.
+- Do not change the data model.
+
+Result:
+Implemented in current batch. `savePlannerSnapshot()` creates a full spreadsheet backup from Maintenance. Redo setup now shows a tab-specific destructive warning and records reset audit properties after a successful clear.
+
+Verification:
+- `git diff --check`
+- Apps Script syntax check with bundled Node
+- Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
+- HEADERS/COLS schema check clean
