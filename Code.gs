@@ -2968,6 +2968,27 @@ function isExecutableTodoStatus(status) {
   return ['Not started', 'In progress'].indexOf(String(status || '')) !== -1;
 }
 
+function todoCompletionRequiresPopup(todo) {
+  return !!todo && (
+    (todo.workflow === 'Submit application' && todo.objType === 'Job') ||
+    isApplicationResponseCheckTask(todo) ||
+    isReferralSearchContactTask(todo) ||
+    isInterviewPrepPlanningTask(todo) ||
+    isSourceLedScanTask(todo)
+  );
+}
+
+function runCompletionPopupForTodo(todo) {
+  if (!todoCompletionRequiresPopup(todo)) return false;
+  if (todo.workflow === 'Submit application' && todo.objType === 'Job') runSubmitApplicationPopup(todo.id);
+  else if (isApplicationResponseCheckTask(todo)) runApplicationResultPopup(todo.id);
+  else if (isReferralSearchContactTask(todo)) runReferralSearchResultPopup(todo.id);
+  else if (isInterviewPrepPlanningTask(todo)) runInterviewPrepPlanPopup(todo.objId, todo.id);
+  else if (isSourceLedScanTask(todo)) runSourceScanResultPopup(todo.id);
+  else return false;
+  return true;
+}
+
 function getTodoById(todoId) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !todoId) return null;
@@ -3049,6 +3070,7 @@ function completeTodoRow(sheet, row, status, options) {
 
   if (isTerminalTodoStatus(target)) {
     if (!sheet.getRange(row, COLS.TODO.COMPLETED).getValue()) sheet.getRange(row, COLS.TODO.COMPLETED).setValue(today());
+    clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-ready]');
     if (target === 'Done' && hasSubtasks(before.id) && !allChildTodosDone(before.id)) {
       sheet.getRange(row, COLS.TODO.STATUS).setValue('In progress');
       sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
@@ -3062,6 +3084,18 @@ function completeTodoRow(sheet, row, status, options) {
       syncTaskPlanningHelpers();
       if (allChildTodosTerminal(before.parentId)) {
         if (allChildTodosDone(before.parentId)) {
+          var rollupParent = getTodoById(before.parentId);
+          if (rollupParent && todoCompletionRequiresPopup(rollupParent)) {
+            rollupParent.sheet.getRange(rollupParent.row, COLS.TODO.STATUS).setValue('In progress');
+            rollupParent.sheet.getRange(rollupParent.row, COLS.TODO.COMPLETED).setValue('');
+            rollupParent.sheet.getRange(rollupParent.row, COLS.TODO.LAST_EDITED).setValue(today());
+            appendNoteFlag(rollupParent.sheet, rollupParent.row, COLS.TODO.NOTES, '[parent-ready] Child tasks are Done; complete this parent to record the source update.');
+            syncTodayRowForTodo(rollupParent.row, 'In progress');
+            runCompletionPopupForTodo(rollupParent);
+            requestHomeRefresh();
+            syncTodayRowForTodo(row, target);
+            return true;
+          }
           completeTodo(before.parentId, 'Done', { source: 'child-rollup' });
         } else {
           var parent = getTodoById(before.parentId);
@@ -7348,6 +7382,7 @@ function needsPlanningReasonForRow(row, ctx) {
 
   if (status !== 'Not started' && status !== 'In progress') return null;
   if (readyState === 'Needs planning') return { reason: 'Needs breakdown or a usable time estimate', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
+  if (notes.indexOf('[parent-ready]') !== -1) return { reason: 'Child tasks are done; source update still needs recording', suggestedAction: 'Complete the parent task to open the required popup' };
   if (notes.indexOf('[needs planning]') !== -1) return { reason: 'Flagged for planning', suggestedAction: 'Clarify the next action or break it down' };
   if (notes.indexOf('[needs breakdown]') !== -1) return { reason: 'Needs breakdown', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
   if (allChildTodosTerminalInContext(id, ctx) && !allChildTodosDoneInContext(id, ctx)) {
@@ -8030,8 +8065,8 @@ function taskQueueSummary() {
     if (cls === 'Fixed') fixedCount++;
     if (cls === 'Blocking') blocking++;
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
-    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open)\]/.test(notes)) needAttention++;
-    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1) needPlanning++;
+    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready)\]/.test(notes)) needAttention++;
+    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1) needPlanning++;
     if (notes.indexOf('[blocked]') !== -1) blockedCount++;
   });
   return open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
@@ -9961,7 +9996,7 @@ function applyStatusColorCoding() {
       .setBackground('#F7F7F5').setFontColor('#B0AEA4')
       .setRanges([fullRowRange]).build());
     ccRules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs planning|needs breakdown|parent-still-open|blocked)\\]"),NOT(' + terminalFormula + '))')
+      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs planning|needs breakdown|parent-still-open|parent-ready|blocked)\\]"),NOT(' + terminalFormula + '))')
       .setBackground('#FDE9D9')
       .setRanges([fullRowRange]).build());
 
