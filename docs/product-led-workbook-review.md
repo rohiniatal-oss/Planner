@@ -120,6 +120,7 @@ Category 0 issue queue:
 | Home completed-onboarding action says Reset | P1/P2 | A vague label beside a checkbox makes a destructive-adjacent path feel unsafe and unclear | 0 + 6 | Fixed: Home now says Redo setup and notes backup behavior |
 | Full workbook first-impression map missing from plan | P2 | Review could drift back into technical fixes without proving user comprehension | 0 | Fixed in this doc |
 | Home Needs attention action is too generic | P1/P2 | Blocked/parent task recovery could incorrectly point users to Repair all tabs | 0 + 4 | Fixed: Home now picks an action hint based on the attention types |
+| Maintenance menu says Full refresh | P1/P2 | Users cannot tell whether refresh is safe or reset-like | 0 + 6 | Fixed: menu says Refresh derived data (safe), and success toast says source rows were not cleared |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -136,6 +137,7 @@ Implemented after this review began:
 - End-of-day reconcile now uses one batch wrap-up popup for unfinished Today work instead of one blocking alert per task.
 - Home's completed-onboarding action now says "Redo setup" instead of "Reset" and explains the backup-before-clear behavior in a note.
 - Home Needs attention now gives a contextual action hint: Today/Tasks for blocked or parent-task recovery, Maintenance for repair/health items.
+- Maintenance now exposes the non-destructive refresh as "Refresh derived data (safe)" and confirms that source rows were not cleared.
 
 ## Pass 1 - User Journey Review
 
@@ -286,7 +288,7 @@ No destructive action may run without a clear warning, explicit confirmation, sn
 | `populateToday` | Refresh derived surface | No | Today plan rows | n/a | No | n/a | Low | Keep non-destructive |
 | `dailyMaintenance` | Repair/refresh derived data | No | helpers, flags, due tasks, Home/Today | n/a | No | n/a | Medium if stale | Keep; status surfaced |
 | `repairAllTabs` | Repair/schema refresh | Mostly no | headers, formulas, dropdowns, helpers, Today/Home/Guide | n/a | Menu action | n/a | Medium if misunderstood | Clarify as repair, not reset |
-| `fullRefresh` | Refresh/repair wrapper | No | derived surfaces and formatting | n/a | Menu action | n/a | Medium naming confusion | Consider rename to Refresh derived data |
+| `refreshAllDerivedData` / `fullRefresh` | Refresh/repair wrapper | No | derived surfaces and formatting | n/a | Menu action | n/a | Low | Menu now says Refresh derived data (safe); `fullRefresh` retained as compatibility wrapper |
 | `completeSetupFromPopup` / redo onboarding | Destructive reset + capture | Yes | Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, Decisions | Yes, checked backup copy option | Yes | Manual via backup copy | High | Partial done; Category 6 needs productised snapshot/status |
 | Dedicated snapshot function | Snapshot | No | whole workbook copy | n/a | Menu action | Backup is output | Low | Add `savePlannerSnapshot` |
 | Dedicated reset all planner data | Destructive reset | Yes | user data tabs and Today rows | Should require/recommend snapshot | Two-step | Manual via snapshot | High | Add only through shared safety layer |

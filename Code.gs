@@ -12261,7 +12261,12 @@ function dailyMaintenance() {
 function fullRefresh() {
   var result = withDocumentLock(fullRefreshImpl, { label: 'fullRefresh', timeoutMs: 30000, failOpen: false });
   if (result === null) SpreadsheetApp.getActiveSpreadsheet().toast('Refresh skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+  else SpreadsheetApp.getActiveSpreadsheet().toast('Derived data refreshed. Source rows were not cleared.', 'The Planner', 5);
   return result;
+}
+
+function refreshAllDerivedData() {
+  return fullRefresh();
 }
 
 function fullRefreshImpl() {
@@ -12361,7 +12366,7 @@ function buildMenu() {
       .addItem('Migrate legacy tab names', 'migrateLegacyTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')
       .addItem('Run weekly review now', 'weeklyReview')
-      .addItem('Full refresh', 'fullRefresh')
+      .addItem('Refresh derived data (safe)', 'refreshAllDerivedData')
       .addItem('Recalculate commitment classes', 'recalculateCommitmentClasses')
       .addItem('Show all columns', 'showAllColumns'))
     .addToUi();
