@@ -1697,8 +1697,12 @@ function ensureDecisionsTab() {
   return sheet;
 }
 
+function getDecisionsSheet() {
+  return getSheet('Decisions');
+}
+
 function findDecisionByKey(key) {
-  var sheet = ensureDecisionsTab();
+  var sheet = getDecisionsSheet();
   if (!sheet || sheet.getLastRow() < 2 || !key) return null;
   var keys = sheet.getRange(2, COLS.DECISIONS.KEY, sheet.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < keys.length; i++) {
@@ -1708,7 +1712,7 @@ function findDecisionByKey(key) {
 }
 
 function findPendingDecisionByKey(key) {
-  var sheet = ensureDecisionsTab();
+  var sheet = getDecisionsSheet();
   if (!sheet || sheet.getLastRow() < 2 || !key) return null;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
   for (var i = 0; i < data.length; i++) {
@@ -1721,7 +1725,7 @@ function findPendingDecisionByKey(key) {
 }
 
 function pendingDecisionExistsForTargetWorkflow(targetType, targetId, workflow) {
-  var sheet = ensureDecisionsTab();
+  var sheet = getDecisionsSheet();
   if (!sheet || sheet.getLastRow() < 2 || !targetId) return false;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['Pending decisions'].length).getValues();
   for (var i = 0; i < data.length; i++) {
@@ -1734,7 +1738,7 @@ function pendingDecisionExistsForTargetWorkflow(targetType, targetId, workflow) 
 }
 
 function getDecisionRowById(decisionId) {
-  var sheet = ensureDecisionsTab();
+  var sheet = getDecisionsSheet();
   if (!sheet || sheet.getLastRow() < 2 || !decisionId) return null;
   var ids = sheet.getRange(2, COLS.DECISIONS.ID, sheet.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) {
@@ -6666,6 +6670,36 @@ function composeTodayNotes(tags, userNote) {
   return out.trim();
 }
 
+function appendTodayTag(tags, tag) {
+  tag = String(tag || '').trim();
+  if (!tag) return String(tags || '').trim();
+  var out = String(tags || '').trim();
+  var lower = out.toLowerCase();
+  if (lower.indexOf(tag.toLowerCase()) !== -1) return out;
+  return (out ? out + ' ' : '') + tag;
+}
+
+function todayVisibleReasonTag(reason, treatment, status) {
+  var r = String(reason || '').toLowerCase();
+  if (String(status || '') === 'Blocked') return '[Blocked]';
+  if (treatment === 'Option') return '[Option]';
+  if (r.indexOf('locked') !== -1) return '[Locked]';
+  if (r.indexOf('pulled') !== -1) return '[Pulled]';
+  if (r.indexOf('fixed') !== -1) return '[Fixed]';
+  if (r.indexOf('blocking') !== -1) return '[Blocking]';
+  if (r.indexOf('keep-alive') !== -1 || r.indexOf('due') !== -1 || r.indexOf('overdue') !== -1) return '[Due]';
+  if (r.indexOf('matches') !== -1 || r.indexOf('focus') !== -1) return r.indexOf('outside') !== -1 ? '[Outside focus]' : '[Focus]';
+  if (r.indexOf('pipeline') !== -1) return '[Pipeline]';
+  if (r.indexOf('spare') !== -1 || r.indexOf('backlog') !== -1 || r.indexOf('capacity available') !== -1) return '[Spare]';
+  return '';
+}
+
+function addTodayRowTag(sheet, row, tag) {
+  var cell = sheet.getRange(row, COLS.TODAY.NOTES);
+  var split = splitTodayNotes(String(cell.getValue() || ''));
+  cell.setValue(composeTodayNotes(appendTodayTag(split.tags, tag), split.userNote));
+}
+
 function collectPreviousTodayState(sheet) {
   var state = { sameDay: false, ordered: [], byTodoId: {} };
   var builtDate = getTodayPlanBuiltDate();
@@ -6878,6 +6912,8 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   var capacity = Math.max(0, availableMinutes - bufferMin);
   var minutesUsed = 0;
   var requiredMin = 0;
+  var minimumMin = 0;
+  var minimumCount = 0;
 
   function preserved(todoId) {
     var rs = previousState.byTodoId[todoId];
@@ -6891,6 +6927,10 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     commit.push({ todoId: item.todoId, task: item.task, estMin: item.estMin, effort: item.effort, reason: reason, tags: p.tags, userNote: p.userNote });
     minutesUsed += item.estMin || 0;
     if (item.cls === 'Fixed' || item.cls === 'Blocking') requiredMin += item.estMin || 0;
+    if (item.cls === 'Fixed' || item.cls === 'Blocking' || /^Keep-alive due/i.test(String(reason || ''))) {
+      minimumCount++;
+      minimumMin += item.estMin || 0;
+    }
   }
 
   // Stage 1 — manually pulled-in tasks (locked or explicitly pulled)
@@ -7013,7 +7053,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
   // Stage 10 — everything not in commit or options simply isn't written
   // to Today. It's still fully visible and workable from Tasks.
 
-  return { commit: commit, options: options, minutesUsed: minutesUsed, requiredMin: requiredMin, bufferMin: bufferMin };
+  return { commit: commit, options: options, minutesUsed: minutesUsed, requiredMin: requiredMin, minimumCount: minimumCount, minimumMin: minimumMin, bufferMin: bufferMin };
 }
 
 function populateToday() {
@@ -7026,16 +7066,19 @@ function populateToday() {
 function todayCapacityHeadline(selection, availableMinutes) {
   var planned = selection.minutesUsed || 0;
   var required = selection.requiredMin || 0;
+  var minimumMin = selection.minimumMin || 0;
+  var minimumCount = selection.minimumCount || 0;
   var taskText = selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's');
+  var minimumText = 'Minimum day: ' + minimumCount + ' task' + (minimumCount === 1 ? '' : 's') + ', ' + minimumMin + ' min.';
   if (!selection.commit.length) {
     return selection.options.length
       ? 'Today is ready - nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
       : 'Today is ready - nothing committed yet.';
   }
-  if (required > availableMinutes) return 'Deadline/blocking work exceeds capacity - ' + planned + ' min planned against ' + availableMinutes + ' available';
-  if (planned > availableMinutes) return 'Today is over capacity - ' + planned + ' min planned against ' + availableMinutes + ' available';
-  if (planned > Math.round(availableMinutes * 0.85)) return 'Today is tight - ' + taskText + ' - ' + planned + ' of ' + availableMinutes + ' min planned';
-  return 'Today is realistic - ' + taskText + ' - ' + planned + ' of ' + availableMinutes + ' min planned';
+  if (required > availableMinutes) return 'Deadline/blocking work exceeds capacity - ' + required + ' min required, ' + availableMinutes + ' available. ' + minimumText;
+  if (planned > availableMinutes) return 'Today is over capacity - ' + planned + ' min planned against ' + availableMinutes + ' available; over by ' + (planned - availableMinutes) + ' min. ' + minimumText;
+  if (planned > Math.round(availableMinutes * 0.85)) return 'Today is tight - ' + taskText + ' - recommended ' + planned + ' of ' + availableMinutes + ' min. ' + minimumText;
+  return 'Today is realistic - ' + taskText + ' - recommended ' + planned + ' of ' + availableMinutes + ' min. ' + minimumText;
 }
 
 function populateTodayImpl() {
@@ -7079,7 +7122,10 @@ function populateTodayImpl() {
       : 'Today’s plan is ready — nothing committed yet.');
   clearTodayPlanHeadlineValidation(sheet);
   headline = todayCapacityHeadline(selection, availableMinutes);
-  sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()));
+  sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()) +
+    '\nMinimum day: ' + (selection.minimumCount || 0) + ' task(s), ' + (selection.minimumMin || 0) + ' min' +
+    '\nRecommended day: ' + selection.commit.length + ' task(s), ' + selection.minutesUsed + ' min' +
+    '\nBuffer kept: ' + (selection.bufferMin || 0) + ' min');
 
   renderTodayDecisionCards();
   renderNeedsPlanning(sheet);
@@ -7191,7 +7237,8 @@ function writeTodayRow(sheet, row, slot, item, treatment) {
   var status = item.preserveStatus || (treatment === 'Commit' ? 'Planned' : 'Deferred');
   sheet.getRange(row, COLS.TODAY.STATUS).setValue(status);
   if (item.preserveActual) sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).setValue(item.preserveActual);
-  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(item.tags, item.userNote))
+  var visibleTags = appendTodayTag(item.tags, todayVisibleReasonTag(item.reason, treatment, status));
+  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(visibleTags, item.userNote))
     .setNote('Why: ' + (item.reason || 'selected for today'));
 }
 
@@ -7570,11 +7617,23 @@ function topUpToday() {
   }, { label: 'topUpToday' });
 }
 
+function markTodoBlockedFromToday(todoId, reason) {
+  var todo = getTodoById(String(todoId || ''));
+  if (!todo) return false;
+  todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Blocked');
+  todo.sheet.getRange(todo.row, COLS.TODO.BLOCKER).setValue(reason || 'Blocked - add reason');
+  todo.sheet.getRange(todo.row, COLS.TODO.COMPLETED).setValue('');
+  todo.sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+  appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[blocked] ' + (reason || 'Blocked'));
+  syncTaskPlanningHelpers();
+  return true;
+}
+
 function endOfDayReconcile() {
   var sheet = getSheet('Today');
   if (!sheet) { SpreadsheetApp.getUi().alert('Today tab not found.'); return; }
   var ui = SpreadsheetApp.getUi();
-  var doneCount = 0, carried = 0, deferred = 0, skipped = 0;
+  var doneCount = 0, carried = 0, deferred = 0, skipped = 0, blocked = 0;
   var unfinished = [];
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
@@ -7594,7 +7653,8 @@ function endOfDayReconcile() {
     ui.ButtonSet.YES_NO_CANCEL);
   if (summary === ui.Button.YES) {
     carried = unfinished.length;
-    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: 0 | Skipped: 0', ui.ButtonSet.OK);
+    unfinished.forEach(function (item) { addTodayRowTag(sheet, item.row, '[Carried]'); });
+    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: 0 | Blocked: 0 | Skipped: 0', ui.ButtonSet.OK);
     return;
   }
   if (summary === ui.Button.NO) {
@@ -7603,23 +7663,45 @@ function endOfDayReconcile() {
       if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
       sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
     });
-    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: 0 | Deferred: ' + deferred + ' | Skipped: 0', ui.ButtonSet.OK);
+    ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: 0 | Deferred: ' + deferred + ' | Blocked: 0 | Skipped: 0', ui.ButtonSet.OK);
     return;
   }
   unfinished.forEach(function (item) {
-    var resp = ui.alert('End-of-day: unfinished', '"' + item.task + '"\n\nYES = carry over  NO = defer 3 days  CANCEL = skip', ui.ButtonSet.YES_NO_CANCEL);
-    if (resp === ui.Button.YES) { carried++; }
+    var resp = ui.alert('End-of-day: unfinished', '"' + item.task + '"\n\nYES = carry over  NO = defer 3 days  CANCEL = more options', ui.ButtonSet.YES_NO_CANCEL);
+    if (resp === ui.Button.YES) {
+      carried++;
+      addTodayRowTag(sheet, item.row, '[Carried]');
+    }
     else if (resp === ui.Button.NO) {
       deferred++;
       if (item.todoId) deferTodoById(String(item.todoId), 3, 'eod');
       sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Deferred');
     } else {
-      skipped++;
-      if (item.todoId) completeTodo(String(item.todoId), 'Skipped', { source: 'eod' });
-      sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Skipped');
+      var more = ui.alert('End-of-day: more options', '"' + item.task + '"\n\nYES = mark blocked  NO = skip  CANCEL = carry over', ui.ButtonSet.YES_NO_CANCEL);
+      if (more === ui.Button.YES) {
+        var reasonResp = ui.prompt('What is blocking this?', 'Add the blocker reason:', ui.ButtonSet.OK_CANCEL);
+        if (reasonResp.getSelectedButton() === ui.Button.OK && reasonResp.getResponseText().trim()) {
+          blocked++;
+          if (item.todoId) markTodoBlockedFromToday(String(item.todoId), reasonResp.getResponseText().trim());
+          sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Blocked');
+          addTodayRowTag(sheet, item.row, '[Blocked]');
+        } else {
+          carried++;
+          addTodayRowTag(sheet, item.row, '[Carried]');
+        }
+      } else if (more === ui.Button.NO) {
+        skipped++;
+        if (item.todoId) completeTodo(String(item.todoId), 'Skipped', { source: 'eod' });
+        sheet.getRange(item.row, COLS.TODAY.STATUS).setValue('Skipped');
+      } else {
+        carried++;
+        addTodayRowTag(sheet, item.row, '[Carried]');
+      }
     }
   });
-  ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: ' + deferred + ' | Skipped: ' + skipped, ui.ButtonSet.OK);
+  populateToday();
+  refreshHome();
+  ui.alert('End-of-day reconcile complete', 'Done: ' + doneCount + ' | Carried: ' + carried + ' | Deferred: ' + deferred + ' | Blocked: ' + blocked + ' | Skipped: ' + skipped, ui.ButtonSet.OK);
 }
 
 function checkMorningCarryForward() {
@@ -7628,14 +7710,20 @@ function checkMorningCarryForward() {
   var builtDate = getTodayPlanBuiltDate();
   if (!builtDate) return;
   if (builtDate.getTime() === today().getTime()) return;
-  var unfinished = 0;
+  var ready = 0, blocked = 0, needsPlanning = 0;
+  var currentStateById = buildCurrentTaskStateForToday();
   for (var r = TODAY_TABLE_FIRST_ROW; r <= TODAY_TABLE_LAST_ROW; r++) {
     var task = sheet.getRange(r, COLS.TODAY.TASK).getValue();
     var status = String(sheet.getRange(r, COLS.TODAY.STATUS).getValue());
-    if (task && (status === 'Planned' || status === 'In progress')) unfinished++;
+    var todoId = String(sheet.getRange(r, COLS.TODAY.TODO_ID).getValue() || '');
+    if (!task || ['Planned', 'In progress', 'Blocked'].indexOf(status) === -1) continue;
+    var current = currentStateById[todoId];
+    if (status === 'Blocked' || (current && current.status === 'Blocked')) blocked++;
+    else if (current && current.readyState !== 'Ready' && current.status !== 'In progress') needsPlanning++;
+    else ready++;
   }
-  if (unfinished > 0) {
-    SpreadsheetApp.getActiveSpreadsheet().toast(unfinished + ' unfinished item(s) from last session will be re-ranked into today automatically.', 'The Planner', 6);
+  if (ready + blocked + needsPlanning > 0) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Yesterday unfinished: ' + ready + ' still ready, ' + blocked + ' blocked, ' + needsPlanning + ' need planning. Refresh Today to re-rank.', 'The Planner', 8);
   }
 }
 
@@ -9364,7 +9452,7 @@ var HEADER_GUIDANCE = {
   },
   "Today's plan": {
     'Slot': 'Commit or option', 'Task': 'selected from Tasks', 'Linked Task ID': 'system', 'Estimated min': 'planned time', 'Plan': 'Commit or Option',
-    'Effort': 'light/medium/deep', 'Status': 'tick Done here', 'Actual min': 'optional', 'Why / notes': 'which stage of the priority waterfall selected this — anything you add after it is kept on refresh'
+    'Effort': 'light/medium/deep', 'Status': 'Planned / In progress / Blocked / Done / Deferred / Skipped', 'Actual min': 'optional', 'Why / notes': 'visible reason tags plus your notes; hover for the full Why'
   },
   'Pending decisions': {
     'Decision ID': 'system', 'Created': 'system', 'Decision key': 'system', 'Trigger': 'what happened', 'Suggested action': 'what could happen next',
@@ -9405,6 +9493,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
     if (name === 'Decision action type') return 'What Yes will do';
     if (name === 'Review by') return 'When to review this decision';
+    if (name === 'Result') return 'What happened after deciding';
   }
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
@@ -10887,8 +10976,8 @@ function rewriteGuide() {
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
-  r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Done, Deferred, Skipped, or Pull in an option directly from Today.');
-  r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, or skip unfinished work.');
+  r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
+  r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
   r++;
 
   r = writeH2(sheet, r, 'How adding things works');
@@ -10910,9 +10999,9 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'How Today decides');
   r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, pipeline-building work, then anything else that fits.');
-  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days and says when the plan is realistic, tight, or over capacity. Near-misses appear as Options.');
+  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days and says when the plan is realistic, tight, or over capacity. The headline separates the Minimum day from the recommended plan. Near-misses appear as Options.');
   r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
-  r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
+  r = writeKV(sheet, r, 'Why a task appears', 'Today shows compact tags like [Fixed], [Focus], [Pipeline], [Spare], or [Pulled]. Hover the notes cell for the full reason.');
   r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you make them multi-step from Tasks > Row actions > Make selected Task multi-step.');
   r = writeKV(sheet, r, 'Source-led scans', 'Opportunity scan and People source scan are flexible pipeline-building tasks. When completed, they ask what you found; people found this way are saved as Identified, not automatic outreach.');
   r++;
@@ -10932,6 +11021,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
   r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for multi-step planning, blocking, unblocking, and deferring. Today has row actions for pulling, locking, moving, and topping up the day.');
   r = writeKV(sheet, r, 'Colour cues', 'Colours help scanning, but the actual status text is always the source of truth.');
+  r = writeKV(sheet, r, 'Tasks and Decisions columns', 'Tasks owns executable work and readiness. Decisions owns judgment, Review by, Action type, Linked to, and Result. Home shows the front of that queue.');
   r++;
 
   r = writeH2(sheet, r, 'If something breaks');
