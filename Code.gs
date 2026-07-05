@@ -2852,7 +2852,19 @@ function buildTaskPlanningContext(data) {
     if (!childrenByParent[parentId]) childrenByParent[parentId] = [];
     childrenByParent[parentId].push({ row: j + 2, data: data[j], index: j });
   }
-  return { byId: byId, childrenByParent: childrenByParent };
+  return { byId: byId, childrenByParent: childrenByParent, sourceTerminalByKey: {} };
+}
+
+function taskLinkedSourceIsTerminal(row, ctx) {
+  var objType = String(row[COLS.TODO.OBJ_TYPE - 1] || '');
+  var objId = String(row[COLS.TODO.OBJ_ID - 1] || '');
+  if (!objType || objType === 'None' || !objId) return false;
+  ctx = ctx || { sourceTerminalByKey: {} };
+  if (!ctx.sourceTerminalByKey) ctx.sourceTerminalByKey = {};
+  var key = objType + '|' + objId;
+  if (ctx.sourceTerminalByKey.hasOwnProperty(key)) return ctx.sourceTerminalByKey[key];
+  ctx.sourceTerminalByKey[key] = isSourceObjectTerminal(objType, objId);
+  return ctx.sourceTerminalByKey[key];
 }
 
 function deriveReadyForTodayFromRow(row, ctx) {
@@ -2863,6 +2875,7 @@ function deriveReadyForTodayFromRow(row, ctx) {
   if (isTerminalTodoStatus(status)) return 'Done';
   if (status === 'Blocked') return 'Blocked';
   if (taskHasBrokenSourceNotes(row[COLS.TODO.NOTES - 1])) return 'Needs planning';
+  if (taskLinkedSourceIsTerminal(row, ctx)) return 'Needs planning';
   if (ctx.childrenByParent[id] && ctx.childrenByParent[id].length) return 'Parent';
   if (String(row[COLS.TODO.TIME_EST - 1] || '') === 'Multi-day') return 'Needs planning';
   if (parseTimeEst(String(row[COLS.TODO.TIME_EST - 1] || '30 min')) === null) return 'Needs planning';
@@ -3516,6 +3529,14 @@ function isSourceObjectTerminal(objType, objId) {
   if (objType === 'Person') {
     var p = getPersonRowById(objId);
     return p && (String(p.stage) === 'Closed' || String(p.notes || '').indexOf('[closed]') !== -1);
+  }
+  if (objType === 'Interview round') {
+    var r = getRoundById(objId);
+    return r && String(r.status) === 'Cancelled';
+  }
+  if (objType === 'Sector') {
+    var s = getSectorBranchById(objId);
+    return s && String(s.status) === 'Retired';
   }
   return false;
 }
@@ -7582,6 +7603,7 @@ function needsPlanningReasonForRow(row, ctx) {
 
   if (status !== 'Not started' && status !== 'In progress') return null;
   if (taskHasBrokenSourceNotes(notes)) return { reason: 'Broken or missing source link', suggestedAction: 'Repair the linked source row before doing this task' };
+  if (taskLinkedSourceIsTerminal(row, ctx)) return { reason: 'Linked source is closed, parked, or retired', suggestedAction: 'Cancel this task, reopen the source, or relink it to live work' };
   if (readyState === 'Needs planning') return { reason: 'Needs breakdown or a usable time estimate', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
   if (notes.indexOf('[parent-ready]') !== -1) return { reason: 'Child tasks are done; source update still needs recording', suggestedAction: 'Complete the parent task to open the required popup' };
   if (notes.indexOf('[needs planning]') !== -1) return { reason: 'Flagged for planning', suggestedAction: 'Clarify the next action or break it down' };
@@ -8261,6 +8283,7 @@ function taskQueueSummary() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return '0 open';
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.COMMITMENT_CLASS).getValues();
+  var ctx = buildTaskPlanningContext(data);
   var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needPlanning = 0, blockedCount = 0, brokenLinks = 0;
   data.forEach(function (row) {
     var status = String(row[COLS.TODO.STATUS - 1]);
@@ -8271,7 +8294,7 @@ function taskQueueSummary() {
     if (cls === 'Blocking') blocking++;
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
     if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready|orphaned-link|orphaned-sector|orphaned-org)\]/.test(notes)) needAttention++;
-    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1 || taskHasBrokenSourceNotes(notes)) needPlanning++;
+    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1 || taskHasBrokenSourceNotes(notes) || taskLinkedSourceIsTerminal(row, ctx)) needPlanning++;
     if (status === 'Blocked') blockedCount++;
     if (taskHasBrokenSourceNotes(notes)) brokenLinks++;
   });
