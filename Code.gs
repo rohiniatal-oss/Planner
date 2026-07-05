@@ -11020,6 +11020,7 @@ function completeBreakdownFromPopupImpl(parentTodoId, payload) {
   var subtasks = (payload && payload.children) ? payload.children : (payload || []);
   var category = (payload && payload.category) || parent.task;
   var pattern = (payload && payload.pattern) || 'Step-based';
+  var childDueDate = parent.dueDate || '';
   if (DROPDOWNS.TODO_PLAN_PATTERN.indexOf(pattern) === -1) pattern = 'Step-based';
   parent.sheet.getRange(parent.row, COLS.TODO.PLAN_CATEGORY).setValue(category);
   parent.sheet.getRange(parent.row, COLS.TODO.PLAN_PATTERN).setValue(pattern);
@@ -11028,7 +11029,7 @@ function completeBreakdownFromPopupImpl(parentTodoId, payload) {
     if (!st.text) return;
     var id = appendTodoWithSource(
       st.text, parent.objType, parent.objId, parent.org, parent.workflow,
-      'Not started', '', st.timeEst || defaultTimeForWorkflow(parent.workflow),
+      'Not started', childDueDate, st.timeEst || defaultTimeForWorkflow(parent.workflow),
       '', 'Manually added', { skipDuplicateCheck: true }
     );
     if (id) {
