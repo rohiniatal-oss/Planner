@@ -12426,8 +12426,8 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here (once)');
   r = writeKV(sheet, r, '1. Turn it on', 'Run The Planner > Planner setup > Turn on Planner actions. This makes dropdowns, popups, checkboxes, and daily refreshes respond.');
-  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Set up / add starting facts. Pick the closest starting point: interviews, applications, jobs, people, organisations, sectors, or not sure.');
-  r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions.');
+  r = writeKV(sheet, r, '2. Add your starting facts', 'Use The Planner > Set up / add starting facts. This adds or updates starting facts without clearing existing planner data.');
+  r = writeKV(sheet, r, '3. Let the planner build the work', 'Saving setup writes the right rows and creates the next follow-up tasks or decisions. If you really need to clear planner data, use Maintenance > Start fresh.');
   r = writeKV(sheet, r, '4. Work from Home and Today', 'Home is for capture and judgment. Today is for doing. The data tabs are there when you need to inspect or repair details.');
   r++;
 
@@ -12435,8 +12435,9 @@ function rewriteGuide() {
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any decisions to make. Confirm creates the suggested task, opens the relevant popup, or routes the update shown on the card. Not now dismisses it; Skip leaves it pending and moves on for now.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add or update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed.");
-  r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
-  r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
+  r = writeKV(sheet, r, '4. Check the month shape', 'Home shows this month\'s conversations, applications, and interviews so you can see whether the search is balanced without opening source tabs.');
+  r = writeKV(sheet, r, '5. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
+  r = writeKV(sheet, r, '6. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
   r++;
 
   r = writeH2(sheet, r, 'How adding things works');
@@ -12448,7 +12449,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'What each tab is for');
-  r = writeKV(sheet, r, 'Home', 'Start here. Add updates, resolve decisions, see what needs attention.');
+  r = writeKV(sheet, r, 'Home', 'Start here. Add updates, resolve decisions, see what needs attention, and scan this month\'s conversations, applications, and interviews.');
   r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
   r = writeKV(sheet, r, 'Decisions', 'Judgment queue and audit trail. What Confirm does shows the routed action; Review by controls urgency.');
   r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
@@ -12479,6 +12480,8 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use The Planner > Maintenance > Show hidden columns when you need to inspect them.');
   r = writeKV(sheet, r, 'Sectors', 'A parent Sector row names the broad area. A Sub-sector row belongs to that Sector ID. Editing Sector on a parent row renames it; editing Sector on a Sub-sector row moves that child under another sector.');
   r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
+  r = writeKV(sheet, r, 'Backups', 'Use The Planner > Maintenance > Save backup copy to create a timestamped copy of the full spreadsheet in Google Drive.');
+  r = writeKV(sheet, r, 'Start fresh', 'Use The Planner > Maintenance > Start fresh only when you want to clear planner data. It creates a backup copy first, then clears planner rows and rebuilds the tabs.');
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
   r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for multi-step planning, blocking, unblocking, and deferring. Today has row actions for pulling, locking, moving, and topping up the day.');
   r = writeKV(sheet, r, 'Colour cues', 'Colours help scanning, but the actual status text is always the source of truth.');
@@ -12490,6 +12493,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Planner setup > Turn on Planner actions (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
+  r = writeKV(sheet, r, 'Coming back after time away', 'Start on Home, add what changed, then build Today. If warnings remain, run Maintenance > Repair all tabs.');
   r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
   r = writeKV(sheet, r, 'Broken source link', 'Tasks with [no-link], [orphaned-link], [orphaned-sector], or [orphaned-org] stay out of Today until the linked source row is repaired.');
   r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');

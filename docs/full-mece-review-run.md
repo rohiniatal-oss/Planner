@@ -1396,7 +1396,7 @@ Required implementation backlog:
 
 | Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests |
 |---|---|---|---|---|---|---|
-| Guide is stale after workflow/copy changes | P2 | 14/16 | New users may learn old routines or miss current recovery paths. | Stages 1-13 plus Stage 15 reliability pass complete. | Final Guide-last batch | Guide includes setup, daily routine, capture, tab roles, Today planning, Decisions, recovery, and status labels matching current code. |
+| Guide is stale after workflow/copy changes | P2 | 14/16 | New users may learn old routines or miss current recovery paths. | Stages 1-13 plus Stage 15 reliability pass complete. | Completed in Guide-last batch | Guide includes setup, daily routine, capture, tab roles, Today planning, Decisions, recovery, and status labels matching current code. |
 | Live sheet visual proof still needs manual Apps Script deploy/run | P2 | 13/16 | Repo code can be correct while bound sheet still shows old surfaces. | User copies Code.gs into Apps Script and runs Repair all tabs. | Manual verification after push | Home/Today/Conversations/Interviews render with current labels/status colours. |
 | Repeat onboarding defaulted too close to destructive reset | P1/P2 | 3/12/16 | User repeating onboarding could reasonably expect to add/update starting facts, not clear the workbook. | Current setup popup and server reset mode. | Live UX safety patch | Existing-data setup shows Add/update vs Start fresh. Only Start fresh clears planner data; backup copy is explained as a separate timestamped Google Sheets file in Drive. |
 | Setup backup/save feedback was too quiet during long backup copy | P2 | 3/12/16 | User can think setup is hung and may click Save again while the spreadsheet backup is still being copied. | Current setup popup backup-before-reset flow. | Live UX safety patch | Backup option says it may take a minute or two; Save disables while running; failure/validation re-enables Save. |
@@ -1454,7 +1454,7 @@ Acceptance test library status:
 | Rejected job cleanup | Jobs result Rejected closes application work. |
 | Closed person cleanup | Close person row action cancels open follow-up work. |
 | Reset/snapshot safety | Backup-before-reset, full body clear, and reset audit documented. |
-| Guide documentation | To be completed in final Guide-last batch. |
+| Guide documentation | Completed in final Guide-last batch; live render check remains after Apps Script deploy and Repair all tabs. |
 | Performance sanity | Stage 15 completed; `syncOrgReviewSchedules` batched. |
 
 Stage 16 decision:
@@ -1541,3 +1541,21 @@ Immediate Stage 17 implementation:
 
 Stage 17 decision:
 This stage is now the product-taste gate before Guide-last. It should not stop at correctness. Bigger structural ideas stay as redesign candidates unless the current code has a low-risk product-model fix, like setup/reset separation.
+
+## Stage 14 - Guide-last Implementation
+
+Guide-last scope:
+- `rewriteGuide()` only.
+- No schema, dropdown, cascade, Today-selection, Home-layout, migration, or repair behavior changes.
+- The Guide now matches the settled product model: setup is additive, destructive start-fresh lives under Maintenance, backup copies are explicit Google Drive spreadsheet copies, Home is the daily cockpit, Today is the execution surface, Decisions are fronted by Home actions, and source tabs are records/repair surfaces.
+
+Guide updates made:
+- Clarified that `Set up / add starting facts` adds or updates facts and does not clear planner data.
+- Clarified that `Maintenance > Start fresh` is the destructive data-clear path and creates a backup first.
+- Added Home's compact monthly pipeline snapshot to the daily routine and Home tab description.
+- Added backup/start-fresh recovery guidance.
+- Added a simple "coming back after time away" path: start on Home, add what changed, build Today, then Repair all tabs only if warnings remain.
+
+Stage 14 remaining verification:
+- After copying the pushed `Code.gs` into Apps Script, run `The Planner > Maintenance > Repair all tabs`.
+- Confirm the Guide renders with current setup/start-fresh, Home monthly snapshot, decision action, Today, and recovery language.
