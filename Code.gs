@@ -214,7 +214,7 @@ var HEADERS = {
     'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested action',
     'Target type', 'Target ID', 'Suggested workflow', 'Notes',
     'Decision', 'Decided at', 'Resulting To-do ID',
-    'Decision action type', 'Decision due date', 'Linked to', 'Result'
+    'Decision action type', 'Review by', 'Linked to', 'Result'
   ],
   "Today's plan": [
     'Slot', 'Task', 'Linked Task ID', 'Estimated min',
@@ -9370,8 +9370,8 @@ var HEADER_GUIDANCE = {
     'Decision ID': 'system', 'Created': 'system', 'Decision key': 'system', 'Trigger': 'what happened', 'Suggested action': 'what could happen next',
     'Target type': 'linked object type', 'Target ID': 'system', 'Suggested workflow': 'cascade type', 'Notes': 'context',
     'Decision': 'Pending / Yes / No / Auto-dismissed', 'Decided at': 'system', 'Resulting To-do ID': 'system',
-    'Decision action type': 'Create task / Open popup / Update source / Capture data / Dismiss only',
-    'Decision due date': 'used to sort urgent decisions first', 'Linked to': 'jumps to the source row', 'Result': 'what happened after deciding'
+    'Decision action type': 'What Yes will do: create task, open popup, capture data, update source, or dismiss',
+    'Review by': 'when this decision should be reviewed; sorts urgent decisions first', 'Linked to': 'jumps to the source row', 'Result': 'what happened after deciding'
   }
 };
 
@@ -9395,6 +9395,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Task') return 'Prefer Home/Today for daily work; edit here for repair';
     if (name === 'Status') return 'Set Done/Skipped/Cancelled here only when repairing';
     if (name === 'Due date') return 'Planner may set this; edit if the date is wrong';
+    if (name === 'Ready for Today') return 'Ready work can appear on Today; blocked/waiting/parent/planning work cannot';
     if (name === 'Priority rank') return 'Lower number appears earlier';
     if (name === 'Source') return 'Where the task came from';
   }
@@ -9402,6 +9403,8 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Decision') return 'Choose Yes or No';
     if (name === 'Decided at') return 'Filled when decided';
     if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
+    if (name === 'Decision action type') return 'What Yes will do';
+    if (name === 'Review by') return 'When to review this decision';
   }
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
@@ -9625,7 +9628,7 @@ function hiddenColumnsFor(canonicalName) {
   if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE, COLS.TODO.PRIORITY_RANK, COLS.TODO.HAS_SUBTASKS, COLS.TODO.BLOCKED_BY_ID];
   if (canonicalName === 'Interviews') return [COLS.ROUNDS.ID, COLS.ROUNDS.JOB_ID];
   if (canonicalName === 'Sectors') return [COLS.SECTORS.ID, COLS.SECTORS.SUBSECTOR_ID];
-  if (canonicalName === 'Decisions') return [COLS.DECISIONS.ID, COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_TYPE, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.WORKFLOW, COLS.DECISIONS.TODO_ID, COLS.DECISIONS.ACTION_TYPE];
+  if (canonicalName === 'Decisions') return [COLS.DECISIONS.ID, COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_TYPE, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.WORKFLOW, COLS.DECISIONS.TODO_ID];
   return [];
 }
 
@@ -10881,7 +10884,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Your daily 10 minutes');
-  r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task. No dismisses it.');
+  r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Done, Deferred, Skipped, or Pull in an option directly from Today.');
@@ -10899,7 +10902,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'What each tab is for');
   r = writeKV(sheet, r, 'Home', 'Start here. Capture updates, resolve Pending Decisions, see what needs attention.');
   r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
-  r = writeKV(sheet, r, 'Decisions', 'Judgment queue. Yes creates a task; No dismisses it.');
+  r = writeKV(sheet, r, 'Decisions', 'Judgment queue and audit trail. Action type shows what Yes will do; Review by controls urgency.');
   r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
   r = writeKV(sheet, r, 'Sectors / Organisations / Jobs / People', 'The main source tabs. Home popups write here for you.');
   r = writeKV(sheet, r, 'Conversations / Interviews', 'Mostly filled from updates and task completions. Edit when you need to correct details.');
@@ -10907,18 +10910,19 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'How Today decides');
   r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, pipeline-building work, then anything else that fits.');
-  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days. On short days, work is only committed if it fits the time you entered; near-misses appear as Options.');
+  r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days and says when the plan is realistic, tight, or over capacity. Near-misses appear as Options.');
   r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
   r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
   r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you make them multi-step from Tasks > Row actions > Make selected Task multi-step.');
+  r = writeKV(sheet, r, 'Source-led scans', 'Opportunity scan and People source scan are flexible pipeline-building tasks. When completed, they ask what you found; people found this way are saved as Identified, not automatic outreach.');
   r++;
 
   r = writeH2(sheet, r, 'The status labels');
   r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Result is Waiting, Interview invite, or Rejected.');
   r = writeKV(sheet, r, 'People', 'Relationship status runs from Identified to outreach, reply, conversation, keep-warm, or closed. Conversations are logged on the Conversations tab.');
-  r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
+  r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Blocked / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
-  r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed.');
+  r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed. Review by is the decision urgency date.');
   r++;
 
   r = writeH2(sheet, r, 'Good to know');
