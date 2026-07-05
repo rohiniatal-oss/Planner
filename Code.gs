@@ -267,7 +267,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.0';
+var SCRIPT_VERSION = 'v7.8.1';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -354,6 +354,25 @@ function plannerTimeZone() {
     if (ss && ss.getSpreadsheetTimeZone) return ss.getSpreadsheetTimeZone();
   } catch (err) { Logger.log('plannerTimeZone: ' + err); }
   return Session.getScriptTimeZone();
+}
+
+function scriptTimeZone() {
+  try { return Session.getScriptTimeZone(); }
+  catch (err) { Logger.log('scriptTimeZone: ' + err); }
+  return 'Etc/UTC';
+}
+
+function ensureSpreadsheetTimeZone() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss || !ss.getSpreadsheetTimeZone || !ss.setSpreadsheetTimeZone) return { changed: false, timezone: plannerTimeZone() };
+  var expected = scriptTimeZone();
+  var current = ss.getSpreadsheetTimeZone();
+  if (expected && current !== expected) {
+    ss.setSpreadsheetTimeZone(expected);
+    current = ss.getSpreadsheetTimeZone();
+    return { changed: true, timezone: current, expected: expected };
+  }
+  return { changed: false, timezone: current, expected: expected };
 }
 
 function getSheet(name) {
@@ -6952,6 +6971,7 @@ function ensureTriggersInstalled(opts) {
 // so the user gets a guaranteed-correct trigger set in one click, then
 // shows the status so they can verify it took.
 function setUpTriggers() {
+  ensureSpreadsheetTimeZone();
   ensureTriggersInstalled({ force: true, silent: true });
   checkTriggerHealth();
   showTriggerStatus();
@@ -6972,7 +6992,9 @@ function showTriggerStatus() {
     lines.push('   ' + (on ? '\u2705' : '\u274c') + ' ' + spec.desc);
   });
   lines.push('');
-  lines.push('Timezone: ' + plannerTimeZone());
+  lines.push('Workbook timezone: ' + plannerTimeZone());
+  lines.push('Apps Script timezone: ' + scriptTimeZone());
+  if (plannerTimeZone() !== scriptTimeZone()) lines.push('   \u26a0 Run "Setup & automation \u2192 Turn on Planner" to align workbook dates with the script timezone.');
   lines.push('Note: the basic menu loader needs no setup; edit actions and scheduled automation require this one-time setup.');
   SpreadsheetApp.getUi().alert('The Planner \u2014 setup status', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
 }
@@ -12807,6 +12829,7 @@ function repairAllTabs() {
 }
 
 function repairAllTabsImpl() {
+  ensureSpreadsheetTimeZone();
   migrateLegacyTabs();
   migrateWorkbookSchema();
 
@@ -12961,6 +12984,7 @@ function fullRefreshImpl() {
 // Back-compat: force-reinstall the time triggers only (leaves the edit
 // trigger as-is). Routes through the shared engine via the specs.
 function installTimeTriggers() {
+  ensureSpreadsheetTimeZone();
   var tz = plannerTimeZone();
   var created = [];
   TIME_TRIGGER_SPECS.forEach(function (spec) {
