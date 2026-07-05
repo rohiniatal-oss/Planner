@@ -11521,9 +11521,27 @@ function repairOrganisationsFormulas() {
   var bodyRows = Math.max(sheet.getMaxRows() - 1, 1);
   sheet.getRange(2, COLS.ORGS.KNOWN_PEOPLE, bodyRows, 2).clearContent().clearNote().clearDataValidations();
   if (sheet.getLastRow() < 2) return;
-  for (var r = 2; r <= sheet.getLastRow(); r++) {
-    if (sheet.getRange(r, COLS.ORGS.NAME).getValue()) applyOrgRowFormulas(sheet, r);
+  var rowCount = sheet.getLastRow() - 1;
+  var names = sheet.getRange(2, COLS.ORGS.NAME, rowCount, 1).getValues();
+  var orgIdCol = columnToLetter(COLS.ORGS.ID);
+  var peopleOrgIdCol = columnToLetter(COLS.PEOPLE.ORG_ID);
+  var jobsOpportunityCol = columnToLetter(COLS.JOBS.OPPORTUNITY);
+  var jobsOrgIdCol = columnToLetter(COLS.JOBS.ORG_ID);
+  var jobsStatusCol = columnToLetter(COLS.JOBS.STATUS);
+  var formulas = [];
+  for (var i = 0; i < rowCount; i++) {
+    var r = i + 2;
+    if (!names[i][0]) {
+      formulas.push(['', '']);
+      continue;
+    }
+    var orgIdRef = orgIdCol + r;
+    formulas.push([
+      '=COUNTIF(People!' + peopleOrgIdCol + ':' + peopleOrgIdCol + ',' + orgIdRef + ')',
+      '=COUNTIFS(Jobs!' + jobsOrgIdCol + ':' + jobsOrgIdCol + ',' + orgIdRef + ',Jobs!' + jobsOpportunityCol + ':' + jobsOpportunityCol + ',"<>",Jobs!' + jobsStatusCol + ':' + jobsStatusCol + ',"<>Closed")'
+    ]);
   }
+  sheet.getRange(2, COLS.ORGS.KNOWN_PEOPLE, rowCount, 2).setFormulas(formulas);
 }
 
 function orgIdExistsMap() {
@@ -11785,6 +11803,7 @@ function dailyMaintenance() {
     backfillTaskHelperColumns();
     backfillDecisionHelperColumns();
     runQueueHygiene();
+    repairOrganisationsFormulas();
     syncOrgReviewSchedules();
     materializeDueTasks();
     removeOpenDeadlineReminderTasks();
