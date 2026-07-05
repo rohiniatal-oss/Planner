@@ -144,7 +144,10 @@ var COLS = {
     CLASS_CALC_AT: 17, EFFORT_TYPE: 18,
     // v7.6 — appended, never inserted mid-schema (would shift every
     // trailing index file-wide for a purely cosmetic win).
-    PRIORITY_RANK: 19, LINKED_TO: 20, ON_TODAY: 21, HAS_SUBTASKS: 22
+    PRIORITY_RANK: 19, LINKED_TO: 20, ON_TODAY: 21, HAS_SUBTASKS: 22,
+    PLAN_CATEGORY: 23, PLAN_PATTERN: 24, STEP: 25,
+    PARENT_TASK: 26, READY_FOR_TODAY: 27, CHILD_PROGRESS: 28,
+    BLOCKER: 29, BLOCKED_BY_ID: 30
   },
 
   ROUNDS: {
@@ -157,7 +160,8 @@ var COLS = {
   DECISIONS: {
     ID: 1, CREATED: 2, KEY: 3, TRIGGER: 4, TASK: 5,
     TARGET_TYPE: 6, TARGET_ID: 7, WORKFLOW: 8, NOTES: 9,
-    DECISION: 10, DECIDED_AT: 11, TODO_ID: 12
+    DECISION: 10, DECIDED_AT: 11, TODO_ID: 12,
+    ACTION_TYPE: 13, DUE_DATE: 14, LINKED_TO: 15, RESULT: 16
   },
 
   TODAY: {
@@ -196,7 +200,9 @@ var HEADERS = {
     'Workflow type', 'Status', 'Due date', 'Time estimate',
     'Notes', 'Parent To-do ID', 'Created', 'Completed',
     'Commitment class', 'Source', 'Last edited', 'Class calculated at', 'Effort type',
-    'Priority rank', 'Linked to', 'On Today right now', 'Has sub-tasks'
+    'Priority rank', 'Linked to', 'On Today right now', 'Has sub-tasks',
+    'Plan category', 'Plan pattern', 'Step', 'Parent task',
+    'Ready for Today', 'Child progress', 'Blocker', 'Blocked by To-do ID'
   ],
   'Interview rounds': [
     'Round ID', 'Linked Job ID', 'Job (display)', 'Org (display)',
@@ -205,9 +211,10 @@ var HEADERS = {
     'Official outcome', 'Expected response date', 'Notes'
   ],
   'Pending decisions': [
-    'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested task',
+    'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested action',
     'Target type', 'Target ID', 'Suggested workflow', 'Notes',
-    'Decision', 'Decided at', 'Resulting To-do ID'
+    'Decision', 'Decided at', 'Resulting To-do ID',
+    'Decision action type', 'Decision due date', 'Linked to', 'Result'
   ],
   "Today's plan": [
     'Slot', 'Task', 'Linked Task ID', 'Estimated min',
@@ -291,9 +298,11 @@ var DROPDOWNS = {
     'Interview scheduling', 'Interview prep (Domain scoping)',
     'Interview prep (Study)', 'Interview prep (Fit case)',
     'Day-before review', 'Thank-you and debrief',
-    'Interview follow-up', 'Admin'
+    'Interview follow-up', 'Task unblocker', 'Admin'
   ],
-  TODO_STATUS: ['Not started', 'In progress', 'Done', 'Skipped', 'Cancelled'],
+  TODO_STATUS: ['Not started', 'In progress', 'Blocked', 'Done', 'Skipped', 'Cancelled'],
+  TODO_PLAN_PATTERN: ['Parallel', 'Step-based'],
+  READY_FOR_TODAY: ['Ready', 'Waiting', 'Blocked', 'Parent', 'Needs planning', 'Done'],
   // v7.6.1: 'Custom…' removed per the handover spec (§8) — never made
   // functional, and parseTimeEst silently treated it as 30 min, which
   // was misleading. Consistent with minimizing daily choices elsewhere.
@@ -320,7 +329,8 @@ var DROPDOWNS = {
   ],
 
   // Pending decisions — no "Later". Auto-dismissed is system-only.
-  DECISION: ['Pending', 'Yes', 'No', 'Auto-dismissed']
+  DECISION: ['Pending', 'Yes', 'No', 'Auto-dismissed'],
+  DECISION_ACTION_TYPE: ['Create task', 'Open popup', 'Update source', 'Capture data', 'Dismiss only']
 };
 
 var REPLY_DAYS_BY_ROUND_TYPE = {
@@ -1735,7 +1745,8 @@ function getDecisionRowById(decisionId) {
 // Creates a Pending decision. Deduplicated only against an already-pending
 // row for the same key; historical Yes/No/Auto-dismissed rows are audit
 // history and must not permanently block a legitimate future suggestion.
-function appendPendingDecision(key, trigger, task, targetType, targetId, workflow, notes) {
+function appendPendingDecision(key, trigger, task, targetType, targetId, workflow, notes, opts) {
+  opts = opts || {};
   var sheet = ensureDecisionsTab();
   if (!key || !sheet) return '';
   var existing = findPendingDecisionByKey(key);
@@ -1746,6 +1757,9 @@ function appendPendingDecision(key, trigger, task, targetType, targetId, workflo
     sheet.getRange(existing.row, COLS.DECISIONS.TARGET_ID).setValue(targetId || '');
     sheet.getRange(existing.row, COLS.DECISIONS.WORKFLOW).setValue(workflow || 'Admin');
     sheet.getRange(existing.row, COLS.DECISIONS.NOTES).setValue(notes || '');
+    sheet.getRange(existing.row, COLS.DECISIONS.ACTION_TYPE).setValue(opts.actionType || inferDecisionActionType(key, targetType, workflow, task));
+    sheet.getRange(existing.row, COLS.DECISIONS.DUE_DATE).setValue(opts.dueDate || decisionDueDateFor(key, targetType, targetId, workflow) || '');
+    applyDecisionHelperColumns(sheet, existing.row);
     return String(existing.data[COLS.DECISIONS.ID - 1] || '');
   }
   var id = nextId(sheet, COLS.DECISIONS.ID, 'DEC');
@@ -1760,7 +1774,10 @@ function appendPendingDecision(key, trigger, task, targetType, targetId, workflo
   row[COLS.DECISIONS.WORKFLOW - 1] = workflow || 'Admin';
   row[COLS.DECISIONS.NOTES - 1] = notes || '';
   row[COLS.DECISIONS.DECISION - 1] = 'Pending';
+  row[COLS.DECISIONS.ACTION_TYPE - 1] = opts.actionType || inferDecisionActionType(key, targetType, workflow, task);
+  row[COLS.DECISIONS.DUE_DATE - 1] = opts.dueDate || decisionDueDateFor(key, targetType, targetId, workflow) || '';
   sheet.appendRow(row);
+  applyDecisionHelperColumns(sheet, sheet.getLastRow());
   return id;
 }
 
@@ -1774,6 +1791,7 @@ function defaultTimeForWorkflow(workflow) {
     case 'Referral search':
     case 'Conversation prep': return '30 min';
     case 'Offer decision': return '30 min';
+    case 'Task unblocker': return '15 min';
     case 'Contact follow-up':
     case 'Reply and arrange conversation':
     case 'Submit application':
@@ -1794,6 +1812,90 @@ function resolveOrgForTarget(targetType, targetId) {
 
 // Yes on a Decision → create the Task. Source='Decision' so it's visible
 // in Tasks/Today as having originated from a reviewed suggestion.
+function inferDecisionActionType(key, targetType, workflow, task) {
+  key = String(key || '');
+  if (isApplicationPlanDecisionKey(key)) return 'Open popup';
+  if (key.indexOf('JOB_RESPONSE_OUTCOME:') === 0 || key.indexOf('INTERVIEW_OUTCOME:') === 0 ||
+      key.indexOf('PERSON_REPLY_OUTCOME:') === 0 || key.indexOf('OFFER_DECISION_DONE:') === 0) return 'Update source';
+  if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('ORG_JOBS_FOUND:') === 0 ||
+      key.indexOf('ORG_RESEARCH_DONE:') === 0 || key.indexOf('MARKET_MAP_DONE:') === 0 ||
+      key.indexOf('INTERACTION_OPP:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0) return 'Capture data';
+  return 'Create task';
+}
+
+function decisionDueDateFor(key, targetType, targetId, workflow) {
+  if (isApplicationPlanDecisionKey(key)) {
+    var planJob = getJobRowById(targetId);
+    return applicationPlanDueDate(planJob);
+  }
+  if (targetType === 'Job') {
+    var job = getJobRowById(targetId);
+    if (job && (workflow === 'Referral search' || workflow === 'Application preparation')) return job.deadline || '';
+    if (job && workflow === 'Admin' && normalizeJobStatus(job.status) === 'Submitted') return job.reviewDate || '';
+  }
+  if (targetType === 'Interview round') {
+    var round = getRoundById(targetId);
+    if (round) {
+      var roundSheet = getSheet('Interviews');
+      return roundSheet ? roundSheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue() : '';
+    }
+  }
+  return '';
+}
+
+function writeDecisionLinkedTo(sheet, row, targetType, targetId) {
+  var cell = sheet.getRange(row, COLS.DECISIONS.LINKED_TO);
+  var linked = resolveLinkedTo(String(targetType || ''), String(targetId || ''));
+  if (!linked.text) { cell.setValue(''); return; }
+  if (!linked.row) { cell.setValue(linked.text); return; }
+  var targetSheet = getSheet(linked.sheetName);
+  if (!targetSheet) { cell.setValue(linked.text); return; }
+  var targetCol = linked.col || 1;
+  cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=' + columnToLetter(targetCol) + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
+}
+
+function writeDecisionResult(sheet, row) {
+  var decision = String(sheet.getRange(row, COLS.DECISIONS.DECISION).getValue() || '');
+  var todoId = String(sheet.getRange(row, COLS.DECISIONS.TODO_ID).getValue() || '');
+  var cell = sheet.getRange(row, COLS.DECISIONS.RESULT);
+  if (todoId) {
+    var todo = getTodoById(todoId);
+    if (todo) {
+      cell.setFormula('=HYPERLINK("#gid=' + getSheet('Tasks').getSheetId() + '&range=B' + todo.row + '","Task: ' + String(todo.task || todoId).replace(/"/g, '""') + '")');
+      return;
+    }
+    cell.setValue(todoId);
+    return;
+  }
+  if (decision === 'No') cell.setValue('Dismissed');
+  else if (decision === 'Auto-dismissed') cell.setValue('Auto-dismissed');
+  else if (decision === 'Yes') cell.setValue('Handled');
+  else cell.setValue('');
+}
+
+function applyDecisionHelperColumns(sheet, row) {
+  var key = String(sheet.getRange(row, COLS.DECISIONS.KEY).getValue() || '');
+  if (!key) return;
+  var targetType = String(sheet.getRange(row, COLS.DECISIONS.TARGET_TYPE).getValue() || '');
+  var targetId = String(sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue() || '');
+  var workflow = String(sheet.getRange(row, COLS.DECISIONS.WORKFLOW).getValue() || '');
+  var task = String(sheet.getRange(row, COLS.DECISIONS.TASK).getValue() || '');
+  if (!sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE).getValue()) {
+    sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE).setValue(inferDecisionActionType(key, targetType, workflow, task));
+  }
+  if (!sheet.getRange(row, COLS.DECISIONS.DUE_DATE).getValue()) {
+    sheet.getRange(row, COLS.DECISIONS.DUE_DATE).setValue(decisionDueDateFor(key, targetType, targetId, workflow) || '');
+  }
+  writeDecisionLinkedTo(sheet, row, targetType, targetId);
+  writeDecisionResult(sheet, row);
+}
+
+function backfillDecisionHelperColumns() {
+  var sheet = ensureDecisionsTab();
+  if (!sheet || sheet.getLastRow() < 2) return;
+  for (var r = 2; r <= sheet.getLastRow(); r++) applyDecisionHelperColumns(sheet, r);
+}
+
 function acceptPendingDecision(sheet, row) {
   var task = sheet.getRange(row, COLS.DECISIONS.TASK).getValue();
   var targetType = sheet.getRange(row, COLS.DECISIONS.TARGET_TYPE).getValue();
@@ -1803,24 +1905,27 @@ function acceptPendingDecision(sheet, row) {
   var existingTodoId = String(sheet.getRange(row, COLS.DECISIONS.TODO_ID).getValue() || '');
   if (existingTodoId) {
     sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+    applyDecisionHelperColumns(sheet, row);
     return { ok: true, todoId: existingTodoId, reused: true };
   }
   var org = resolveOrgForTarget(targetType, targetId);
-  var dueDate = '';
+  var dueDate = sheet.getRange(row, COLS.DECISIONS.DUE_DATE).getValue() || '';
   if (targetType === 'Job' && (workflow === 'Application preparation' || workflow === 'Referral search')) {
     var decisionJob = getJobRowById(targetId);
-    dueDate = decisionJob ? decisionJob.deadline : '';
+    dueDate = dueDate || (decisionJob ? decisionJob.deadline : '');
   }
   var todoId = appendTodoWithSource(task, targetType, targetId, org, workflow, 'Not started', dueDate, defaultTimeForWorkflow(workflow), notes, 'Decision');
   if (!todoId) todoId = findOpenTodoByTaskTarget(task, targetId, workflow);
   if (todoId) {
     sheet.getRange(row, COLS.DECISIONS.TODO_ID).setValue(todoId);
+    applyDecisionHelperColumns(sheet, row);
   } else {
     sheet.getRange(row, COLS.DECISIONS.DECISION).setValue('Pending');
     appendNoteFlag(sheet, row, COLS.DECISIONS.NOTES, '[yes-failed] Task was not created or found');
     return { ok: false, todoId: '', reason: 'Task was not created or found' };
   }
   sheet.getRange(row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  applyDecisionHelperColumns(sheet, row);
   return { ok: true, todoId: todoId, reused: false };
 }
 
@@ -1841,6 +1946,7 @@ function resolveDecision(decisionsSheet, row, action) {
       if (job) clearNoteFlag(getSheet('Jobs'), job.row, COLS.JOBS.NOTES, '[needs-application-plan]');
     }
   }
+  applyDecisionHelperColumns(decisionsSheet, row);
   return accepted;
 }
 
@@ -1894,6 +2000,7 @@ function autoDismissPendingForTarget(targetType, targetId, reason) {
     sheet.getRange(r, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
     sheet.getRange(r, COLS.DECISIONS.DECIDED_AT).setValue(today());
     appendNoteFlag(sheet, r, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Underlying state changed'));
+    applyDecisionHelperColumns(sheet, r);
     count++;
   }
   return count;
@@ -1910,6 +2017,7 @@ function autoDismissPendingDecisionByKey(key, reason) {
     sheet.getRange(r, COLS.DECISIONS.DECISION).setValue('Auto-dismissed');
     sheet.getRange(r, COLS.DECISIONS.DECIDED_AT).setValue(today());
     appendNoteFlag(sheet, r, COLS.DECISIONS.NOTES, '[auto-dismissed] ' + (reason || 'Superseded by direct action'));
+    applyDecisionHelperColumns(sheet, r);
     return true;
   }
   return false;
@@ -1922,6 +2030,7 @@ function dismissDecisionByKey(key, reason) {
   sheet.getRange(found.row, COLS.DECISIONS.DECISION).setValue('No');
   sheet.getRange(found.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
   if (reason) appendNoteFlag(sheet, found.row, COLS.DECISIONS.NOTES, '[no] ' + reason);
+  applyDecisionHelperColumns(sheet, found.row);
   return true;
 }
 
@@ -1936,6 +2045,11 @@ function pendingDecisionCount() {
 
 function decisionSortDateValue(decisionRow) {
   var created = decisionRow[COLS.DECISIONS.CREATED - 1] || today();
+  var due = decisionRow[COLS.DECISIONS.DUE_DATE - 1];
+  if (due) {
+    var dueDate = new Date(due);
+    if (!isNaN(dueDate.getTime())) return dueDate.getTime();
+  }
   var key = String(decisionRow[COLS.DECISIONS.KEY - 1] || '');
   if (isApplicationPlanDecisionKey(key) && String(decisionRow[COLS.DECISIONS.TARGET_TYPE - 1]) === 'Job') {
     var job = getJobRowById(decisionRow[COLS.DECISIONS.TARGET_ID - 1]);
@@ -2012,6 +2126,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
     case 'Application preparation':
       return (daysToLinked !== null && daysToLinked <= 7) ? 'Blocking' : 'Active pursuit';
     case 'Application blocker':
+    case 'Task unblocker':
       return 'Blocking';
     case 'Contact follow-up':
     case 'Reply and arrange conversation':
@@ -2043,7 +2158,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 function deriveEffortType(workflow) {
   var deep = ['Application preparation', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
   var medium = ['People sourcing', 'Org job scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
-  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
+  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Task unblocker', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
   if (shallow.indexOf(workflow) !== -1) return 'Shallow';
@@ -2191,8 +2306,7 @@ function syncTaskHealthFlags(sheet, row, rowData, daysSinceEdit) {
     clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-date]');
   }
 
-  if (isParent) appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-still-open] \u26a0 Already broken down into sub-tasks \u2014 should be Skipped');
-  else clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-still-open]');
+  clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-still-open]');
 }
 
 function runQueueHygiene() {
@@ -2249,14 +2363,14 @@ function isTodoDuplicate(sheet, task, objId, statusToCreate, workflow) {
   if (!task) return false;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
-  if (statusToCreate !== 'Not started' && statusToCreate !== 'In progress') return false;
+  if (!isOpenTodoStatus(statusToCreate)) return false;
   var linked = !!objId || (workflow && workflow !== 'Admin');
   var data = sheet.getRange(2, 1, lastRow - 1, COLS.TODO.STATUS).getValues();
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
     if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (!isOpenTodoStatus(st)) continue;
     var existingTask = String(data[i][COLS.TODO.TASK - 1]);
     if (linked) {
       if (existingTask === String(task)) return true;
@@ -2276,7 +2390,7 @@ function openTodoExistsForTargetWorkflow(objType, objId, workflow) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
     if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st === 'Not started' || st === 'In progress') return true;
+    if (isOpenTodoStatus(st)) return true;
   }
   return false;
 }
@@ -2298,7 +2412,7 @@ function findOpenTodoByTaskTarget(task, objId, workflow) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId || '')) continue;
     if (workflow && String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (!isOpenTodoStatus(st)) continue;
     var existingTask = String(data[i][COLS.TODO.TASK - 1]);
     if ((linked && existingTask === String(task)) || (!linked && similarity(existingTask, String(task)) >= 0.85)) {
       return String(data[i][COLS.TODO.ID - 1] || '');
@@ -2343,6 +2457,7 @@ function appendTodoWithSource(task, objType, objId, org, workflow, status, dueDa
   row[COLS.TODO.EFFORT_TYPE - 1] = deriveEffortType(workflow || 'Admin');
   sheet.appendRow(row);
   applyTaskHelperColumns(sheet, sheet.getLastRow());
+  syncTaskPlanningHelpers();
   return id;
 }
 
@@ -2418,6 +2533,116 @@ function writeLinkedTo(sheet, row, objType, objId) {
   cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=' + columnToLetter(targetCol) + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
 }
 
+function taskStepNumber(row) {
+  var raw = row ? row[COLS.TODO.STEP - 1] : '';
+  var n = parseInt(raw, 10);
+  return isNaN(n) || n <= 0 ? 1 : n;
+}
+
+function buildTaskPlanningContext(data) {
+  var byId = {}, childrenByParent = {};
+  for (var i = 0; i < data.length; i++) {
+    var id = String(data[i][COLS.TODO.ID - 1] || '');
+    if (!id) continue;
+    byId[id] = { row: i + 2, data: data[i], index: i };
+  }
+  for (var j = 0; j < data.length; j++) {
+    var parentId = String(data[j][COLS.TODO.PARENT_ID - 1] || '');
+    var childId = String(data[j][COLS.TODO.ID - 1] || '');
+    if (!parentId || !childId) continue;
+    if (!childrenByParent[parentId]) childrenByParent[parentId] = [];
+    childrenByParent[parentId].push({ row: j + 2, data: data[j], index: j });
+  }
+  return { byId: byId, childrenByParent: childrenByParent };
+}
+
+function deriveReadyForTodayFromRow(row, ctx) {
+  if (!row) return '';
+  var id = String(row[COLS.TODO.ID - 1] || '');
+  if (!id) return '';
+  var status = String(row[COLS.TODO.STATUS - 1] || '');
+  if (isTerminalTodoStatus(status)) return 'Done';
+  if (status === 'Blocked') return 'Blocked';
+  if (ctx.childrenByParent[id] && ctx.childrenByParent[id].length) return 'Parent';
+  if (String(row[COLS.TODO.TIME_EST - 1] || '') === 'Multi-day') return 'Needs planning';
+  if (parseTimeEst(String(row[COLS.TODO.TIME_EST - 1] || '30 min')) === null) return 'Needs planning';
+
+  var parentId = String(row[COLS.TODO.PARENT_ID - 1] || '');
+  if (parentId) {
+    var parent = ctx.byId[parentId];
+    if (!parent) return 'Waiting';
+    var pattern = String(parent.data[COLS.TODO.PLAN_PATTERN - 1] || 'Parallel');
+    if (pattern === 'Step-based') {
+      var siblings = ctx.childrenByParent[parentId] || [];
+      var minStep = null;
+      for (var i = 0; i < siblings.length; i++) {
+        var siblingStatus = String(siblings[i].data[COLS.TODO.STATUS - 1] || '');
+        if (isTerminalTodoStatus(siblingStatus)) continue;
+        var siblingStep = taskStepNumber(siblings[i].data);
+        if (minStep === null || siblingStep < minStep) minStep = siblingStep;
+      }
+      if (minStep !== null && taskStepNumber(row) !== minStep) return 'Waiting';
+    }
+  }
+  return 'Ready';
+}
+
+function childProgressForParent(parentId, ctx) {
+  var children = ctx.childrenByParent[parentId] || [];
+  if (!children.length) return '';
+  var done = 0, blocked = 0, waiting = 0;
+  for (var i = 0; i < children.length; i++) {
+    var st = String(children[i].data[COLS.TODO.STATUS - 1] || '');
+    if (isTerminalTodoStatus(st)) done++;
+    if (st === 'Blocked') blocked++;
+    if (deriveReadyForTodayFromRow(children[i].data, ctx) === 'Waiting') waiting++;
+  }
+  var text = done + ' of ' + children.length + ' done';
+  if (blocked) text += ' - ' + blocked + ' blocked';
+  if (waiting) text += ' - ' + waiting + ' waiting';
+  return text;
+}
+
+function allChildTodosTerminal(parentTodoId) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || !parentTodoId || sheet.getLastRow() < 2) return false;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var found = false;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.PARENT_ID - 1] || '') !== String(parentTodoId)) continue;
+    found = true;
+    if (!isTerminalTodoStatus(String(data[i][COLS.TODO.STATUS - 1] || ''))) return false;
+  }
+  return found;
+}
+
+function syncTaskPlanningHelpers() {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var rowCount = sheet.getLastRow() - 1;
+  var data = sheet.getRange(2, 1, rowCount, HEADERS['To-do'].length).getValues();
+  var ctx = buildTaskPlanningContext(data);
+  var readyValues = [], progressValues = [];
+  sheet.getRange(2, COLS.TODO.PARENT_TASK, rowCount, 1).clearContent();
+  for (var i = 0; i < data.length; i++) {
+    var rowNum = i + 2;
+    var row = data[i];
+    var id = String(row[COLS.TODO.ID - 1] || '');
+    var parentId = String(row[COLS.TODO.PARENT_ID - 1] || '');
+    if (parentId && ctx.byId[parentId]) {
+      var parent = ctx.byId[parentId];
+      var parentText = String(parent.data[COLS.TODO.TASK - 1] || parentId).replace(/"/g, '""');
+      sheet.getRange(rowNum, COLS.TODO.PARENT_TASK).setFormula('=HYPERLINK("#gid=' + sheet.getSheetId() + '&range=B' + parent.row + '","' + parentText + '")');
+    } else if (parentId) {
+      sheet.getRange(rowNum, COLS.TODO.PARENT_TASK).setValue(parentId);
+    }
+    readyValues.push([deriveReadyForTodayFromRow(row, ctx)]);
+    progressValues.push([id ? childProgressForParent(id, ctx) : '']);
+  }
+  sheet.getRange(2, COLS.TODO.READY_FOR_TODAY, rowCount, 1).setValues(readyValues);
+  sheet.getRange(2, COLS.TODO.CHILD_PROGRESS, rowCount, 1).setValues(progressValues);
+}
+
 function applyTaskHelperColumns(sheet, row) {
   if (!sheet.getRange(row, COLS.TODO.ID).getValue()) return;
   sheet.getRange(row, COLS.TODO.PRIORITY_RANK).setFormula(priorityRankFormula(row));
@@ -2438,10 +2663,12 @@ function backfillTaskHelperColumns() {
   if (!sheet) return;
   var bodyRows = Math.max(sheet.getMaxRows() - 1, 1);
   sheet.getRange(2, COLS.TODO.PRIORITY_RANK, bodyRows, 4).clearContent().clearNote().clearDataValidations();
+  sheet.getRange(2, COLS.TODO.PARENT_TASK, bodyRows, 3).clearContent().clearNote().clearDataValidations();
   if (sheet.getLastRow() < 2) return;
   for (var r = 2; r <= sheet.getLastRow(); r++) {
     applyTaskHelperColumns(sheet, r);
   }
+  syncTaskPlanningHelpers();
 }
 
 // v7.6 §2.7/§2.8: one native basic filter (Apps Script can only manage a
@@ -2481,13 +2708,14 @@ function updateOpenTodoDueForTargetWorkflow(objType, objId, workflow, dueDate) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
     if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (!isOpenTodoStatus(st)) continue;
     var r = i + 2;
     sheet.getRange(r, COLS.TODO.DUE_DATE).setValue(dueDate || '');
     sheet.getRange(r, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass(workflow, dueDate, objId, objType));
     sheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
     count++;
   }
+  if (count) syncTaskPlanningHelpers();
   return count;
 }
 
@@ -2501,7 +2729,7 @@ function setOpenTodosForTarget(objType, objId, status, reason, workflowAllowList
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
     if (workflowAllowList && workflowAllowList.indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (!isOpenTodoStatus(st)) continue;
     var r = i + 2;
     sheet.getRange(r, COLS.TODO.STATUS).setValue(status);
     sheet.getRange(r, COLS.TODO.COMPLETED).setValue(today());
@@ -2536,6 +2764,14 @@ function isTerminalTodoStatus(status) {
   return ['Done', 'Skipped', 'Cancelled'].indexOf(String(status || '')) !== -1;
 }
 
+function isOpenTodoStatus(status) {
+  return ['Not started', 'In progress', 'Blocked'].indexOf(String(status || '')) !== -1;
+}
+
+function isExecutableTodoStatus(status) {
+  return ['Not started', 'In progress'].indexOf(String(status || '')) !== -1;
+}
+
 function getTodoById(todoId) {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2 || !todoId) return null;
@@ -2558,6 +2794,9 @@ function getTodoByRow(sheet, row) {
     status: String(sheet.getRange(row, COLS.TODO.STATUS).getValue() || ''),
     dueDate: sheet.getRange(row, COLS.TODO.DUE_DATE).getValue(),
     completed: sheet.getRange(row, COLS.TODO.COMPLETED).getValue(),
+    parentId: String(sheet.getRange(row, COLS.TODO.PARENT_ID).getValue() || ''),
+    blocker: String(sheet.getRange(row, COLS.TODO.BLOCKER).getValue() || ''),
+    blockedById: String(sheet.getRange(row, COLS.TODO.BLOCKED_BY_ID).getValue() || ''),
     notes: String(sheet.getRange(row, COLS.TODO.NOTES).getValue() || '')
   };
 }
@@ -2584,13 +2823,50 @@ function completeTodoRow(sheet, row, status, options) {
 
   if (target === 'Not started' || target === 'In progress') {
     sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
+    if (before.status === 'Blocked') {
+      sheet.getRange(row, COLS.TODO.BLOCKER).setValue('');
+      sheet.getRange(row, COLS.TODO.BLOCKED_BY_ID).setValue('');
+      appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[unblocked manually]');
+    }
     syncTodayRowForTodo(row, target);
+    syncTaskPlanningHelpers();
+    requestHomeRefresh();
+    return true;
+  }
+
+  if (target === 'Blocked') {
+    sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
+    if (!sheet.getRange(row, COLS.TODO.BLOCKER).getValue()) {
+      sheet.getRange(row, COLS.TODO.BLOCKER).setValue('Blocked - add reason');
+    }
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + String(sheet.getRange(row, COLS.TODO.BLOCKER).getValue() || 'Blocked'));
+    syncTodayRowForTodo(row, target);
+    syncTaskPlanningHelpers();
+    populateToday();
     requestHomeRefresh();
     return true;
   }
 
   if (isTerminalTodoStatus(target)) {
     if (!sheet.getRange(row, COLS.TODO.COMPLETED).getValue()) sheet.getRange(row, COLS.TODO.COMPLETED).setValue(today());
+    if (target === 'Done' && hasSubtasks(before.id) && !allChildTodosTerminal(before.id)) {
+      sheet.getRange(row, COLS.TODO.STATUS).setValue('In progress');
+      sheet.getRange(row, COLS.TODO.COMPLETED).setValue('');
+      appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[parent-open] Finish or skip child tasks before completing the parent.');
+      syncTaskPlanningHelpers();
+      requestHomeRefresh();
+      return false;
+    }
+    if (before.parentId) {
+      syncTaskPlanningHelpers();
+      if (allChildTodosTerminal(before.parentId)) {
+        completeTodo(before.parentId, 'Done', { source: 'child-rollup' });
+      } else {
+        requestHomeRefresh();
+      }
+      syncTodayRowForTodo(row, target);
+      return true;
+    }
     if (target === 'Done' && !alreadyTerminal) routeTodoCompletion(getTodoByRow(sheet, row), options);
     // v7.6.1: a Multi-day parent retired via completeBreakdownFromPopup
     // (source: 'breakdown') is a structural rollup, not abandoned work —
@@ -2599,6 +2875,7 @@ function completeTodoRow(sheet, row, status, options) {
     if (target === 'Skipped' && !alreadyTerminal && options.source !== 'breakdown') handleSkipCascade(sheet, row);
     if (target === 'Cancelled' && !alreadyTerminal) handleCancelCascade(sheet, row);
     syncTodayRowForTodo(row, target);
+    syncTaskPlanningHelpers();
     if (EDIT_BATCH_CONTEXT && EDIT_BATCH_CONTEXT.deferTaskRefresh) {
       EDIT_BATCH_CONTEXT.needsDecisionRender = true;
       requestHomeRefresh();
@@ -2617,11 +2894,37 @@ function completeTodoRow(sheet, row, status, options) {
 // always ends up here.
 function routeTodoCompletion(todo, options) {
   if (!todo) return;
+  if (todo.workflow === 'Task unblocker') return handleUnblockerTodoCompletion(todo, options || {});
   if (todo.objType === 'Job') return handleJobTodoCompletion(todo, options || {});
   if (todo.objType === 'Person') return handlePersonTodoCompletion(todo, options || {});
   if (todo.objType === 'Interview round') return handleInterviewTodoCompletion(todo, options || {});
   if (todo.objType === 'Organisation') return handleOrganisationTodoCompletion(todo, options || {});
   if (todo.objType === 'Sector') return handleSectorTodoCompletion(todo, options || {});
+}
+
+function handleUnblockerTodoCompletion(todo, options) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !todo || !todo.id) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var count = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.BLOCKED_BY_ID - 1] || '') !== String(todo.id)) continue;
+    if (String(data[i][COLS.TODO.STATUS - 1] || '') !== 'Blocked') continue;
+    var r = i + 2;
+    sheet.getRange(r, COLS.TODO.STATUS).setValue('Not started');
+    sheet.getRange(r, COLS.TODO.BLOCKER).setValue('');
+    sheet.getRange(r, COLS.TODO.BLOCKED_BY_ID).setValue('');
+    sheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
+    appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[unblocked] Unblocker completed: ' + todo.id);
+    count++;
+  }
+  if (count) {
+    syncTaskPlanningHelpers();
+    populateToday();
+    refreshHome();
+  }
+  if (count) syncTaskPlanningHelpers();
+  return count;
 }
 
 function handleJobTodoCompletion(todo, options) {
@@ -4840,7 +5143,7 @@ function retireObsoleteInterviewPrepTasks(roundId, desiredWorkflowMap) {
     if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Interview round') continue;
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(roundId)) continue;
     var st = String(data[i][COLS.TODO.STATUS - 1]);
-    if (st !== 'Not started' && st !== 'In progress') continue;
+    if (!isOpenTodoStatus(st)) continue;
     var r = i + 2;
     taskSheet.getRange(r, COLS.TODO.STATUS).setValue('Skipped');
     taskSheet.getRange(r, COLS.TODO.COMPLETED).setValue(today());
@@ -5475,7 +5778,12 @@ function onEditTasks(sheet, row, col, newVal, e) {
     completeTodoRow(sheet, row, newVal, { source: 'tasks' });
     return;
   }
-  if ([COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.COMMITMENT_CLASS].indexOf(col) !== -1) requestHomeRefresh();
+  if ([COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.COMMITMENT_CLASS,
+    COLS.TODO.PARENT_ID, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP,
+    COLS.TODO.BLOCKER, COLS.TODO.BLOCKED_BY_ID].indexOf(col) !== -1) {
+    syncTaskPlanningHelpers();
+    requestHomeRefresh();
+  }
 }
 
 // =============================================================
@@ -5603,7 +5911,7 @@ function bootstrapToday() {
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setWrap(true);
   sheet.setFrozenRows(TODAY_TABLE_HEADER_ROW);
 
-  sheet.getRange(TODAY_NEEDS_BREAKDOWN_HEADER_ROW, 2, 1, 7).merge().setValue('Needs breakdown').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(TODAY_NEEDS_BREAKDOWN_HEADER_ROW, 2, 1, 7).merge().setValue('Needs planning').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
   sheet.getRange(TODAY_PROGRESS_HEADER_ROW, 2, 1, 7).merge().setValue('Progress').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
@@ -5749,7 +6057,8 @@ function compareTier(a, b) {
 function collectTaskPool(focus, tierLookup) {
   var todoSheet = getSheet('Tasks');
   if (!todoSheet || todoSheet.getLastRow() < 2) return [];
-  var data = todoSheet.getRange(2, 1, todoSheet.getLastRow() - 1, COLS.TODO.EFFORT_TYPE).getValues();
+  var data = todoSheet.getRange(2, 1, todoSheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var planningCtx = buildTaskPlanningContext(data);
   var todayDate = today();
   var pool = [];
   for (var i = 0; i < data.length; i++) {
@@ -5757,6 +6066,8 @@ function collectTaskPool(focus, tierLookup) {
     if (status !== 'Not started' && status !== 'In progress') continue;
     var task = String(data[i][COLS.TODO.TASK - 1] || '');
     if (!task) continue;
+    var readyState = deriveReadyForTodayFromRow(data[i], planningCtx);
+    if (readyState !== 'Ready') continue;
     var estMin = parseTimeEst(String(data[i][COLS.TODO.TIME_EST - 1] || '30 min'));
     if (estMin === null) continue; // Multi-day — never enters Today; needs breakdown first
     var cls = String(data[i][COLS.TODO.COMMITMENT_CLASS - 1]);
@@ -6068,13 +6379,14 @@ function collectNeedsBreakdownTasks(limit) {
   limit = limit || 5;
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return [];
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.NOTES).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var ctx = buildTaskPlanningContext(data);
   var out = [];
   for (var i = 0; i < data.length && out.length < limit; i++) {
     var status = String(data[i][COLS.TODO.STATUS - 1]);
     if (status !== 'Not started' && status !== 'In progress') continue;
     var notes = String(data[i][COLS.TODO.NOTES - 1] || '');
-    if (notes.indexOf('[needs breakdown]') === -1) continue;
+    if (notes.indexOf('[needs breakdown]') === -1 && deriveReadyForTodayFromRow(data[i], ctx) !== 'Needs planning') continue;
     out.push({ todoId: String(data[i][COLS.TODO.ID - 1]), task: String(data[i][COLS.TODO.TASK - 1] || '') });
   }
   return out;
@@ -6088,10 +6400,13 @@ function renderNeedsBreakdown(sheet) {
   try { sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).breakApart(); } catch (err) { /* not merged, ignore */ }
   sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).clearContent();
   if (!items.length) {
-    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs breaking down.').setFontColor('#5F625E');
+    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs planning.').setFontColor('#5F625E');
     return;
   }
   items.forEach(function (item, idx) {
+    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
+      .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
+    return;
     sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
       .setValue(item.task + ' — use Row actions → Break down (on Tasks)').setFontColor('#964219');
   });
@@ -6663,7 +6978,7 @@ function taskQueueSummary() {
   var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needBreakdown = 0, blockedCount = 0;
   data.forEach(function (row) {
     var status = String(row[COLS.TODO.STATUS - 1]);
-    if (status !== 'Not started' && status !== 'In progress') return;
+    if (!isOpenTodoStatus(status)) return;
     open++;
     var cls = String(row[COLS.TODO.COMMITMENT_CLASS - 1]);
     if (cls === 'Fixed') fixedCount++;
@@ -7457,7 +7772,7 @@ function openApplicationPrepTaskCount(jobId) {
     if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(jobId)) continue;
     if (['Application preparation', 'Application blocker'].indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
     var status = String(data[i][COLS.TODO.STATUS - 1] || '');
-    if (status === 'Not started' || status === 'In progress') count++;
+    if (isOpenTodoStatus(status)) count++;
   }
   return count;
 }
@@ -8233,7 +8548,7 @@ var MANUAL_COLUMNS = {
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
-  'To-do': [COLS.TODO.STATUS, COLS.TODO.NOTES],
+  'To-do': [COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP, COLS.TODO.BLOCKER],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
 };
@@ -8244,17 +8559,17 @@ var COLUMN_WIDTHS = {
   'People': { 2: 190, 3: 200, 5: 170, 6: 175, 7: 185, 8: 125, 9: 120, 11: 125, 12: 135, 13: 300, 15: 125, 16: 260, 17: 260 },
   'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 135, 8: 320, 9: 160 },
-  'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100 },
+  'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100, 23: 150, 24: 120, 25: 70, 26: 220, 27: 125, 28: 150, 29: 240 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
   "Today's plan": { 1: 80, 2: 340, 4: 110, 5: 100, 6: 100, 7: 120, 8: 100, 9: 340 },
-  'Pending decisions': { 4: 250, 5: 320, 6: 130, 8: 160, 9: 300, 10: 130 }
+  'Pending decisions': { 4: 250, 5: 320, 6: 130, 8: 160, 9: 300, 10: 130, 13: 130, 14: 125, 15: 200, 16: 220 }
 };
 
 var WRAP_COLUMNS = {
   'Sectors': [COLS.SECTORS.SUBSECTOR, COLS.SECTORS.NOTES], 'Organisations': [COLS.ORGS.NOTES], 'People': [COLS.PEOPLE.NOTES, COLS.PEOPLE.NEXT_ACTION, COLS.PEOPLE.LINKED_JOBS],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES], 'Interactions': [COLS.INTERACTIONS.NOTES],
-  'To-do': [COLS.TODO.TASK, COLS.TODO.NOTES], 'Interview rounds': [COLS.ROUNDS.NOTES],
-  "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES]
+  'To-do': [COLS.TODO.TASK, COLS.TODO.NOTES, COLS.TODO.PARENT_TASK, COLS.TODO.CHILD_PROGRESS, COLS.TODO.BLOCKER], 'Interview rounds': [COLS.ROUNDS.NOTES],
+  "Today's plan": [COLS.TODAY.TASK, COLS.TODAY.NOTES], 'Pending decisions': [COLS.DECISIONS.TASK, COLS.DECISIONS.NOTES, COLS.DECISIONS.LINKED_TO, COLS.DECISIONS.RESULT]
 };
 
 // v7.7.5: three same-column colors previously collided outright (To-do
@@ -8271,7 +8586,7 @@ var STATUS_COLOR_MAP = {
   'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#EAE3DD' } },
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'To outreach': '#FEF7CD', 'Outreach drafted': '#FEF7CD', 'Outreach sent': '#C2DBFF', 'Replied': '#B6E3E0', 'Conversation scheduled': '#D2E3FC', 'Conversation completed': '#CEEAD6', 'Keep warm': '#FEF7CD', 'Closed': '#EAE3DD' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
-  'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
+  'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
   "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
   'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#EAE3DD' } }
 };
@@ -8397,10 +8712,10 @@ function hiddenColumnsFor(canonicalName) {
   // triage signal on this tab, and COMMITMENT_CLASS_COLORS conditional
   // formatting is already wired to it, just previously sitting unused on
   // a hidden column. The four appended helper columns stay visible too.
-  if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE];
+  if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.COMMITMENT_CLASS, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE, COLS.TODO.PRIORITY_RANK, COLS.TODO.HAS_SUBTASKS, COLS.TODO.BLOCKED_BY_ID];
   if (canonicalName === 'Interviews') return [COLS.ROUNDS.ID, COLS.ROUNDS.JOB_ID];
   if (canonicalName === 'Sectors') return [COLS.SECTORS.ID, COLS.SECTORS.SUBSECTOR_ID];
-  if (canonicalName === 'Decisions') return [COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.TODO_ID];
+  if (canonicalName === 'Decisions') return [COLS.DECISIONS.ID, COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_TYPE, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.WORKFLOW, COLS.DECISIONS.TODO_ID, COLS.DECISIONS.ACTION_TYPE];
   return [];
 }
 
@@ -8672,7 +8987,7 @@ function openApplicationWorkByJobId() {
     if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Job') continue;
     if (workflows.indexOf(String(data[i][COLS.TODO.WORKFLOW - 1])) === -1) continue;
     var status = String(data[i][COLS.TODO.STATUS - 1]);
-    if (status !== 'Not started' && status !== 'In progress') continue;
+    if (!isOpenTodoStatus(status)) continue;
     var jobId = String(data[i][COLS.TODO.OBJ_ID - 1] || '');
     if (jobId) out[jobId] = true;
   }
@@ -8835,6 +9150,7 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.TODO.TIME_EST, maxRow, 1), DROPDOWNS.TODO_TIME);
       setDropdown(sheet.getRange(2, COLS.TODO.COMMITMENT_CLASS, maxRow, 1), DROPDOWNS.TODO_COMMITMENT_CLASS, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.TODO.SOURCE, maxRow, 1), DROPDOWNS.TODO_SOURCE);
+      setDropdown(sheet.getRange(2, COLS.TODO.PLAN_PATTERN, maxRow, 1), DROPDOWNS.TODO_PLAN_PATTERN);
       break;
     case 'Interviews':
       setDropdown(sheet.getRange(2, COLS.ROUNDS.ROUND_TYPE, maxRow, 1), DROPDOWNS.ROUND_TYPE, { allowInvalid: false });
@@ -8849,6 +9165,7 @@ function applySheetDropdowns(canonicalName) {
       break;
     case 'Decisions':
       setDropdown(sheet.getRange(2, COLS.DECISIONS.DECISION, maxRow, 1), DROPDOWNS.DECISION, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.DECISIONS.ACTION_TYPE, maxRow, 1), DROPDOWNS.DECISION_ACTION_TYPE, { allowInvalid: false });
       break;
   }
 }
@@ -9348,15 +9665,15 @@ function rowActionBreakDownSelectedTask() {
   if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var todoId = String(sheet.getRange(row, COLS.TODO.ID).getValue() || '');
-  var timeEst = String(sheet.getRange(row, COLS.TODO.TIME_EST).getValue() || '');
   if (!todoId) { SpreadsheetApp.getUi().alert('That row does not have a Task ID.'); return; }
-  if (timeEst !== 'Multi-day') { SpreadsheetApp.getUi().alert('Break down is only for Multi-day tasks.'); return; }
+  var status = String(sheet.getRange(row, COLS.TODO.STATUS).getValue() || '');
+  if (!isOpenTodoStatus(status)) { SpreadsheetApp.getUi().alert('Only open tasks can be made multi-step.'); return; }
   runBreakdownPopup(todoId, String(sheet.getRange(row, COLS.TODO.TASK).getValue() || ''));
 }
 
 function runBreakdownPopup(todoId, taskTitle) {
-  var html = HtmlService.createHtmlOutput(buildBreakdownHtml(todoId, taskTitle)).setWidth(600).setHeight(620).setTitle('Break down: ' + taskTitle);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Break down: ' + taskTitle);
+  var html = HtmlService.createHtmlOutput(buildBreakdownHtml(todoId, taskTitle)).setWidth(640).setHeight(680).setTitle('Make multi-step: ' + taskTitle);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Make multi-step: ' + taskTitle);
 }
 
 function buildBreakdownHtml(todoId, taskTitle) {
@@ -9365,28 +9682,48 @@ function buildBreakdownHtml(todoId, taskTitle) {
     '<style>' +
     'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
     'h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
-    '.row{display:flex;gap:8px;margin-top:10px;}' +
-    '.row input{flex:1;}.row select{width:130px;flex:none;}' +
+    '.meta{display:grid;grid-template-columns:1fr 150px;gap:8px;margin:14px 0;}' +
+    '.row{display:grid;grid-template-columns:1fr 120px 70px;gap:8px;margin-top:10px;}' +
+    '.notes{grid-column:1/4;}input,select{box-sizing:border-box;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;min-width:0;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Make multi-step: <span id="title"></span></h2>' +
+    '<p>Add up to 6 child tasks. The parent stays as a container; ready child tasks flow through Today.</p>' +
+    '<div class="meta"><input id="category" placeholder="Plan category"><select id="pattern"><option>Step-based</option><option>Parallel</option></select></div>' +
+    '<form id="form"></form><button class="primary" type="button" onclick="submitBreakdown()">Create child tasks</button><div id="status"></div>' +
+    '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.taskTitle;var f=document.getElementById("form");' +
+    'for(var i=0;i<6;i++){var r=document.createElement("div");r.className="row";var t=document.createElement("input");t.type="text";t.placeholder="Child task "+(i+1);t.name="text"+i;var s=document.createElement("select");s.name="time"+i;cfg.timeOptions.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);});var step=document.createElement("input");step.type="number";step.min="1";step.value=i+1;step.name="step"+i;var notes=document.createElement("input");notes.type="text";notes.placeholder="Optional notes";notes.name="notes"+i;notes.className="notes";r.appendChild(t);r.appendChild(s);r.appendChild(step);r.appendChild(notes);f.appendChild(r);}' +
+    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}if(!subtasks.length){document.getElementById("status").textContent="Add at least one child task.";return;}document.getElementById("status").textContent="Creating child tasks...";google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(err){document.getElementById("status").textContent="Could not create child tasks. Run Maintenance > Repair all tabs, then try again.";}).completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    '.row{display:grid;grid-template-columns:1fr 120px 70px;gap:8px;margin-top:10px;}' +
+    '.meta{display:grid;grid-template-columns:1fr 150px;gap:8px;margin:14px 0;}.notes{grid-column:1/4;}' +
+    '.row input{min-width:0;}.row select{width:100%;}' +
     'input,select{box-sizing:border-box;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}' +
     '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
     '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
-    '<h2>Break down: <span id="title"></span></h2>' +
+    '<h2>Make multi-step: <span id="title"></span></h2>' +
     '<p>Add up to 6 sub-tasks with a time estimate each. Empty rows are ignored. The Multi-day parent is retired (Skipped) once sub-tasks are created — they inherit its organisation/workflow and flow through Today normally.</p>' +
+    '<div class="meta"><input id="category" placeholder="Plan category"><select id="pattern"><option>Step-based</option><option>Parallel</option></select></div>' +
     '<form id="form"></form>' +
-    '<button class="primary" type="button" onclick="submitBreakdown()">Create sub-tasks</button>' +
+    '<button class="primary" type="button" onclick="submitBreakdown()">Create child tasks</button>' +
     '<div id="status"></div>' +
     '<script>var cfg=' + json + ';document.getElementById("title").textContent=cfg.taskTitle;var f=document.getElementById("form");' +
     'for(var i=0;i<6;i++){var r=document.createElement("div");r.className="row";' +
-    'var t=document.createElement("input");t.type="text";t.placeholder="Sub-task "+(i+1);t.name="text"+i;' +
+    'var t=document.createElement("input");t.type="text";t.placeholder="Child task "+(i+1);t.name="text"+i;' +
     'var s=document.createElement("select");s.name="time"+i;' +
     'cfg.timeOptions.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);});' +
-    'r.appendChild(t);r.appendChild(s);f.appendChild(r);}' +
-    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value});}' +
+    'var step=document.createElement("input");step.type="number";step.min="1";step.value=i+1;step.name="step"+i;' +
+    'var notes=document.createElement("input");notes.type="text";notes.placeholder="Optional notes";notes.name="notes"+i;notes.className="notes";' +
+    'r.appendChild(t);r.appendChild(s);r.appendChild(step);r.appendChild(notes);f.appendChild(r);}' +
+    'function submitBreakdown(){var subtasks=[];for(var i=0;i<6;i++){var text=f.elements["text"+i].value.trim();if(!text)continue;subtasks.push({text:text,timeEst:f.elements["time"+i].value,step:f.elements["step"+i].value||1,notes:f.elements["notes"+i].value.trim()});}' +
     'if(!subtasks.length){document.getElementById("status").textContent="Add at least one sub-task.";return;}' +
     'document.getElementById("status").textContent="Creating sub-tasks...";' +
     'google.script.run.withSuccessHandler(function(msg){document.getElementById("status").textContent=msg||"Done.";setTimeout(function(){google.script.host.close();},900);})' +
     '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not create sub-tasks. Run Maintenance > Repair all tabs, then try again.";})' +
-    '.completeBreakdownFromPopup(cfg.todoId,subtasks);}</script>';
+    '.completeBreakdownFromPopup(cfg.todoId,{category:document.getElementById("category").value.trim()||cfg.taskTitle,pattern:document.getElementById("pattern").value,children:subtasks});}</script>';
 }
 
 function retireBrokenDownParent(parentTodoId, childCount) {
@@ -9402,15 +9739,21 @@ function retireBrokenDownParent(parentTodoId, childCount) {
   return true;
 }
 
-function completeBreakdownFromPopup(parentTodoId, subtasks) {
+function completeBreakdownFromPopup(parentTodoId, payload) {
   return withDocumentLock(function () {
-    return completeBreakdownFromPopupImpl(parentTodoId, subtasks);
+    return completeBreakdownFromPopupImpl(parentTodoId, payload);
   }, { label: 'completeBreakdownFromPopup' });
 }
 
-function completeBreakdownFromPopupImpl(parentTodoId, subtasks) {
+function completeBreakdownFromPopupImpl(parentTodoId, payload) {
   var parent = getTodoById(parentTodoId);
   if (!parent) return 'Parent task not found.';
+  var subtasks = (payload && payload.children) ? payload.children : (payload || []);
+  var category = (payload && payload.category) || parent.task;
+  var pattern = (payload && payload.pattern) || 'Step-based';
+  if (DROPDOWNS.TODO_PLAN_PATTERN.indexOf(pattern) === -1) pattern = 'Step-based';
+  parent.sheet.getRange(parent.row, COLS.TODO.PLAN_CATEGORY).setValue(category);
+  parent.sheet.getRange(parent.row, COLS.TODO.PLAN_PATTERN).setValue(pattern);
   var createdIds = [];
   subtasks.forEach(function (st) {
     if (!st.text) return;
@@ -9423,16 +9766,18 @@ function completeBreakdownFromPopupImpl(parentTodoId, subtasks) {
       var s = getSheet('Tasks');
       var r = getTodoById(id).row;
       s.getRange(r, COLS.TODO.PARENT_ID).setValue(parentTodoId);
+      s.getRange(r, COLS.TODO.PLAN_CATEGORY).setValue(category);
+      s.getRange(r, COLS.TODO.STEP).setValue(pattern === 'Parallel' ? 1 : (parseInt(st.step, 10) || 1));
+      if (st.notes) s.getRange(r, COLS.TODO.NOTES).setValue(st.notes);
       createdIds.push(id);
     }
   });
   if (!createdIds.length) return 'No sub-tasks captured.';
-  // Parent becomes a rollup container, not open work. Retire it explicitly
-  // so it disappears from the open-task pool without firing skip cascade.
-  retireBrokenDownParent(parentTodoId, createdIds.length);
+  appendNoteFlag(parent.sheet, parent.row, COLS.TODO.NOTES, '[has-subtasks] structured into ' + createdIds.length + ' child task(s)');
+  syncTaskPlanningHelpers();
   populateToday();
   refreshHome();
-  return 'Created ' + createdIds.length + ' sub-task(s) and retired the Multi-day parent.';
+  return 'Created ' + createdIds.length + ' child task(s). Parent now acts as a container.';
 }
 
 function linkContactToJob() {
@@ -9544,17 +9889,59 @@ function softCloseRow() {
 // flagged-row highlight (the highlight regex already includes "blocked").
 function rowActionMarkTaskBlocked() {
   var sheet = SpreadsheetApp.getActiveSheet();
-  if (sheet.getName() !== 'Tasks') { SpreadsheetApp.getUi().alert('Select a Task row first.'); return; }
+  if (sheet.getName() !== 'Tasks' && sheet.getName() !== 'Today') { SpreadsheetApp.getUi().alert('Select a Task row or Today row first.'); return; }
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
   var ui = SpreadsheetApp.getUi();
   var resp = ui.prompt('Mark blocked', 'Why is this task blocked?', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var reason = resp.getResponseText().trim();
   if (!reason) { ui.alert('Enter a reason.'); return; }
+  var unblockerResp = ui.prompt('Optional unblocker task', 'Add an unblocker task title, or leave blank for none.', ui.ButtonSet.OK_CANCEL);
+  if (unblockerResp.getSelectedButton() !== ui.Button.OK) return;
+  var unblockerTitle = unblockerResp.getResponseText().trim();
   withDocumentLock(function () {
-    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[blocked] ' + reason);
+    var todo = null;
+    if (sheet.getName() === 'Tasks') todo = getTodoByRow(sheet, row);
+    else {
+      var todoId = String(sheet.getRange(row, COLS.TODAY.TODO_ID).getValue() || '');
+      todo = getTodoById(todoId);
+    }
+    if (!todo) { SpreadsheetApp.getUi().alert('Could not find the linked Task.'); return; }
+    todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Blocked');
+    todo.sheet.getRange(todo.row, COLS.TODO.BLOCKER).setValue(reason);
+    todo.sheet.getRange(todo.row, COLS.TODO.COMPLETED).setValue('');
+    todo.sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+    appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[blocked] ' + reason);
+    if (unblockerTitle) {
+      var unblockerId = appendTodoWithSource(unblockerTitle, todo.objType, todo.objId, todo.org, 'Task unblocker',
+        'Not started', '', '15 min', '[unblocks: ' + todo.id + '] ' + reason, 'Manually added', { skipDuplicateCheck: true });
+      if (unblockerId) todo.sheet.getRange(todo.row, COLS.TODO.BLOCKED_BY_ID).setValue(unblockerId);
+    }
+    syncTaskPlanningHelpers();
+    populateToday();
     refreshHome();
   }, { label: 'rowActionMarkTaskBlocked' });
+}
+
+function rowActionUnblockSelectedTask() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Tasks' && sheet.getName() !== 'Today') { SpreadsheetApp.getUi().alert('Select a Task row or Today row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  withDocumentLock(function () {
+    var todo = null;
+    if (sheet.getName() === 'Tasks') todo = getTodoByRow(sheet, row);
+    else todo = getTodoById(String(sheet.getRange(row, COLS.TODAY.TODO_ID).getValue() || ''));
+    if (!todo) { SpreadsheetApp.getUi().alert('Could not find the linked Task.'); return; }
+    todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Not started');
+    todo.sheet.getRange(todo.row, COLS.TODO.BLOCKER).setValue('');
+    todo.sheet.getRange(todo.row, COLS.TODO.BLOCKED_BY_ID).setValue('');
+    todo.sheet.getRange(todo.row, COLS.TODO.COMPLETED).setValue('');
+    todo.sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+    appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[unblocked manually]');
+    syncTaskPlanningHelpers();
+    populateToday();
+    refreshHome();
+  }, { label: 'rowActionUnblockSelectedTask' });
 }
 
 // v7.6 §5: Tasks has no Deferred status of its own (DROPDOWNS.TODO_STATUS
@@ -9642,7 +10029,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days. On short days, work is only committed if it fits the time you entered; near-misses appear as Options.');
   r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
   r = writeKV(sheet, r, 'Why a task appears', 'Today records the reason for each selected task. Hover the notes cell or read the row note to see why it was chosen.');
-  r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you break them into smaller tasks from Tasks > Row actions > Break down.');
+  r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you make them multi-step from Tasks > Row actions > Make selected Task multi-step.');
   r++;
 
   r = writeH2(sheet, r, 'The status labels');
@@ -9658,7 +10045,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Sectors', 'A parent Sector row names the broad area. A Sub-sector row belongs to that Sector ID. Editing Sector on a parent row renames it; editing Sector on a Sub-sector row moves that child under another sector.');
   r = writeKV(sheet, r, 'Direct edits are allowed', 'They are best for corrections. For normal daily capture, Home is easier and safer.');
   r = writeKV(sheet, r, 'Deferred is Today-only', 'Deferring from Today pushes the due date. Tasks itself does not have a Deferred status.');
-  r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for Break down, Mark blocked, and Defer. Today has row actions for pulling, locking, moving, and topping up the day.');
+  r = writeKV(sheet, r, 'Row actions', 'Tasks has row actions for multi-step planning, blocking, unblocking, and deferring. Today has row actions for pulling, locking, moving, and topping up the day.');
   r = writeKV(sheet, r, 'Colour cues', 'Colours help scanning, but the actual status text is always the source of truth.');
   r++;
 
@@ -9875,6 +10262,7 @@ function repairAllTabsImpl() {
   syncPeopleHelperColumns();
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
+  backfillDecisionHelperColumns();
   setupTasksTabExtras();
 
   bootstrapToday();
@@ -9916,6 +10304,7 @@ function dailyMaintenance() {
     checkMorningCarryForward();
     recalculateCommitmentClasses();
     backfillTaskHelperColumns();
+    backfillDecisionHelperColumns();
     runQueueHygiene();
     syncOrgReviewSchedules();
     materializeDueTasks();
@@ -10018,8 +10407,9 @@ function buildMenu() {
       .addItem('Queue market-map decision for selected sub-sector', 'rowActionSearchOrgsForSubsector')
       .addItem('Queue sub-sector task for selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
-      .addItem('Break down selected Multi-day task', 'rowActionBreakDownSelectedTask')
+      .addItem('Make selected Task multi-step', 'rowActionBreakDownSelectedTask')
       .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
+      .addItem('Unblock selected Task', 'rowActionUnblockSelectedTask')
       .addItem('Defer selected Task 3 days', 'rowActionDeferSelectedTask')
       .addSeparator()
       .addItem('Link contact to selected Job row', 'linkContactToJob')
