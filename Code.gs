@@ -215,7 +215,7 @@ var HEADERS = {
     'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested action',
     'Target type', 'Target ID', 'Suggested workflow', 'Notes',
     'Decision', 'Decided at', 'Resulting To-do ID',
-    'Decision action type', 'Review by', 'Linked to', 'Result'
+    'What Yes does', 'Review by', 'Linked to', 'Result'
   ],
   "Today's plan": [
     'Slot', 'Task', 'Linked Task ID', 'Estimated min',
@@ -8822,7 +8822,7 @@ function refreshHome() {
   // --- Refresh (§1.6) — demoted utility control for re-reading Home status ---
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
-    .setValue('Refresh Home status')
+    .setValue('Refresh Home from Tasks, Today, and Decisions')
     .setFontSize(9).setFontColor('#8A8D87');
 
   var maint = readMaintenanceHealth();
@@ -10380,7 +10380,7 @@ var HEADER_GUIDANCE = {
     'Decision ID': 'Filled automatically.', 'Created': 'Filled automatically.', 'Decision key': 'Filled automatically.', 'Trigger': 'Why this decision exists.', 'Suggested action': 'What you are deciding.',
     'Target type': 'Linked object type.', 'Target ID': 'Filled automatically.', 'Suggested workflow': 'Suggested next-step type.', 'Notes': 'Context.',
     'Decision': 'Choose Yes or No; Auto-dismissed means the situation changed.', 'Decided at': 'Filled automatically.', 'Resulting To-do ID': 'Filled when Yes creates a task.',
-    'Decision action type': 'What Yes will do: create task, open popup, capture data, update source, or dismiss',
+    'What Yes does': 'Create task / open popup / capture data / update source / dismiss.',
     'Review by': 'When this should be reviewed; urgent decisions sort first.', 'Linked to': 'Link to the source row.', 'Result': 'What happened after deciding.'
   }
 };
@@ -10427,7 +10427,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Decision') return 'Choose Yes or No; Auto-dismissed means the situation changed';
     if (name === 'Decided at') return 'Filled when decided';
     if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
-    if (name === 'Decision action type') return 'What Yes will do';
+    if (name === 'What Yes does') return 'What Yes will do';
     if (name === 'Review by') return 'When this should be reviewed; urgent decisions sort first';
     if (name === 'Result') return 'What happened after deciding';
   }
@@ -11141,7 +11141,7 @@ function dropdownIntegrityRules() {
     { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.STATUS, notesCol: COLS.ROUNDS.NOTES, label: 'Round status', values: DROPDOWNS.ROUND_STATUS },
     { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.OFFICIAL_OUTCOME, notesCol: COLS.ROUNDS.NOTES, label: 'Official outcome', values: DROPDOWNS.OFFICIAL_OUTCOME },
     { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.DECISION, notesCol: COLS.DECISIONS.NOTES, label: 'Decision', values: DROPDOWNS.DECISION },
-    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.ACTION_TYPE, notesCol: COLS.DECISIONS.NOTES, label: 'Decision action type', values: DROPDOWNS.DECISION_ACTION_TYPE }
+    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.ACTION_TYPE, notesCol: COLS.DECISIONS.NOTES, label: 'What Yes does', values: DROPDOWNS.DECISION_ACTION_TYPE }
   ];
 }
 
@@ -12585,7 +12585,7 @@ function buildMenu() {
   ui.createMenu('The Planner')
     .addItem('Start or redo setup', 'runSetupInterview')
     .addItem("Build / refresh Today's plan", 'populateToday')
-    .addItem('Refresh Home status', 'refreshHome')
+    .addItem('Refresh Home from planner state', 'refreshHome')
     .addItem('Add one-off task', 'addAdHocTodo')
     .addSeparator()
     .addSubMenu(ui.createMenu('Today')
@@ -12626,10 +12626,10 @@ function buildMenu() {
       .addItem('\u2605 Turn on Planner actions (run this first)', 'setUpTriggers')
       .addItem('Check Planner setup status', 'showTriggerStatus')
       .addSeparator()
-      .addItem('Repair edit actions', 'installEditTrigger')
-      .addItem('Turn off edit actions', 'uninstallEditTrigger')
-      .addItem('Repair daily/weekly automation', 'installTimeTriggers')
-      .addItem('Turn off daily/weekly automation', 'uninstallTimeTriggers'))
+      .addItem('Fix dropdowns, popups, and checkboxes', 'installEditTrigger')
+      .addItem('Turn off dropdowns, popups, and checkboxes', 'uninstallEditTrigger')
+      .addItem('Fix daily/weekly refresh', 'installTimeTriggers')
+      .addItem('Turn off daily/weekly refresh', 'uninstallTimeTriggers'))
     .addSubMenu(ui.createMenu('Maintenance')
       .addItem('Repair all tabs (safe to re-run)', 'repairAllTabs')
       .addItem('Run daily maintenance now', 'dailyMaintenance')

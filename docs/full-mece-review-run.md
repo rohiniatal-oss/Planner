@@ -840,6 +840,35 @@ Acceptance tests:
 2. Lock-skipped repair sets `lastRepairAt` and a skipped result.
 3. Home still only surfaces critical repair/maintenance warnings, not a noisy success log.
 
+## Stage 12 - Copy and Micro-UX
+
+Required output:
+
+| Surface | Current wording | Problem | Better wording | Implementation location |
+|---|---|---|---|---|
+
+Stage 12 copy trace:
+
+| Surface | Current wording | Problem | Better wording | Implementation location |
+|---|---|---|---|---|
+| Decisions column 13 | `Decision action type` | Backend wording on a visible helper column | `What Yes does` | `HEADERS['Pending decisions']`, `HEADER_GUIDANCE`, `userFacingHeaderHint`, dropdown integrity label |
+| Home refresh checkbox | `Refresh Home status` | Does not say what state is being reread | `Refresh Home from Tasks, Today, and Decisions` | `refreshHome` |
+| Top menu refresh | `Refresh Home status` | Same ambiguity in menu | `Refresh Home from planner state` | `buildMenu` |
+| Setup automation menu | `Repair edit actions` | Users do not think in trigger/edit-action terms | `Fix dropdowns, popups, and checkboxes` | `buildMenu` |
+| Setup automation menu | `Turn off edit actions` | Same backend wording | `Turn off dropdowns, popups, and checkboxes` | `buildMenu` |
+| Setup automation menu | `Repair daily/weekly automation` | Outcome is daily/weekly refresh, not abstract automation | `Fix daily/weekly refresh` | `buildMenu` |
+| Setup automation menu | `Turn off daily/weekly automation` | Same | `Turn off daily/weekly refresh` | `buildMenu` |
+| Guide text | Several already-improved lines but Guide is intentionally preserved | User asked Guide last | Defer final rewrite to Stage 14 | No code change in Stage 12 |
+
+Stage 12 decision:
+Implemented only non-Guide user-facing copy fixes. These changes keep the same functions, columns, and workflows while making visible controls answer "what will happen if I use this?"
+
+Acceptance tests:
+1. Decisions repair/header rebuild writes `What Yes does` in the action-type column.
+2. The Home refresh checkbox explains that it rereads Tasks, Today, and Decisions.
+3. The main menu uses outcome language for setup/automation controls.
+4. No Guide rewrite is triggered by this stage.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
