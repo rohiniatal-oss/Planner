@@ -2289,11 +2289,12 @@ function syncTaskHealthFlags(sheet, row, rowData, daysSinceEdit) {
   // Mechanical health flags are recomputed every hygiene pass. Sticky
   // manual/review flags ([blocked], [flags], [review]) are intentionally
   // not cleared here.
-  if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_BREAKDOWN_DAYS && !isParent) {
-    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs breakdown] \u26a0 Multi-day \u2014 break this down into sub-tasks');
+  if (timeEst === 'Multi-day' && daysSinceEdit !== null && daysSinceEdit >= MULTIDAY_NEEDS_PLANNING_DAYS && !isParent) {
+    appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs planning] \u26a0 Multi-day - make this task multi-step');
   } else {
-    clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs breakdown]');
+    clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs planning]');
   }
+  clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[needs breakdown]');
   if (!timeEst) appendNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-estimate] \u26a0 Missing time estimate');
   else clearNoteFlag(sheet, row, COLS.TODO.NOTES, '[no-estimate]');
 
@@ -5809,12 +5810,12 @@ var TODAY_TABLE_HEADER_ROW = 10;
 var TODAY_TABLE_FIRST_ROW = 11;
 var TODAY_TABLE_LAST_ROW = 40;
 
-// v7.4: sections below the Commit/Options table — "Needs breakdown"
+// v7.4: sections below the Commit/Options table - "Needs planning"
 // (Multi-day Phase 1), "Progress" (replaces the capacity-fit formula +
 // done counter), and "End of day" (relocated from a menu-only action).
-var TODAY_NEEDS_BREAKDOWN_HEADER_ROW = 42;
-var TODAY_NEEDS_BREAKDOWN_FIRST_ROW = 43;
-var TODAY_NEEDS_BREAKDOWN_LAST_ROW = 47;   // 5 rows max
+var TODAY_NEEDS_PLANNING_HEADER_ROW = 42;
+var TODAY_NEEDS_PLANNING_FIRST_ROW = 43;
+var TODAY_NEEDS_PLANNING_LAST_ROW = 47;   // 5 rows max
 
 var TODAY_PROGRESS_HEADER_ROW = 49;
 var TODAY_PROGRESS_LINE1_ROW = 50;
@@ -5824,12 +5825,12 @@ var TODAY_ENDOFDAY_HEADER_ROW = 53;
 var TODAY_ENDOFDAY_ROW = 54;
 var TODAY_ENDOFDAY_COL = 2;
 
-// Multi-day tasks flagged [needs breakdown] after this many days
+// Multi-day tasks flagged [needs planning] after this many days
 // untouched (see runQueueHygiene) — same idiom as the other staleness
 // thresholds there, picked to sit between the "HOT" (>3d) and "stale
 // active pursuit" (>=10d) thresholds since an un-broken-down Multi-day
 // task is invisible to Today the whole time, not just occasionally.
-var MULTIDAY_NEEDS_BREAKDOWN_DAYS = 5;
+var MULTIDAY_NEEDS_PLANNING_DAYS = 5;
 
 function parseTimeEst(timeStr) {
   if (!timeStr) return 30;
@@ -5911,7 +5912,7 @@ function bootstrapToday() {
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setWrap(true);
   sheet.setFrozenRows(TODAY_TABLE_HEADER_ROW);
 
-  sheet.getRange(TODAY_NEEDS_BREAKDOWN_HEADER_ROW, 2, 1, 7).merge().setValue('Needs planning').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(TODAY_NEEDS_PLANNING_HEADER_ROW, 2, 1, 7).merge().setValue('Needs planning').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
   sheet.getRange(TODAY_PROGRESS_HEADER_ROW, 2, 1, 7).merge().setValue('Progress').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
@@ -6069,7 +6070,7 @@ function collectTaskPool(focus, tierLookup) {
     var readyState = deriveReadyForTodayFromRow(data[i], planningCtx);
     if (readyState !== 'Ready') continue;
     var estMin = parseTimeEst(String(data[i][COLS.TODO.TIME_EST - 1] || '30 min'));
-    if (estMin === null) continue; // Multi-day — never enters Today; needs breakdown first
+    if (estMin === null) continue; // Multi-day - never enters Today; needs planning first
     var cls = String(data[i][COLS.TODO.COMMITMENT_CLASS - 1]);
     var dueDate = data[i][COLS.TODO.DUE_DATE - 1];
     var workflow = String(data[i][COLS.TODO.WORKFLOW - 1] || '');
@@ -6340,7 +6341,7 @@ function populateTodayImpl() {
   sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()));
 
   renderTodayDecisionCards();
-  renderNeedsBreakdown(sheet);
+  renderNeedsPlanning(sheet);
   updateTodayProgress(sheet);
   refreshHome();
   var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + unplannedMin + ' min unplanned.';
@@ -6374,8 +6375,8 @@ function hasSubtasks(todoId) {
   return false;
 }
 
-// v7.4 §4.1: Multi-day tasks flagged [needs breakdown] by runQueueHygiene.
-function collectNeedsBreakdownTasks(limit) {
+// v7.4 §4.1: tasks that need planning before Today can pull them.
+function collectNeedsPlanningTasks(limit) {
   limit = limit || 5;
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -6386,28 +6387,25 @@ function collectNeedsBreakdownTasks(limit) {
     var status = String(data[i][COLS.TODO.STATUS - 1]);
     if (status !== 'Not started' && status !== 'In progress') continue;
     var notes = String(data[i][COLS.TODO.NOTES - 1] || '');
-    if (notes.indexOf('[needs breakdown]') === -1 && deriveReadyForTodayFromRow(data[i], ctx) !== 'Needs planning') continue;
+    if (notes.indexOf('[needs planning]') === -1 && notes.indexOf('[needs breakdown]') === -1 && deriveReadyForTodayFromRow(data[i], ctx) !== 'Needs planning') continue;
     out.push({ todoId: String(data[i][COLS.TODO.ID - 1]), task: String(data[i][COLS.TODO.TASK - 1] || '') });
   }
   return out;
 }
 
-function renderNeedsBreakdown(sheet) {
+function renderNeedsPlanning(sheet) {
   sheet = sheet || getSheet('Today');
   if (!sheet) return;
-  var limit = TODAY_NEEDS_BREAKDOWN_LAST_ROW - TODAY_NEEDS_BREAKDOWN_FIRST_ROW + 1;
-  var items = collectNeedsBreakdownTasks(limit);
-  try { sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).breakApart(); } catch (err) { /* not merged, ignore */ }
-  sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, limit, 7).clearContent();
+  var limit = TODAY_NEEDS_PLANNING_LAST_ROW - TODAY_NEEDS_PLANNING_FIRST_ROW + 1;
+  var items = collectNeedsPlanningTasks(limit);
+  try { sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, limit, 7).breakApart(); } catch (err) { /* not merged, ignore */ }
+  sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, limit, 7).clearContent();
   if (!items.length) {
-    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs planning.').setFontColor('#5F625E');
+    sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs planning.').setFontColor('#5F625E');
     return;
   }
   items.forEach(function (item, idx) {
-    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
-      .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
-    return;
-    sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
+    sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW + idx, 2, 1, 7).merge()
       .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
   });
 }
@@ -6975,7 +6973,7 @@ function taskQueueSummary() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return '0 open';
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.COMMITMENT_CLASS).getValues();
-  var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needBreakdown = 0, blockedCount = 0;
+  var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needPlanning = 0, blockedCount = 0;
   data.forEach(function (row) {
     var status = String(row[COLS.TODO.STATUS - 1]);
     if (!isOpenTodoStatus(status)) return;
@@ -6985,11 +6983,11 @@ function taskQueueSummary() {
     if (cls === 'Blocking') blocking++;
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
     if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open)\]/.test(notes)) needAttention++;
-    if (notes.indexOf('[needs breakdown]') !== -1) needBreakdown++;
+    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1) needPlanning++;
     if (notes.indexOf('[blocked]') !== -1) blockedCount++;
   });
   return open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
-    needAttention + ' need attention · ' + needBreakdown + ' need breakdown · ' + blockedCount + ' blocked';
+    needAttention + ' need attention · ' + needPlanning + ' need planning · ' + blockedCount + ' blocked';
 }
 
 // v7.4: replaces a plain sheet.clear() — clear() alone was found to leave
@@ -8671,7 +8669,7 @@ function applyStatusColorCoding() {
       .setBackground('#F7F7F5').setFontColor('#B0AEA4')
       .setRanges([fullRowRange]).build());
     ccRules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs breakdown|parent-still-open|blocked)\\]"),NOT(' + terminalFormula + '))')
+      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs planning|needs breakdown|parent-still-open|blocked)\\]"),NOT(' + terminalFormula + '))')
       .setBackground('#FDE9D9')
       .setRanges([fullRowRange]).build());
 
