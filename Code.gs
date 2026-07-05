@@ -217,8 +217,8 @@ var HEADERS = {
     'What Confirm does', 'Review by', 'Linked to', 'Result'
   ],
   "Today's plan": [
-    'Slot', 'Task', 'Linked Task ID', 'Estimated min',
-    'Plan', 'Effort', 'Status', 'Actual min', 'Why / notes'
+    '#', 'Task', 'ID', 'Min',
+    'Section', 'Effort', 'Status', 'Actual', 'Why / notes'
   ]
 };
 
@@ -267,7 +267,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.1';
+var SCRIPT_VERSION = 'v7.8.2';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -7115,32 +7115,32 @@ function onEditTasks(sheet, row, col, newVal, e) {
 // so "Priority / focus"/"Available minutes"/"Energy" never actually
 // rendered). Column D holds the value next to each row's label.
 var TODAY_CELLS = {
-  PRIORITY: 'D4', AVAILABLE_MIN: 'D5', ENERGY: 'D6'
+  PRIORITY: 'D5', AVAILABLE_MIN: 'D6', ENERGY: 'D7'
 };
 
 // Checkbox-as-button, same convention as HOME_REFRESH_ROW/TODAY_ENDOFDAY_ROW:
 // a self-resetting checkbox that calls populateToday() on tick, so refreshing
 // Today's plan is a visible on-sheet action rather than menu-only.
-var TODAY_REFRESH_ROW = 7;
+var TODAY_REFRESH_ROW = 8;
 var TODAY_REFRESH_COL = 2;
 
-var TODAY_TABLE_HEADER_ROW = 10;
-var TODAY_TABLE_FIRST_ROW = 11;
-var TODAY_TABLE_LAST_ROW = 40;
+var TODAY_TABLE_HEADER_ROW = 11;
+var TODAY_TABLE_FIRST_ROW = 12;
+var TODAY_TABLE_LAST_ROW = 41;
 
 // v7.4: sections below the Commit/Options table - "Needs planning"
 // (Multi-day Phase 1), "Progress" (replaces the capacity-fit formula +
 // done counter), and "End of day" (relocated from a menu-only action).
-var TODAY_NEEDS_PLANNING_HEADER_ROW = 42;
-var TODAY_NEEDS_PLANNING_FIRST_ROW = 43;
-var TODAY_NEEDS_PLANNING_LAST_ROW = 47;   // 5 rows max
+var TODAY_NEEDS_PLANNING_HEADER_ROW = 43;
+var TODAY_NEEDS_PLANNING_FIRST_ROW = 44;
+var TODAY_NEEDS_PLANNING_LAST_ROW = 48;   // 5 rows max
 
-var TODAY_PROGRESS_HEADER_ROW = 49;
-var TODAY_PROGRESS_LINE1_ROW = 50;
-var TODAY_PROGRESS_LINE2_ROW = 51;
+var TODAY_PROGRESS_HEADER_ROW = 50;
+var TODAY_PROGRESS_LINE1_ROW = 51;
+var TODAY_PROGRESS_LINE2_ROW = 52;
 
-var TODAY_ENDOFDAY_HEADER_ROW = 53;
-var TODAY_ENDOFDAY_ROW = 54;
+var TODAY_ENDOFDAY_HEADER_ROW = 54;
+var TODAY_ENDOFDAY_ROW = 55;
 var TODAY_ENDOFDAY_COL = 2;
 
 // Multi-day tasks flagged [needs planning] after this many days
@@ -7166,7 +7166,7 @@ function ensureTodaySheet() {
 }
 
 function hardResetTodaySheet(sheet) {
-  var maxRows = Math.max(sheet.getMaxRows(), TODAY_ENDOFDAY_ROW);
+  var maxRows = Math.max(sheet.getMaxRows(), TODAY_ENDOFDAY_ROW + 1);
   var maxCols = Math.max(sheet.getMaxColumns(), HEADERS["Today's plan"].length);
   try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
   try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
@@ -7178,6 +7178,40 @@ function hardResetTodaySheet(sheet) {
 function clearTodayPlanHeadlineValidation(sheet) {
   try { sheet.getRange('B3:I3').clearDataValidations(); } catch (err) { }
   try { sheet.getRange('B3').clearDataValidations(); } catch (err2) { }
+}
+
+function setTodayWhatNow(sheet, text, isWarning) {
+  if (!sheet) return;
+  sheet.getRange('B4:I4').merge()
+    .setValue('What now: ' + text)
+    .setFontSize(10)
+    .setFontWeight('bold')
+    .setFontColor(isWarning ? '#964219' : HEADER_COLOR)
+    .setBackground(isWarning ? '#FDE9D9' : '#EAF4F5')
+    .setWrap(true);
+}
+
+function todayWhatNowForSelection(selection, availableMinutes) {
+  if (!selection || !selection.commit || !selection.commit.length) {
+    if (selection && selection.options && selection.options.length) return 'No committed task fits this capacity. Pull in an option, add time, or change focus.';
+    return 'No committed work yet. Build again after changing focus, adding time, or capturing new work from Home.';
+  }
+  var planned = selection.minutesUsed || 0;
+  if (planned > availableMinutes) return 'Start with fixed or blocking work, then defer or skip what will not fit.';
+  return 'Work the committed list from top to bottom. Use Options only if you have extra capacity.';
+}
+
+function renderTodayEmptyState(sheet, selection) {
+  if (!sheet || (selection && selection.commit && selection.commit.length)) return;
+  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 2, 3, 7).breakApart(); } catch (err) { }
+  var text = selection && selection.options && selection.options.length
+    ? 'No committed tasks fit. Review Options below, add time, or change Today focus.'
+    : 'No committed tasks yet. Try changing focus, increasing available minutes, or capturing new work from Home.';
+  sheet.getRange(TODAY_TABLE_FIRST_ROW, 2, 1, 7).merge()
+    .setValue(text)
+    .setFontColor('#5F625E')
+    .setBackground(AUTO_COLOR)
+    .setWrap(true);
 }
 
 function bootstrapToday() {
@@ -7202,36 +7236,37 @@ function bootstrapToday() {
   // placeholder with the real counts once stagedTodaySelection has run.
   clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3:I3').merge()
-    .setValue("Plan not built yet - tick below to build today's plan.")
+    .setValue("Build today's plan to start.")
     .setFontWeight('bold')
     .setFontColor(HEADER_COLOR)
     .setWrap(true);
+  setTodayWhatNow(sheet, 'Choose focus, minutes, and energy, then build Today.', false);
 
-  sheet.getRange('B4').setValue('Today focus').setFontWeight('bold');
+  sheet.getRange('B5').setValue('Today focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
   setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
-  sheet.getRange('B4').setNote("Today focus is a preference, not a hard filter. Changing it rebuilds Today now.");
+  sheet.getRange('B5').setNote("Today focus is a preference, not a hard filter. Changing it rebuilds Today now.");
   sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Matching active-pursuit work is preferred first. If time remains, other ready work can still appear. Existing Done/Blocked status changes are not overwritten.");
 
-  sheet.getRange('B5').setValue('Available minutes').setFontWeight('bold');
+  sheet.getRange('B6').setValue('Available minutes').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(90).setNumberFormat('0');
-  sheet.getRange('B5').setNote("Available minutes is today's capacity. Changing it rebuilds Today now.");
+  sheet.getRange('B6').setNote("Available minutes is today's capacity. Changing it rebuilds Today now.");
   sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setNote("Lower minutes can flag or drop flexible work. Higher minutes can pull in extra ready work. Source tabs change only when task status changes.");
 
-  sheet.getRange('B6').setValue('Energy').setFontWeight('bold');
+  sheet.getRange('B7').setValue('Energy').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
-  sheet.getRange('B6').setNote("Energy is a preference for refitting Today. Changing it rebuilds Today now.");
+  sheet.getRange('B7').setNote("Energy is a preference for refitting Today. Changing it rebuilds Today now.");
   sheet.getRange(TODAY_CELLS.ENERGY).setNote("Low energy pushes deep work lower where possible. Normal keeps the usual priority waterfall.");
 
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
     .setValue('Build or refresh Today').setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setNote("Tick to rebuild Today from Tasks using the current focus, minutes, and energy.");
-  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1).setNote("Build / refresh preserves same-day notes and locked or pulled rows, then re-fits work from Tasks.");
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1).setNote("Build or refresh preserves same-day notes and locked or pulled rows, then re-fits work from Tasks.");
 
   sheet.getRange(TODAY_REFRESH_ROW + 1, TODAY_REFRESH_COL, 1, 7).merge()
-    .setValue('Change Today focus, Available minutes, or Energy to rebuild immediately. Use Build / refresh when Tasks changed elsewhere. Today re-fits work from Tasks; source tabs update only when you change task status.')
+    .setValue('Change focus, minutes, or energy to refit Today. Focus is a preference; deadlines and blocked work still come first. Refresh if Tasks changed elsewhere.')
     .setFontSize(9)
     .setFontStyle('italic')
     .setFontColor(HEADER_COLOR)
@@ -7254,8 +7289,12 @@ function bootstrapToday() {
   sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_ENDOFDAY_ROW, TODAY_ENDOFDAY_COL + 1, 1, 6).merge()
     .setValue('Wrap up unfinished tasks').setFontWeight('bold').setFontColor('#01696F').setBackground('#EAF4F5');
+  sheet.getRange(TODAY_ENDOFDAY_ROW + 1, TODAY_ENDOFDAY_COL + 1, 1, 6).merge()
+    .setValue('Use this when you are done for the day. The planner will ask what to carry, defer, block, or skip.')
+    .setFontSize(9).setFontColor('#5F625E').setWrap(true);
 
   applyTodayTableHeaderStyle();
+  renderTodayEmptyState(sheet, null);
 }
 
 // -------------------------------------------------------------
@@ -7715,8 +7754,8 @@ function todayCapacityHeadline(selection, availableMinutes) {
   var minimumText = 'Minimum day: ' + minimumCount + ' task' + (minimumCount === 1 ? '' : 's') + ', ' + minimumMin + ' min.';
   if (!selection.commit.length) {
     return selection.options.length
-      ? 'Today is ready - nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
-      : 'Today is ready - nothing committed yet.';
+      ? 'No committed tasks fit in ' + availableMinutes + ' min - ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' available.'
+      : 'No committed tasks today.';
   }
   if (required > availableMinutes) return 'Deadline/blocking work exceeds capacity - ' + required + ' min required, ' + availableMinutes + ' available. ' + minimumText;
   if (planned > availableMinutes) return 'Today is over capacity - ' + planned + ' min planned against ' + availableMinutes + ' available; over by ' + (planned - availableMinutes) + ' min. ' + minimumText;
@@ -7737,7 +7776,10 @@ function populateTodayImpl() {
   var selection = stagedTodaySelection(previousState, availableMinutes, focus, energy);
 
   setTodayPlanBuiltDate(today());
-  sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent();
+  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).breakApart(); } catch (err) { }
+  sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent().clearNote().setBackground(null);
+  sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1).setBackground(MANUAL_COLOR);
+  sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setBackground(MANUAL_COLOR);
 
   var row = TODAY_TABLE_FIRST_ROW;
   var overflowCount = 0;
@@ -7757,24 +7799,20 @@ function populateTodayImpl() {
   applyTodayRowStatusDropdowns(sheet);
 
   var unplannedMin = Math.max(0, availableMinutes - selection.minutesUsed);
-  var headline = selection.commit.length
-    ? 'Today’s plan is ready — ' + selection.commit.length + ' task' + (selection.commit.length === 1 ? '' : 's') +
-      ' · ' + selection.minutesUsed + ' min planned · ' + unplannedMin + ' min unplanned'
-    : (selection.options.length
-      ? 'Today’s plan is ready — nothing fits in ' + availableMinutes + ' min; ' + selection.options.length + ' option' + (selection.options.length === 1 ? '' : 's') + ' below.'
-      : 'Today’s plan is ready — nothing committed yet.');
   clearTodayPlanHeadlineValidation(sheet);
-  headline = todayCapacityHeadline(selection, availableMinutes);
+  var headline = todayCapacityHeadline(selection, availableMinutes);
   sheet.getRange('B3').setValue(headline).setNote(todayPlanBuiltDateNote(today()) +
     '\nMinimum day: ' + (selection.minimumCount || 0) + ' task(s), ' + (selection.minimumMin || 0) + ' min' +
     '\nRecommended day: ' + selection.commit.length + ' task(s), ' + selection.minutesUsed + ' min' +
     '\nBuffer kept: ' + (selection.bufferMin || 0) + ' min');
+  setTodayWhatNow(sheet, todayWhatNowForSelection(selection, availableMinutes), false);
+  renderTodayEmptyState(sheet, selection);
 
   renderTodayDecisionCards();
   renderNeedsPlanning(sheet);
   updateTodayProgress(sheet);
   refreshHome();
-  var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + unplannedMin + ' min unplanned.';
+  var toastMsg = 'Today refreshed - ' + selection.commit.length + ' commit, ' + selection.options.length + ' option(s), ' + unplannedMin + ' min spare.';
   if (overflowCount > 0) toastMsg = overflowCount + ' committed task(s) did not fit on Today - see Tasks. ' + toastMsg;
   SpreadsheetApp.getActiveSpreadsheet().toast(toastMsg, 'The Planner', 6);
 }
@@ -7869,7 +7907,7 @@ function renderNeedsPlanning(sheet) {
   try { sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, limit, 7).breakApart(); } catch (err) { /* not merged, ignore */ }
   sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, limit, 7).clearContent();
   if (!items.length) {
-    sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs planning.').setFontColor('#5F625E');
+    sheet.getRange(TODAY_NEEDS_PLANNING_FIRST_ROW, 2, 1, 7).merge().setValue('Nothing needs planning. Today only shows executable work.').setFontColor('#5F625E');
     return;
   }
   items.forEach(function (item, idx) {
@@ -7913,6 +7951,11 @@ function updateTodayProgress(sheet) {
       var actualMin = parseInt(sheet.getRange(r, COLS.TODAY.ACTUAL_MIN).getValue(), 10);
       doneMin += (actualMin || estMin);
     }
+  }
+  if (!totalCommit) {
+    sheet.getRange(TODAY_PROGRESS_LINE1_ROW, 2, 1, 7).merge().setValue('No committed tasks yet.').setFontWeight('bold').setFontColor('#5F625E');
+    sheet.getRange(TODAY_PROGRESS_LINE2_ROW, 2, 1, 7).merge().setValue('Build Today, add capacity, or capture new work from Home.').setFontColor('#5F625E');
+    return;
   }
   sheet.getRange(TODAY_PROGRESS_LINE1_ROW, 2, 1, 7).merge().setValue(doneCommit + ' of ' + totalCommit + ' tasks done').setFontWeight('bold').setFontColor('#1B474D');
   sheet.getRange(TODAY_PROGRESS_LINE2_ROW, 2, 1, 7).merge().setValue(doneMin + ' of ' + plannedMin + ' planned minutes completed').setFontColor('#5F625E');
@@ -8752,7 +8795,20 @@ function homeAttentionActionHint(items) {
 function shouldShowRestartTodayCue(maint, planCounts) {
   maint = maint || readMaintenanceHealth();
   planCounts = planCounts || todayPlanCounts();
-  return !!(maint.error || maint.stale || maint.weeklyStale || planCounts.unverified);
+  return !!(maint.error || maint.stale || maint.weeklyStale || planCounts.stale || planCounts.unverified);
+}
+
+function homeWhatNowText(planCounts, attentionItems, decisionCount) {
+  planCounts = planCounts || todayPlanCounts();
+  attentionItems = attentionItems || [];
+  decisionCount = decisionCount || 0;
+  if (attentionItems.length) return 'Review the Needs attention line, then come back to Today.';
+  if (decisionCount) return 'Resolve ' + decisionCount + ' decision' + (decisionCount === 1 ? '' : 's') + ', then work from Today.';
+  if (planCounts.stale) return 'Build or refresh Today before starting.';
+  if (!planCounts.built) return 'Open Today and build today\'s plan.';
+  if (planCounts.commit > 0) return 'Open Today and work the committed list.';
+  if (planCounts.options > 0) return 'Open Today, add time, or pull in an option.';
+  return 'Capture an update from Home, or adjust Today focus and capacity.';
 }
 
 function hardResetHomeSheet(sheet) {
@@ -8772,7 +8828,7 @@ function hardResetHomeSheet(sheet) {
 // A row counts as Commit unless its Slot cell starts with 'O' (Option
 // rows are written as 'O1', 'O2', ... by writeTodayRow).
 function todayPlanCounts() {
-  var result = { built: false, unverified: false, commit: 0, minutes: 0, options: 0, headline: '' };
+  var result = { built: false, stale: false, unverified: false, commit: 0, minutes: 0, options: 0, headline: '' };
   var sheet = getSheet('Today');
   if (!sheet) return result;
   result.headline = String(sheet.getRange('B3').getValue() || '');
@@ -8791,13 +8847,30 @@ function todayPlanCounts() {
     }
   }
   result.built = verifiedBuilt;
-  var notBuiltHeadline = /not built/i.test(result.headline);
+  var notBuiltHeadline = /(not built|build today)/i.test(result.headline);
+  var hasBuildDate = !!(builtDate || noteDate);
+  result.stale = !result.built && hasBuildDate && !notBuiltHeadline;
   var builtLookingHeadline = /(ready|realistic|tight|over capacity|nothing committed|no ready tasks)/i.test(result.headline);
-  if (!result.built && !notBuiltHeadline && (result.commit + result.options > 0 || builtLookingHeadline)) {
+  if (!result.built && !result.stale && !notBuiltHeadline && (result.commit + result.options > 0 || builtLookingHeadline)) {
     result.built = true;
     result.unverified = true;
   }
   return result;
+}
+
+function refreshTodayStaleState() {
+  var sheet = getSheet('Today');
+  if (!sheet) return;
+  var counts = todayPlanCounts();
+  if (!counts.stale) return;
+  clearTodayPlanHeadlineValidation(sheet);
+  sheet.getRange('B3:I3').merge()
+    .setValue('Today may be stale - refresh before starting.')
+    .setFontWeight('bold')
+    .setFontColor('#964219')
+    .setBackground('#FDE9D9')
+    .setWrap(true);
+  setTodayWhatNow(sheet, 'Build or refresh Today before you start working the plan.', true);
 }
 
 function formatDateFriendly(d) {
@@ -8963,6 +9036,7 @@ function monthlyPipelineSummary(stats) {
 function refreshHome() {
   var sheet = getSheet('Home');
   if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Home', 0);
+  refreshTodayStaleState();
   hardResetHomeSheet(sheet);
   sheet.setTabColor(ZONE_WORK_COLOR);
 
@@ -8975,6 +9049,10 @@ function refreshHome() {
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
   }
 
+  var planCounts = todayPlanCounts();
+  var attentionItems = collectHomeAttentionItems();
+  var decisionCount = pendingDecisionCount();
+
   // --- Onboarding card (§1.1) ---
   var profile = getSetupProfile();
   if (!profile) {
@@ -8984,10 +9062,10 @@ function refreshHome() {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
     }
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
-      .setValue(editReady ? 'Start onboarding' : 'Turn on Planner to start')
+      .setValue(editReady ? 'Add starting facts' : 'Turn on Planner to start')
       .setFontWeight('bold').setFontColor(editReady ? '#01696F' : '#964219').setBackground(editReady ? '#EAF4F5' : '#FCE8E6');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue(editReady ? 'Use the checkbox above or The Planner > Add or update starting facts. Existing planner data is kept.' : 'Run The Planner > Setup & automation > Turn on Planner, then come back here.')
+      .setValue(editReady ? 'Add or revise the facts the planner starts from. Existing planner data is kept.' : 'Run The Planner > Setup & automation > Turn on Planner, then come back here.')
       .setWrap(true).setFontColor('#5F625E');
   } else if (shouldShowSetupCard(profile)) {
     if (editReady) {
@@ -9006,10 +9084,12 @@ function refreshHome() {
       .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
-      .setValue('Setup options')
+      .setValue('Starting facts')
       .setNote('Reopens setup to add or update starting facts. To clear planner data, use Maintenance > Start fresh.')
       .setFontSize(9).setFontColor('#7A7974');
-    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue('Welcome back. Let’s get you organised for today.').setFontColor('#5F625E');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
+      .setValue('What now: ' + homeWhatNowText(planCounts, attentionItems, decisionCount))
+      .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground('#EAF4F5').setWrap(true);
   }
   var guideSheetForHome = getSheet('Guide');
   if (guideSheetForHome) {
@@ -9019,7 +9099,6 @@ function refreshHome() {
   }
 
   // --- Pending Decisions (§1.2) — kept inline, near-zero friction ---
-  var attentionItems = collectHomeAttentionItems();
   if (attentionItems.length) {
     sheet.getRange(HOME_ATTENTION_ROW, 2, 1, 5).merge()
       .setValue('Needs attention: ' + attentionItems.slice(0, 3).join(' - ') + (attentionItems.length > 3 ? ' - +' + (attentionItems.length - 3) + ' more' : ''))
@@ -9034,7 +9113,7 @@ function refreshHome() {
   renderDecisionCards(sheet, HOME_DECISIONS_ID_ROW, HOME_DECISIONS_ACTION_ROW, HOME_DECISIONS_MORE_ROW);
 
   // --- Capture update (§1.3) — the primary capture surface now ---
-  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Add or update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(HOME_UPDATE_HEADER_ROW, 2, 1, 5).merge().setValue('Capture update').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   if (editReady) {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
@@ -9044,13 +9123,16 @@ function refreshHome() {
   }
 
   // --- Today's plan hero (§1.4) — replaces the raw open-task count ---
-  sheet.getRange(HOME_PLAN_HEADER_ROW, 2, 1, 5).merge().setValue('Today’s plan').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
-  var planCounts = todayPlanCounts();
+  sheet.getRange(HOME_PLAN_HEADER_ROW, 2, 1, 5).merge().setValue('Today').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   var heroText = 'Not built yet.';
-  if (planCounts.built && planCounts.commit > 0) heroText = 'Ready — ' + planCounts.commit + ' tasks, ' + planCounts.minutes + ' minutes.';
-  else if (planCounts.built) heroText = 'Built — nothing committed today.';
+  var heroColor = '#1B474D';
+  if (planCounts.stale) {
+    heroText = 'Today may be stale - refresh before starting.';
+    heroColor = '#964219';
+  } else if (planCounts.built && planCounts.commit > 0) heroText = 'Ready - ' + planCounts.commit + ' tasks, ' + planCounts.minutes + ' minutes.';
+  else if (planCounts.built) heroText = 'Built - nothing committed today.';
   if (planCounts.built && planCounts.headline) heroText = planCounts.headline;
-  sheet.getRange(HOME_PLAN_STATUS_ROW, 2, 1, 5).merge().setValue(heroText).setFontWeight('bold').setFontColor('#1B474D');
+  sheet.getRange(HOME_PLAN_STATUS_ROW, 2, 1, 5).merge().setValue(heroText).setFontWeight('bold').setFontColor(heroColor);
   var todaySheetForLink = getSheet('Today');
   if (todaySheetForLink) {
     var todayAction = planCounts.built && planCounts.commit > 0
@@ -9059,8 +9141,9 @@ function refreshHome() {
     sheet.getRange(HOME_PLAN_START_ROW, 2).setFormula('=HYPERLINK("#gid=' + todaySheetForLink.getSheetId() + '","' + todayAction + '")').setFontColor('#01696F').setFontWeight('bold');
   }
   var planSubline = taskQueueSummary();
-  if (planCounts.unverified) planSubline = planSubline + ' Today has a visible plan, but the build date is not verified - refresh Today if this looks stale.';
-  if (!planCounts.built) planSubline = planSubline + " On Today, tick Build or refresh Today.";
+  if (planCounts.stale) planSubline = planSubline + ' Build or refresh Today to update the plan.';
+  else if (planCounts.unverified) planSubline = planSubline + ' Today has a visible plan, but the build date is not verified - refresh Today if this looks stale.';
+  if (!planCounts.built && !planCounts.stale) planSubline = planSubline + " On Today, tick Build or refresh Today.";
   else if (planCounts.commit === 0) planSubline = planSubline + ' Open Today to see options, or add more available minutes.';
   sheet.getRange(HOME_PLAN_SUBLINE_ROW, 2, 1, 5).merge().setValue(planSubline).setFontSize(9).setFontColor('#8A8D87');
 
@@ -9104,8 +9187,10 @@ function refreshHome() {
   // --- Refresh (§1.6) — demoted utility control for re-reading Home status ---
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1, 1, 4).merge()
-    .setValue('Refresh Home from Tasks, Today, and Decisions')
+    .setValue('Refresh Home')
     .setFontSize(9).setFontColor('#8A8D87');
+  sheet.getRange(HOME_REFRESH_ROW, HOME_REFRESH_COL + 1)
+    .setNote('Updates this page from Today, Tasks, Decisions, applications, and scheduled items.');
 
   var maint = readMaintenanceHealth();
   if (shouldShowRestartTodayCue(maint, planCounts)) {
@@ -10711,8 +10796,8 @@ var HEADER_GUIDANCE = {
     'Expected response / follow-up date': 'Creates or updates interview follow-up timing.', 'Notes': 'Prep context, debrief, interviewers, and repair flags.'
   },
   "Today's plan": {
-    'Slot': 'Commit or option.', 'Task': 'Selected from Tasks.', 'Linked Task ID': 'Filled automatically.', 'Estimated min': 'Planned time.', 'Plan': 'Commit or Option.',
-    'Effort': 'Light/medium/deep.', 'Status': 'Planned / In progress / Blocked / Done / Deferred / Skipped.', 'Actual min': 'Optional actual time.', 'Why / notes': 'Reason tags plus your notes; hover for the full Why.'
+    '#': 'Today order or option number.', 'Task': 'Selected from Tasks.', 'ID': 'Filled automatically.', 'Min': 'Planned time.', 'Section': 'Today or Option.',
+    'Effort': 'Light/medium/deep.', 'Status': 'Tick Done here.', 'Actual': 'Optional actual time.', 'Why / notes': 'Your notes; hover for why it appeared.'
   },
   'Pending decisions': {
     'Decision ID': 'Filled automatically.', 'Created': 'Filled automatically.', 'Decision key': 'Filled automatically.', 'Trigger': 'Why this decision exists.', 'Suggested action': 'What you are deciding.',
