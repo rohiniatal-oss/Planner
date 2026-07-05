@@ -11743,10 +11743,15 @@ function logInteractionForRow() {
 function softCloseRow() {
   var sheet = SpreadsheetApp.getActiveSheet();
   var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
-  if (sheet.getName() !== 'People' && sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in People or Jobs to soft-close.'); return; }
+  if (sheet.getName() !== 'People' && sheet.getName() !== 'Jobs') { SpreadsheetApp.getUi().alert('Select a row in People or Jobs to close.'); return; }
   withDocumentLock(function () {
-    if (sheet.getName() === 'People') closePerson(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed from row action.');
-    else setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
+    if (sheet.getName() === 'People') {
+      closePerson(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed from row action.');
+      SpreadsheetApp.getActiveSpreadsheet().toast('Person closed. Open follow-up work was cancelled.', 'The Planner', 4);
+    } else {
+      setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
+      SpreadsheetApp.getActiveSpreadsheet().toast('Job closed. Open application work was cancelled.', 'The Planner', 4);
+    }
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'softCloseRow' });
@@ -12352,7 +12357,7 @@ function buildMenu() {
       .addSeparator()
       .addItem('Link contact to selected Job row', 'linkContactToJob')
       .addItem('Log conversation for selected row', 'logInteractionForRow')
-      .addItem('Soft-close selected row', 'softCloseRow'))
+      .addItem('Close selected Person/Job row', 'softCloseRow'))
     .addSubMenu(ui.createMenu('Triggers & setup')
       .addItem('\u2605 Set up / verify triggers (run this first)', 'setUpTriggers')
       .addItem('Show trigger status', 'showTriggerStatus')
