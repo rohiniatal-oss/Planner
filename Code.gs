@@ -1984,6 +1984,42 @@ function captureTypeForDecision(ctx) {
   return '';
 }
 
+function captureDefaultsForDecision(ctx, captureType) {
+  var defaults = {};
+  if (ctx.targetType === 'Organisation') {
+    var org = getOrgById(ctx.targetId);
+    if (org) {
+      if (captureType === 'Add/update person' || captureType === 'Add/update job') defaults.org = org.name || '';
+      if (captureType === 'Add/update organisation') {
+        defaults.orgNames = org.name || '';
+        defaults.sector = isNeedsClassificationLabel(org.sector) ? '' : (org.sector || '');
+        defaults.subsector = org.subsector || '';
+        defaults.tier = org.tier || 'B';
+        defaults.status = org.status || 'Mapped';
+      }
+    }
+  }
+  if (ctx.targetType === 'Sector' && captureType === 'Find organisations') {
+    var branch = getSectorBranchById(ctx.targetId);
+    if (branch) {
+      defaults.sector = branch.sector || '';
+      defaults.subsector = branch.subsector || '';
+    }
+  }
+  if (ctx.targetType === 'Person' && captureType === 'Add/update conversation') {
+    var conversationPerson = getPersonRowById(ctx.targetId);
+    if (conversationPerson) {
+      defaults.person = conversationPerson.name || '';
+      defaults.org = conversationPerson.org || '';
+    }
+  }
+  if (ctx.targetType === 'Person' && captureType === 'Add/update job') {
+    var person = getPersonRowById(ctx.targetId);
+    if (person && person.org) defaults.org = person.org;
+  }
+  return defaults;
+}
+
 function resolveCaptureDataDecision(ctx) {
   var referralSearchTodoId = decisionKeySuffix(ctx.key, 'REFERRAL_SEARCH_DONE:');
   if (referralSearchTodoId) {
@@ -2002,7 +2038,7 @@ function resolveCaptureDataDecision(ctx) {
   var captureType = captureTypeForDecision(ctx);
   if (captureType) {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
-    runCapturePopup(captureType, ctx.id);
+    runCapturePopup(captureType, ctx.id, captureDefaultsForDecision(ctx, captureType));
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
@@ -2033,7 +2069,7 @@ function resolveUpdateSourceDecision(ctx) {
   if (String(ctx.key || '').indexOf('PERSON_REPLY_OUTCOME:') === 0) captureType = 'Add/update conversation';
   if (captureType) {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
-    runCapturePopup(captureType, ctx.id);
+    runCapturePopup(captureType, ctx.id, captureDefaultsForDecision(ctx, captureType));
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
@@ -9033,9 +9069,9 @@ function captureConfig(captureType) {
   return config[captureType] || config['Task completed / blocked'];
 }
 
-function buildCaptureHtml(captureType, decisionId) {
+function buildCaptureHtml(captureType, decisionId, presetFields) {
   var cfg = captureConfig(captureType);
-  var json = JSON.stringify({ captureType: captureType, decisionId: decisionId || '', title: cfg.title, fields: cfg.fields });
+  var json = JSON.stringify({ captureType: captureType, decisionId: decisionId || '', values: presetFields || {}, title: cfg.title, fields: cfg.fields });
   return '' +
     '<style>' +
     'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
@@ -9051,7 +9087,7 @@ function buildCaptureHtml(captureType, decisionId) {
     'if(field.t==="textarea"){input=document.createElement("textarea");}' +
     'else if(field.t==="select"){input=document.createElement("select");if(field.blank){var blank=document.createElement("option");blank.value="";blank.textContent="Select...";input.appendChild(blank);}(field.o||[]).forEach(function(v){var opt=document.createElement("option");opt.value=v;opt.textContent=v;input.appendChild(opt);});if(field.defaultValue!==undefined)input.value=field.defaultValue;}' +
     'else{input=document.createElement("input");input.type=field.t||"text";}' +
-    'input.name=field.k;if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
+    'input.name=field.k;if(cfg.values&&Object.prototype.hasOwnProperty.call(cfg.values,field.k))input.value=cfg.values[field.k];if(field.req)input.required=true;if(field.p)input.placeholder=field.p;label.appendChild(input);f.appendChild(label);});' +
     'function fieldVisible(field){if(field.showIf)return f.elements[field.showIf.k]&&f.elements[field.showIf.k].value===field.showIf.v;if(field.showIfAny)return field.showIfAny.some(function(rule){return f.elements[rule.k]&&f.elements[rule.k].value===rule.v;});if(field.showIfSet)return !!(f.elements[field.showIfSet]&&f.elements[field.showIfSet].value);return true;}' +
     'function updateConditional(){cfg.fields.forEach(function(field,idx){var label=f.children[idx];label.style.display=fieldVisible(field)?"block":"none";});}' +
     'Array.prototype.forEach.call(f.elements,function(el){el.onchange=updateConditional;});updateConditional();' +
@@ -9063,9 +9099,9 @@ function buildCaptureHtml(captureType, decisionId) {
     '.completeCaptureFromPopup({captureType:cfg.captureType,decisionId:cfg.decisionId,fields:fields});}</script>';
 }
 
-function runCapturePopup(captureType, decisionId) {
+function runCapturePopup(captureType, decisionId, presetFields) {
   if (!captureType || captureType === 'No updates') return;
-  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType, decisionId || '')).setWidth(600).setHeight(600).setTitle(captureType);
+  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType, decisionId || '', presetFields || {})).setWidth(600).setHeight(600).setTitle(captureType);
   SpreadsheetApp.getUi().showModalDialog(html, captureType);
 }
 
