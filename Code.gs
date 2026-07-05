@@ -10951,6 +10951,8 @@ function addAdHocTodo() {
   if (!task) { ui.alert('Task description required.', ui.ButtonSet.OK); return; }
   withDocumentLock(function () {
     appendTodoWithSource(task, 'None', '', '', 'Admin', 'Not started', '', '30 min', '', 'Manually added');
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'addAdHocTodo' });
   SpreadsheetApp.getActiveSpreadsheet().toast('Task added.', 'The Planner', 3);
 }
@@ -11300,16 +11302,19 @@ function logInteractionForRow() {
   var name = sheet.getName();
   var row = sheet.getActiveRange().getRow();
   if (row <= 1 || (name !== 'People' && name !== 'Jobs')) { SpreadsheetApp.getUi().alert('Select a data row in People or Jobs.'); return; }
-  var ui = SpreadsheetApp.getUi();
-  var resp = ui.prompt('Log conversation', 'Key notes:', ui.ButtonSet.OK_CANCEL);
-  if (resp.getSelectedButton() !== ui.Button.OK) return;
-  var notes = resp.getResponseText().trim();
-  var personId = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ID).getValue() : '';
-  var person = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.NAME).getValue() : '';
-  var org = name === 'People' ? sheet.getRange(row, COLS.PEOPLE.ORG).getValue() : sheet.getRange(row, COLS.JOBS.ORG).getValue();
-  withDocumentLock(function () {
-    appendInteraction(personId, person, org, today(), 'Other', notes, 'Useful');
-  }, { label: 'logInteractionForRow' });
+  var defaults = { date: formatDateHuman(today()), status: 'Completed' };
+  if (name === 'People') {
+    defaults.person = sheet.getRange(row, COLS.PEOPLE.NAME).getValue();
+    defaults.org = sheet.getRange(row, COLS.PEOPLE.ORG).getValue();
+  } else {
+    defaults.org = sheet.getRange(row, COLS.JOBS.ORG).getValue();
+    var contactIds = parseLinkedContactIds(sheet.getRange(row, COLS.JOBS.CONTACTS_IDS).getValue());
+    if (contactIds.length === 1) {
+      var contact = getPersonRowById(contactIds[0]);
+      if (contact) defaults.person = contact.name || '';
+    }
+  }
+  runCapturePopup('Add/update conversation', '', defaults);
 }
 
 function softCloseRow() {
@@ -11319,6 +11324,8 @@ function softCloseRow() {
   withDocumentLock(function () {
     if (sheet.getName() === 'People') closePerson(sheet.getRange(row, COLS.PEOPLE.ID).getValue(), 'Closed from row action.');
     else setJobStatus(sheet.getRange(row, COLS.JOBS.ID).getValue(), 'Closed', {});
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }, { label: 'softCloseRow' });
 }
 
