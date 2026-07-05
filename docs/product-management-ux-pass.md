@@ -206,6 +206,26 @@ Non-goals:
 - Do not add people follow-up task lists to Home.
 - Do not redesign Today in this change.
 
+## Current Improvement: Today Control Guidance
+
+User story:
+As a daily user changing focus, available minutes, or energy, I need the Today sheet to tell me what the next refresh will affect, so that I do not think the planner is silently changing source records or ignoring my capacity.
+
+Current pain:
+The menu and checkbox now use the right action name, but the sheet still expects the user to know that Focus, Available minutes, and Energy only affect the next Today rebuild.
+
+Target experience:
+The Today control area says to change Focus, Available minutes, or Energy, then tick Build / refresh. Notes on the controls explain that Today re-fits work from Tasks, preserves same-day state, and only updates source tabs when task status changes.
+
+Implementation:
+Only `bootstrapToday` copy/notes change. No task selection, status sync, source cascade, schema, or dropdown logic changes.
+
+Acceptance tests:
+1. Today row 7 still has the Build / refresh Today's plan checkbox action.
+2. Today row 8 explains how Focus, Available minutes, and Energy affect the next refresh.
+3. Focus, Available minutes, Energy, and refresh cells have notes explaining their effect.
+4. No source tab or task-selection logic changes.
+
 ## Current Improvement: Workbook Header Hints
 
 User story:

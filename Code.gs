@@ -7068,17 +7068,33 @@ function bootstrapToday() {
   sheet.getRange('B4').setValue('Focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
   setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
+  sheet.getRange('B4').setNote("Focus changes which active-pursuit tasks are preferred on the next build / refresh.");
+  sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Choose the focus for the next build / refresh. Existing Done/Blocked status changes are not overwritten.");
 
   sheet.getRange('B5').setValue('Available minutes').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(90).setNumberFormat('0');
+  sheet.getRange('B5').setNote("Available minutes is today's capacity. Change it, then build / refresh to re-fit committed work and options.");
+  sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setNote("If minutes go down, over-capacity work is flagged in the headline. If minutes go up, extra ready work can appear from Options or Tasks.");
 
   sheet.getRange('B6').setValue('Energy').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
+  sheet.getRange('B6').setNote("Energy tunes what kind of work is a good fit for the next build / refresh.");
+  sheet.getRange(TODAY_CELLS.ENERGY).setNote("Low energy favors lighter work where possible. Normal keeps the usual priority waterfall.");
 
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
     .setValue("Build / refresh Today's plan").setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setNote("Tick to rebuild Today from Tasks using the current focus, minutes, and energy.");
+  sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1).setNote("Build / refresh preserves same-day notes and locked or pulled rows, then re-fits work from Tasks.");
+
+  sheet.getRange(TODAY_REFRESH_ROW + 1, TODAY_REFRESH_COL, 1, 7).merge()
+    .setValue('Change Focus, Available minutes, or Energy, then tick Build / refresh. Today re-fits work from Tasks; source tabs update only when you change task status.')
+    .setFontSize(9)
+    .setFontStyle('italic')
+    .setFontColor(HEADER_COLOR)
+    .setBackground(AUTO_COLOR)
+    .setWrap(true);
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);
