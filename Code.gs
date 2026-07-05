@@ -5013,6 +5013,20 @@ function onEditJobs(sheet, row, col, newVal, e) {
     requestHomeRefresh();
     return;
   }
+  if (col === COLS.JOBS.APPLIED_DATE) {
+    var submittedJobId = String(sheet.getRange(row, COLS.JOBS.ID).getValue() || '');
+    if (!submittedJobId) return;
+    if (newVal) {
+      updateJobSubmittedDates(submittedJobId, newVal);
+    } else {
+      sheet.getRange(row, COLS.JOBS.REVIEW_DATE).clearContent();
+      syncOpenJobResponseCheckDate(submittedJobId, '');
+    }
+    syncJobsPeopleHealthFlags();
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
+    return;
+  }
   if (col === COLS.JOBS.RESPONSE && String(newVal) === 'Yes') {
     var responseJobId = sheet.getRange(row, COLS.JOBS.ID).getValue() || nextId(sheet, COLS.JOBS.ID, 'JOB');
     sheet.getRange(row, COLS.JOBS.ID).setValue(responseJobId);
@@ -10417,7 +10431,7 @@ var MANUAL_COLUMNS = {
   'Sectors': [COLS.SECTORS.SECTOR, COLS.SECTORS.SUBSECTOR, COLS.SECTORS.STATUS, COLS.SECTORS.NOTES],
   'Organisations': [COLS.ORGS.NAME, COLS.ORGS.SECTOR, COLS.ORGS.SUBSECTOR, COLS.ORGS.TIER, COLS.ORGS.STATUS, COLS.ORGS.NOTES],
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
-  'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
+  'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.APPLIED_DATE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
   'To-do': [COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP, COLS.TODO.BLOCKER],
   'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
@@ -10428,7 +10442,7 @@ var COLUMN_WIDTHS = {
   'Sectors': { 2: 190, 4: 260, 5: 100, 6: 300 },
   'Organisations': { 2: 220, 4: 170, 6: 220, 7: 70, 8: 120, 9: 135, 10: 165, 13: 300 },
   'People': { 2: 190, 3: 200, 5: 170, 6: 175, 7: 185, 8: 125, 9: 120, 11: 125, 12: 135, 13: 300, 15: 125, 16: 260, 17: 260 },
-  'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 9: 220, 11: 130, 12: 170, 13: 320 },
+  'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 7: 125, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 135, 8: 320, 9: 160 },
   'To-do': { 2: 340, 7: 125, 8: 120, 9: 115, 10: 320, 14: 130, 19: 70, 20: 200, 21: 100, 22: 100, 23: 150, 24: 120, 25: 70, 26: 220, 27: 125, 28: 150, 29: 240 },
   'Interview rounds': { 3: 220, 4: 190, 5: 80, 6: 140, 7: 125, 8: 125, 9: 150, 10: 145, 11: 145, 12: 300 },
@@ -10584,7 +10598,7 @@ function columnToLetter(col) {
 function hiddenColumnsFor(canonicalName) {
   if (canonicalName === 'Today') return [COLS.TODAY.SLOT, COLS.TODAY.TODO_ID, COLS.TODAY.CLASS, COLS.TODAY.EFFORT, COLS.TODAY.ACTUAL_MIN];
   if (canonicalName === 'Organisations') return [COLS.ORGS.ID, COLS.ORGS.SECTOR_ID, COLS.ORGS.SUBSECTOR_ID, COLS.ORGS.LAST_CHECKED, COLS.ORGS.NEXT_CHECK];
-  if (canonicalName === 'Jobs') return [COLS.JOBS.ID, COLS.JOBS.ORG_ID, COLS.JOBS.APPLIED_DATE, COLS.JOBS.CONTACTS_IDS, COLS.JOBS.REVIEW_DATE];
+  if (canonicalName === 'Jobs') return [COLS.JOBS.ID, COLS.JOBS.ORG_ID, COLS.JOBS.CONTACTS_IDS, COLS.JOBS.REVIEW_DATE];
   if (canonicalName === 'People') return [COLS.PEOPLE.ID, COLS.PEOPLE.ORG_ID, COLS.PEOPLE.FOLLOW_UP_SENT, COLS.PEOPLE.FOLLOW_UPS_SENT_COUNT];
   if (canonicalName === 'Conversations') return [COLS.INTERACTIONS.ID, COLS.INTERACTIONS.PERSON_ID];
   // v7.6 §2.1: Commitment class unhidden — it's the single most important

@@ -482,3 +482,73 @@ Verification:
 - Apps Script syntax check with bundled Node
 - Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
 - HEADERS/COLS schema check clean
+
+## Stage 4 - Column Ownership And Field Lineage
+
+Required output:
+
+| Tab | Column | Role | Owner | Editable? | Source of value | Read by | Triggers logic? | Flows to | Failure mode | Fix |
+|---|---|---|---|---:|---|---|---:|---|---|---|
+| Jobs | Submitted date | Date / scheduling | User + application submission flows | Yes | Application popup, onboarding application capture, submit-application popup, direct edit | `fireJobStatusChanged`, `updateJobSubmittedDates`, response-check materialization, Home open applications | Yes | Next response check, response-check Tasks, Home application state | Column was hidden and auto-colored despite being a user-meaningful source fact | Unhide, manual-color, width, and direct-edit sync |
+
+Stage 4 findings:
+
+## Issue: Jobs Submitted date was hidden even though it is a user-owned source fact
+
+Severity: P1
+
+Stage: 4
+Area: Column ownership and field lineage
+Tab/surface: Jobs
+Column/function: `COLS.JOBS.APPLIED_DATE`, `hiddenColumnsFor`, `MANUAL_COLUMNS`, `onEditJobs`, `updateJobSubmittedDates`
+
+Evidence:
+- Code evidence: `HEADERS.Jobs` labels column 7 as `Submitted date`, and multiple capture/submission paths write it as the actual application submission date.
+- Code evidence: `hiddenColumnsFor('Jobs')` still hid `COLS.JOBS.APPLIED_DATE`, and `MANUAL_COLUMNS.Jobs` did not include it, so the sheet treated it as system-only.
+- Code evidence: `updateJobSubmittedDates(jobId, submittedDate)` already recalculates `Next response check` and syncs open response-check task dates, but direct edits to column 7 did not call it.
+
+Current behaviour:
+The date that anchors application response tracking is captured and used by automation, but is not visible/editable on the Jobs source tab.
+
+Expected behaviour:
+`Submitted date` should be visible and manual-colored on Jobs. If the user corrects it, the planner should recompute `Next response check` and update the open response-check task.
+
+User impact:
+The Jobs tab becomes honest: a user can see and fix the date that drives response checks.
+
+Workflow impact:
+Application submitted -> response check timing remains consistent whether the date comes from popup, onboarding, task completion, or direct Jobs edit.
+
+Data/integrity impact:
+Medium-high. Hidden stale submitted dates can make response-check tasks wrong without a visible source-of-truth correction path.
+
+Automation boundary:
+L1/L2. Reveal and sync an existing source field; do not change application status semantics.
+
+Recommended fix:
+- Code change: Remove `COLS.JOBS.APPLIED_DATE` from hidden Jobs columns.
+- Code change: Add it to Jobs manual columns and column widths.
+- Code change: In `onEditJobs`, route direct submitted-date edits through `updateJobSubmittedDates`.
+- Guide update: Guide-last.
+
+Acceptance tests:
+1. Jobs `Submitted date` is visible after layout repair.
+2. Jobs `Submitted date` is manual-colored.
+3. Directly editing `Submitted date` recomputes `Next response check`.
+4. Open `Check application response` tasks move to the recomputed date.
+5. No schema or status vocabulary changes.
+
+Do not do:
+- Do not rename the underlying `APPLIED_DATE` constant in this pass.
+- Do not change application status options.
+- Do not create response-check tasks for non-submitted jobs.
+
+Result:
+Implemented in current batch. Jobs `Submitted date` is visible/manual, and direct edits call `updateJobSubmittedDates()` or clear response-check timing when the date is cleared.
+
+Verification:
+- `git diff --check`
+- Apps Script syntax check with bundled Node
+- Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
+- HEADERS/COLS schema check clean
+- Stage 4 column config bounds check clean
