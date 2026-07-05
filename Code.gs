@@ -44,7 +44,7 @@
  * ARCHITECTURE
  * ------------
  *   Home       = the daily entry point: onboarding status, up to 3 Pending
- *                Decisions (inline, actionable), the Add/update capture
+ *                Decisions (inline, actionable), the Capture update
  *                dropdown, a Today's-plan summary, an Upcoming feed, and a
  *                demoted utility refresh control. No raw task table here.
  *   Today      = purely the execution surface: priority/focus, available
@@ -60,7 +60,7 @@
  *   Sectors / Organisations / Jobs / People / Conversations / Interviews
  *              = source-of-truth database tabs. Editable directly, but
  *                routine daily capture should happen via Home's
- *                Add/update popups, not by navigating to these tabs.
+ *                Capture update popups, not by navigating to these tabs.
  *
  * OPERATING RHYTHM
  * ----------------
@@ -68,7 +68,7 @@
  *
  * FLOW
  * ----
- *   Add/update popup → writes real source tab → cascades create
+ *   Capture update popup → writes real source tab → cascades create
  *   Decisions (only where judgment is genuinely needed — creating or
  *   classifying an Organisation never floods job/people-search tasks
  *   on its own) → Yes on a Decision creates a Task → Today pulls
@@ -209,7 +209,7 @@ var HEADERS = {
     'Round ID', 'Linked Job ID', 'Job (display)', 'Org (display)',
     'Round', 'Round type', 'Interview date',
     'Status', 'Domain readiness',
-    'Official outcome', 'Expected response date', 'Notes'
+    'Official outcome', 'Expected response / follow-up date', 'Notes'
   ],
   'Pending decisions': [
     'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested action',
@@ -325,8 +325,8 @@ var DROPDOWNS = {
   TODAY_PRIORITY: ['Default', 'Applications', 'Networking', 'Interviews', 'Pipeline building', 'Admin / light day'],
   TODAY_UPDATE_TYPES: [
     'No updates', 'Explore sectors', 'Find organisations',
-    'Add/update organisation', 'Add/update job', 'Application update',
-    'Add/update person', 'Add/update conversation', 'Add/update interview',
+    'Capture organisation', 'Capture job', 'Application update',
+    'Capture person', 'Capture conversation', 'Capture interview',
     'Task completed / blocked'
   ],
 
@@ -2828,6 +2828,10 @@ function writeLinkedTo(sheet, row, objType, objId) {
   cell.setFormula('=HYPERLINK("#gid=' + targetSheet.getSheetId() + '&range=' + columnToLetter(targetCol) + linked.row + '","' + linked.text.replace(/"/g, '""') + '")');
 }
 
+function taskHasBrokenSourceNotes(notes) {
+  return /\[(no-link|orphaned-link|orphaned-sector|orphaned-org)\]/.test(String(notes || ''));
+}
+
 function taskStepNumber(row) {
   var raw = row ? row[COLS.TODO.STEP - 1] : '';
   var n = parseInt(raw, 10);
@@ -2858,6 +2862,7 @@ function deriveReadyForTodayFromRow(row, ctx) {
   var status = String(row[COLS.TODO.STATUS - 1] || '');
   if (isTerminalTodoStatus(status)) return 'Done';
   if (status === 'Blocked') return 'Blocked';
+  if (taskHasBrokenSourceNotes(row[COLS.TODO.NOTES - 1])) return 'Needs planning';
   if (ctx.childrenByParent[id] && ctx.childrenByParent[id].length) return 'Parent';
   if (String(row[COLS.TODO.TIME_EST - 1] || '') === 'Multi-day') return 'Needs planning';
   if (parseTimeEst(String(row[COLS.TODO.TIME_EST - 1] || '30 min')) === null) return 'Needs planning';
@@ -6399,7 +6404,7 @@ function checkInterviewRoundHealthFlags() {
     }
 
     if (status === 'Completed' && (!outcome || outcome === 'Waiting') && expected && new Date(expected) < todayDate) {
-      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome] Expected response date has passed');
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome] Expected response / follow-up date has passed');
       ensureInterviewFollowUpTask(roundId);
       flagged++;
     } else {
@@ -6725,7 +6730,7 @@ function showTriggerStatus() {
   var editOn = triggerExists(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
   var lines = [];
   lines.push('Edit popups (installable handleEdit): ' + (editOn ? '\u2705 attached' : '\u274c NOT attached'));
-  if (!editOn) lines.push('   \u2192 Run "Triggers & setup \u2192 Set up / verify triggers" to fix onboarding & Add/update popups.');
+  if (!editOn) lines.push('   \u2192 Run "Triggers & setup \u2192 Set up / verify triggers" to fix onboarding & Capture update popups.');
   lines.push('');
   lines.push('Scheduled jobs:');
   TIME_TRIGGER_SPECS.forEach(function (spec) {
@@ -7552,6 +7557,7 @@ function needsPlanningReasonForRow(row, ctx) {
   }
 
   if (status !== 'Not started' && status !== 'In progress') return null;
+  if (taskHasBrokenSourceNotes(notes)) return { reason: 'Broken or missing source link', suggestedAction: 'Repair the linked source row before doing this task' };
   if (readyState === 'Needs planning') return { reason: 'Needs breakdown or a usable time estimate', suggestedAction: 'Use Row actions > Make selected Task multi-step' };
   if (notes.indexOf('[parent-ready]') !== -1) return { reason: 'Child tasks are done; source update still needs recording', suggestedAction: 'Complete the parent task to open the required popup' };
   if (notes.indexOf('[needs planning]') !== -1) return { reason: 'Flagged for planning', suggestedAction: 'Clarify the next action or break it down' };
@@ -7673,7 +7679,7 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
   });
 
   if (!pendingList.length) {
-    sheet.getRange(slots[0].text).setValue('✓ No pending decisions').setBackground(null).setFontColor('#437A22').setFontWeight('bold');
+    sheet.getRange(slots[0].text).setValue('✓ No pending decisions - work from Today.').setBackground(null).setFontColor('#437A22').setFontWeight('bold');
     return;
   }
 
@@ -8231,7 +8237,7 @@ function taskQueueSummary() {
   var sheet = getSheet('Tasks');
   if (!sheet || sheet.getLastRow() < 2) return '0 open';
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, COLS.TODO.COMMITMENT_CLASS).getValues();
-  var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needPlanning = 0, blockedCount = 0;
+  var open = 0, fixedCount = 0, blocking = 0, needAttention = 0, needPlanning = 0, blockedCount = 0, brokenLinks = 0;
   data.forEach(function (row) {
     var status = String(row[COLS.TODO.STATUS - 1]);
     if (!isOpenTodoStatus(status)) return;
@@ -8240,12 +8246,15 @@ function taskQueueSummary() {
     if (cls === 'Fixed') fixedCount++;
     if (cls === 'Blocking') blocking++;
     var notes = String(row[COLS.TODO.NOTES - 1] || '');
-    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready)\]/.test(notes)) needAttention++;
-    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1) needPlanning++;
+    if (/\[(flags|review|no-estimate|no-link|no-date|parent-still-open|parent-ready|orphaned-link|orphaned-sector|orphaned-org)\]/.test(notes)) needAttention++;
+    if (notes.indexOf('[needs planning]') !== -1 || notes.indexOf('[needs breakdown]') !== -1 || notes.indexOf('[parent-ready]') !== -1 || taskHasBrokenSourceNotes(notes)) needPlanning++;
     if (status === 'Blocked') blockedCount++;
+    if (taskHasBrokenSourceNotes(notes)) brokenLinks++;
   });
-  return open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
+  var summary = open + ' open · ' + fixedCount + ' Fixed · ' + blocking + ' Blocking · ' +
     needAttention + ' need attention · ' + needPlanning + ' need planning · ' + blockedCount + ' blocked';
+  if (brokenLinks) summary += ' · ' + brokenLinks + ' broken link' + (brokenLinks === 1 ? '' : 's');
+  return summary;
 }
 
 // v7.4: replaces a plain sheet.clear() — clear() alone was found to leave
@@ -8479,7 +8488,7 @@ function refreshHome() {
   sheet.getRange(HOME_APPLICATIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Open applications').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   var applications = collectOpenApplications(4);
   if (!applications.length) {
-    sheet.getRange(HOME_APPLICATIONS_FIRST_ROW, 2, 1, 5).merge().setValue('No open applications.').setFontColor('#5F625E');
+    sheet.getRange(HOME_APPLICATIONS_FIRST_ROW, 2, 1, 5).merge().setValue('No open applications. Capture a job or run an Opportunity scan.').setFontColor('#5F625E');
   } else {
     applications.forEach(function (app, idx) {
       var r = HOME_APPLICATIONS_FIRST_ROW + idx;
@@ -8493,7 +8502,7 @@ function refreshHome() {
   sheet.getRange(HOME_UPCOMING_HEADER_ROW, 2, 1, 5).merge().setValue('Upcoming').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
   var upcoming = collectUpcomingItems(5);
   if (!upcoming.length) {
-    sheet.getRange(HOME_UPCOMING_FIRST_ROW, 2, 1, 5).merge().setValue('Nothing scheduled in the next window.').setFontColor('#5F625E');
+    sheet.getRange(HOME_UPCOMING_FIRST_ROW, 2, 1, 5).merge().setValue('Nothing scheduled or waiting. Capture updates as they happen.').setFontColor('#5F625E');
   } else {
     upcoming.forEach(function (item, idx) {
       var r = HOME_UPCOMING_FIRST_ROW + idx;
@@ -9142,13 +9151,18 @@ function completeSetupFromPopup(payload) {
 }
 
 // =============================================================
-// TODAY — Add/update intake popups (non-destructive, ongoing capture)
+// TODAY — Capture update intake popups (non-destructive, ongoing capture)
 // =============================================================
 
 function todayUpdateTypeToCapture(updateType) {
   var map = {
     'Explore sectors': 'Explore sectors',
     'Find organisations': 'Find organisations',
+    'Capture organisation': 'Add/update organisation',
+    'Capture job': 'Add/update job',
+    'Capture person': 'Add/update person',
+    'Capture conversation': 'Add/update conversation',
+    'Capture interview': 'Add/update interview',
     'Add/update organisation': 'Add/update organisation',
     'Add/update job': 'Add/update job',
     'Application update': 'Application update',
@@ -9170,13 +9184,13 @@ function captureConfig(captureType) {
       { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated', req: true }]
     },
     'Add/update organisation': {
-      title: 'Add/update organisation',
+      title: 'Capture organisation',
       fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
       { k: 'sector', l: 'Sector (leave blank to classify later)', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
       { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
-      title: 'Add/update job',
+      title: 'Capture job',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'deadline', l: 'Deadline, if any', t: 'date' }, { k: 'status', l: 'Application status', t: 'select', o: jobStatuses, defaultValue: 'Not started' },
       { k: 'appliedDate', l: 'Submitted date, if already submitted', t: 'date', showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }, { k: 'urlNotes', l: 'URL / source / notes', t: 'textarea' }]
@@ -9189,7 +9203,7 @@ function captureConfig(captureType) {
       { k: 'outcome', l: 'Application result', t: 'select', o: jobOutcomes, blank: true, showIfAny: [{ k: 'status', v: 'Submitted' }, { k: 'status', v: 'Closed' }] }]
     },
     'Add/update person': {
-      title: 'Add/update person',
+      title: 'Capture person',
       fields: [{ k: 'name', l: 'Name', t: 'text', req: true }, { k: 'org', l: 'Organisation, if relevant', t: 'text' }, { k: 'role', l: 'Role/title, if known', t: 'text' },
       { k: 'relType', l: 'Source / relationship', t: 'select', o: DROPDOWNS.PERSON_REL_TYPE, blank: true },
       { k: 'reachedOut', l: 'Have you already reached out?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No' }, { k: 'replied', l: 'Have they replied?', t: 'select', o: ['No', 'Yes'], defaultValue: 'No', showIf: { k: 'reachedOut', v: 'Yes' } },
@@ -9198,13 +9212,13 @@ function captureConfig(captureType) {
       { k: 'conversationDate', l: 'Conversation date, if scheduled/completed', t: 'date', showIfAny: [{ k: 'whereNow', v: 'Conversation scheduled' }, { k: 'whereNow', v: 'Already spoke' }] }, { k: 'notes', l: 'Notes/source', t: 'textarea' }]
     },
     'Add/update conversation': {
-      title: 'Add/update conversation',
+      title: 'Capture conversation',
       fields: [{ k: 'person', l: 'Person', t: 'text', req: true }, { k: 'org', l: 'Organisation', t: 'text' }, { k: 'date', l: 'Date', t: 'date' },
       { k: 'status', l: 'Interaction status', t: 'select', o: DROPDOWNS.INTERACTION_STATUS, defaultValue: 'Completed' },
       { k: 'notes', l: 'Notes', t: 'textarea' }, { k: 'outcome', l: 'Outcome', t: 'select', o: DROPDOWNS.INTERACTION_OUTCOME, blank: true, showIf: { k: 'status', v: 'Completed' } }]
     },
     'Add/update interview': {
-      title: 'Add/update interview',
+      title: 'Capture interview',
       fields: [{ k: 'org', l: 'Organisation', t: 'text', req: true }, { k: 'jobTitle', l: 'Job title / opportunity', t: 'text', req: true },
       { k: 'roundNumber', l: 'Round number', t: 'text', p: '1' }, { k: 'roundType', l: 'Round type', t: 'select', o: roundTypes, blank: true },
       { k: 'interviewDate', l: 'Interview date', t: 'date' }, { k: 'status', l: 'Round status', t: 'select', o: DROPDOWNS.ROUND_STATUS, defaultValue: 'Scheduled', showIfSet: 'interviewDate' },
@@ -9247,8 +9261,9 @@ function buildCaptureHtml(captureType, decisionId, presetFields) {
 
 function runCapturePopup(captureType, decisionId, presetFields) {
   if (!captureType || captureType === 'No updates') return;
-  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType, decisionId || '', presetFields || {})).setWidth(600).setHeight(600).setTitle(captureType);
-  SpreadsheetApp.getUi().showModalDialog(html, captureType);
+  var title = (captureConfig(captureType) || {}).title || captureType;
+  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType, decisionId || '', presetFields || {})).setWidth(600).setHeight(600).setTitle(title);
+  SpreadsheetApp.getUi().showModalDialog(html, title);
 }
 
 function buildApplicationPlanHtml(jobId, decisionId) {
@@ -9967,7 +9982,7 @@ var HEADER_GUIDANCE = {
     'Interview date': 'scheduled date; creates or updates prep timing', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled',
     'Domain readiness': 'optional legacy/simple context; prep depth is planned from Tasks',
     'Official outcome': 'Waiting / Next round / Declined / Offer / Parked; resolves pending outcome prompts',
-    'Expected response date': 'drives Interview follow-up timing', 'Notes': 'prep plan, debrief, interviewers, and system flags'
+    'Expected response / follow-up date': 'drives Interview follow-up timing', 'Notes': 'prep plan, debrief, interviewers, and system flags'
   },
   "Today's plan": {
     'Slot': 'Commit or option', 'Task': 'selected from Tasks', 'Linked Task ID': 'system', 'Estimated min': 'planned time', 'Plan': 'Commit or Option',
@@ -10018,7 +10033,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
     if (name === 'Domain readiness') return 'Optional context; prep depth is planned from Tasks';
     if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
-    if (name === 'Expected response date') return 'Creates or updates follow-up timing';
+    if (name === 'Expected response / follow-up date') return 'Creates or updates follow-up timing';
     if (name === 'Notes') return 'Prep plan, debrief, interviewers, and flags';
   }
   if (canonicalName === 'Conversations' && name === 'Outcome') return 'May route a follow-up';
@@ -10187,7 +10202,7 @@ function applyStatusColorCoding() {
       .setBackground('#F7F7F5').setFontColor('#B0AEA4')
       .setRanges([fullRowRange]).build());
     ccRules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|no-date|needs planning|needs breakdown|parent-still-open|parent-ready|blocked)\\]"),NOT(' + terminalFormula + '))')
+      .whenFormulaSatisfied('=AND($' + notesCol + '2<>"",REGEXMATCH($' + notesCol + '2,"\\[(flags|review|no-estimate|no-link|orphaned-link|orphaned-sector|orphaned-org|no-date|needs planning|needs breakdown|parent-still-open|parent-ready|blocked)\\]"),NOT(' + terminalFormula + '))')
       .setBackground('#FDE9D9')
       .setRanges([fullRowRange]).build());
 
@@ -11487,14 +11502,14 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Your daily 10 minutes');
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
-  r = writeKV(sheet, r, '2. Capture what changed', 'Use Add/update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
+  r = writeKV(sheet, r, '2. Capture what changed', 'Use Capture update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
   r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
   r++;
 
   r = writeH2(sheet, r, 'How adding things works');
-  r = writeKV(sheet, r, 'Use Home first', 'The Add/update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
+  r = writeKV(sheet, r, 'Use Home first', 'The Capture update popup is the easiest path. It writes the source tab, links IDs, and refreshes Today for you.');
   r = writeKV(sheet, r, 'You can still type in tabs', 'If you type directly into Jobs or People, fill Organisation too. Without an Organisation, the row is saved but the follow-up work waits until the Organisation is filled.');
   r = writeKV(sheet, r, 'Typing into Sectors', 'For a broad area, fill Sector and leave Sub-sector blank. For a narrower area, add a new row with the same Sector and fill Sub-sector.');
   r = writeKV(sheet, r, 'Cream and grey cells', 'Cream cells are yours to edit. Grey cells are filled in and kept up to date by the planner.');
@@ -11545,6 +11560,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', 'Use The Planner > Today > Populate Today.');
   r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
+  r = writeKV(sheet, r, 'Broken source link', 'Tasks with [no-link], [orphaned-link], [orphaned-sector], or [orphaned-org] stay out of Today until the linked source row is repaired.');
   r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
   r++;
 
@@ -11930,7 +11946,7 @@ function buildMenu() {
       .addItem('Move selected row up', 'moveTodayRowUp')
       .addItem('Move selected row down', 'moveTodayRowDown')
       .addItem('Show all Today columns', 'showAllColumns'))
-    .addSubMenu(ui.createMenu('Add/update popups')
+    .addSubMenu(ui.createMenu('Capture update popups')
       .addItem('Broad sectors', 'addNewSector')
       .addItem('Organisations from exploration', 'addExplorationOrganisations')
       .addItem('Organisation', 'addNewOrganisation')
@@ -11993,6 +12009,6 @@ function onOpen() {
   if (editReady) {
     ss.toast('The Planner ready. Start on Home.', 'The Planner', 4);
   } else {
-    ss.toast('The Planner loaded, but edit popups are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Add/update popups open reliably.', 'The Planner \u2014 one-time setup needed', 12);
+    ss.toast('The Planner loaded, but edit popups are NOT wired yet. Run \u201cThe Planner \u2192 Triggers & setup \u2192 Set up / verify triggers\u201d once so onboarding and Capture update popups open reliably.', 'The Planner \u2014 one-time setup needed', 12);
   }
 }
