@@ -8447,6 +8447,24 @@ function collectHomeAttentionItems() {
   return items;
 }
 
+function homeAttentionActionHint(items) {
+  items = items || [];
+  var hasTaskRecovery = false;
+  var hasRepair = false;
+  var hasMaintenance = false;
+  items.forEach(function (item) {
+    var text = String(item || '');
+    if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
+    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('duplicate ID') !== -1) hasRepair = true;
+    if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
+  });
+  if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then run Maintenance if repair remains';
+  if (hasTaskRecovery) return 'Open Today > Needs planning or Tasks row actions';
+  if (hasRepair) return 'Use Maintenance > Repair all tabs';
+  if (hasMaintenance) return 'Use The Planner > Maintenance';
+  return 'Review the highlighted planner items';
+}
+
 function hardResetHomeSheet(sheet) {
   var maxRows = Math.max(sheet.getMaxRows(), 60);
   var maxCols = Math.max(sheet.getMaxColumns(), 10);
@@ -8651,7 +8669,7 @@ function refreshHome() {
       .setValue('Needs attention: ' + attentionItems.slice(0, 3).join(' - ') + (attentionItems.length > 3 ? ' - +' + (attentionItems.length - 3) + ' more' : ''))
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground(MANUAL_COLOR).setWrap(true);
     sheet.getRange(HOME_ATTENTION_ROW, 7)
-      .setValue('Use Maintenance > Repair all tabs')
+      .setValue(homeAttentionActionHint(attentionItems))
       .setFontSize(9).setFontColor('#8A8D87');
   }
   sheet.getRange(HOME_DECISIONS_HEADER_ROW, 2, 1, 5).merge().setValue('Pending Decisions').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(HEADER_COLOR);

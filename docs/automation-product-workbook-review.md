@@ -64,6 +64,7 @@ Category 0 first implementation slice:
 | Change | Product problem | Automation level | Acceptance test |
 |---|---|---|---|
 | Home completed-onboarding action now says Redo setup, with a note explaining backup-before-clear behavior | The old Reset label was too vague for a destructive-adjacent setup path | L6 confirmation/supporting copy | Refresh Home after onboarding complete; the checkbox label reads Redo setup and the note explains the backup copy |
+| Home Needs attention action hint is contextual | The old helper always pointed to Repair all tabs, even for blocked-task recovery or parent-review work | L2 warning with next action | Create blocked/parent attention items and repair items separately; Home points to Today/Tasks for recovery and Maintenance for repair |
 
 Product architecture to preserve:
 
@@ -87,7 +88,7 @@ Recent product decision:
 |---|---|---|---|---|---|---|---|
 | ID creation | Row creation/capture | all source tabs/Tasks/Decisions | `nextId`, write helpers | Stable IDs | Mostly hidden | L1 | Race if off-lock; mitigated by locked paths. |
 | Trigger health | Home refresh/onOpen/repair | Home | `triggerExists`, `checkTriggerHealth`, `refreshHome` | Banner/toast/warning | Yes | L2 | Missing trigger makes popups/dropdowns feel broken. |
-| Home attention strip | Home refresh | Home/Tasks/Decisions/maintenance | `collectHomeAttentionItems` | Needs-attention warning | Yes | L2 | Must stay compact; avoid dashboard creep. |
+| Home attention strip | Home refresh | Home/Tasks/Decisions/maintenance | `collectHomeAttentionItems`, `homeAttentionActionHint` | Needs-attention warning plus next action | Yes | L2 | Must stay compact and point to the right recovery surface. |
 | Today plan build | checkbox/menu/maintenance | Tasks -> Today | `bootstrapToday`, `populateTodayImpl` | Commit/options/needs-planning rows | Yes | L1/L4 surfacing | Wrong readiness breaks trust. |
 | Today completion | Today status dropdown | Today/Tasks/source tabs | `onEditToday` -> `completeTodo` | Task status and source cascades | Yes | L4/L5 | Popup-required tasks must not silently complete. |
 | Task completion routing | Task status Done | Tasks/source tabs | `completeTodoRow`, `routeTodoCompletion` | Source updates, tasks, decisions, popups | Yes | L4/L5 | Missing handler leaves dead workflows. |
@@ -190,7 +191,7 @@ Recent product decision:
 | Automation/output | Where user should see it | Current surfacing | Gap | Better surfacing |
 |---|---|---|---|---|
 | Missing trigger | Home | Prominent banner | Good | Keep. |
-| Broken/terminal source work | Home/Today/Tasks | Home attention + Today Needs planning | Good | Retest. |
+| Broken/terminal source work | Home/Today/Tasks | Home attention + Today Needs planning + contextual action hint | Good | Retest. |
 | Invalid dropdown values | Source row Notes + Home attention | Repair/maintenance scan + Home count | Good | Keep. |
 | Duplicate IDs | Home attention + source notes | Repair/maintenance scan + Home count | Good | Keep. |
 | Weekly review output | Home utility | Summary visible | Good | Keep compact. |

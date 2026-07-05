@@ -119,6 +119,7 @@ Category 0 issue queue:
 |---|---|---|---|---|
 | Home completed-onboarding action says Reset | P1/P2 | A vague label beside a checkbox makes a destructive-adjacent path feel unsafe and unclear | 0 + 6 | Fixed: Home now says Redo setup and notes backup behavior |
 | Full workbook first-impression map missing from plan | P2 | Review could drift back into technical fixes without proving user comprehension | 0 | Fixed in this doc |
+| Home Needs attention action is too generic | P1/P2 | Blocked/parent task recovery could incorrectly point users to Repair all tabs | 0 + 4 | Fixed: Home now picks an action hint based on the attention types |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -134,6 +135,7 @@ Implemented after this review began:
 - Repair and daily maintenance now scan duplicate IDs across core ID columns; Home counts duplicate-ID rows as repair-needed.
 - End-of-day reconcile now uses one batch wrap-up popup for unfinished Today work instead of one blocking alert per task.
 - Home's completed-onboarding action now says "Redo setup" instead of "Reset" and explains the backup-before-clear behavior in a note.
+- Home Needs attention now gives a contextual action hint: Today/Tasks for blocked or parent-task recovery, Maintenance for repair/health items.
 
 ## Pass 1 - User Journey Review
 
@@ -300,7 +302,7 @@ No destructive action may run without a clear warning, explicit confirmation, sn
 | Home | Capture update | capture | primary capture dropdown | Good | Keep | Keep |
 | Home | Open applications | waiting/application state | compact list | Good | Keep | Keep |
 | Home | Upcoming | scheduled/waiting | compact list | Good | Keep | Keep |
-| Home | System health | recovery | Needs attention strip plus utility summary | Good | keep compact | Done |
+| Home | System health | recovery | Needs attention strip plus contextual action hint | Good | keep compact | Done |
 | Today | Commit list | executable work | ready tasks only | Good after terminal guard | Keep | Retest |
 | Today | Needs planning | recovery | reasons/actions | Good | Add missing-decision repair not relevant | Keep |
 | Today | Options | spare capacity | options/pull in | Good | Keep | Keep |
