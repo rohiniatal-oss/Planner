@@ -3309,6 +3309,8 @@ function handleInterviewTodoCompletion(todo, options) {
       'Interview follow-up', 'Choose: waiting / next round / declined / offer / parked.');
   } else if (todo.workflow === 'Thank-you and debrief') {
     ensureInterviewDebriefTemplate(sheet, round.row);
+    appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[debrief-completed] Debrief task completed on ' + formatDateHuman(today()));
+    clearNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[missing-debrief]');
     appendInteraction('', '', round.org, today(), 'Auto-log', 'Interview thank-you/debrief completed: round ' + round.round + ' - ' + round.job, 'System log');
     appendPendingDecision(interviewOutcomeDecisionKey(round.id), 'Interview debrief completed: ' + round.job,
       'Record official outcome for round ' + round.round + ' - ' + round.job, 'Interview round', round.id,
@@ -6070,10 +6072,15 @@ function markInterviewRoundCompleted(roundId, opts) {
   if (!round || !sheet) return false;
   var wasCompleted = String(round.status || '') === 'Completed';
   sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue('Completed');
-  if (!sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+  var outcome = String(sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue() || '');
+  if (!outcome) {
+    sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+    outcome = 'Waiting';
+  }
   setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview completed',
     ['Interview scheduling', 'Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review']);
   createInterviewDebriefTask(roundId);
+  if (outcome === 'Waiting') ensureInterviewFollowUpTask(roundId);
   if (opts.forceLog || !wasCompleted) {
     appendInteraction('', '', round.org, today(), 'Auto-log',
       'Interview completed: round ' + (round.round || '?') + ' - ' + round.job, 'System log');
@@ -6109,6 +6116,7 @@ function onEditRounds(sheet, row, col, newVal) {
       sheet.getRange(row, COLS.ROUNDS.STATUS).setValue('To schedule');
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue('');
       appendTodoOnceForWorkflow('Schedule interview: ' + jobDisplay + (orgDisplay ? ' at ' + orgDisplay : ''), 'Interview round', roundId, orgDisplay, 'Interview scheduling', 'Not started', '', '15 min', 'Set Interview date on the Interviews row when known.', 'Auto-triggered');
+      pauseInterviewPrepForReschedule(roundId);
       syncOpenInterviewTaskDates(roundId);
     }
     refreshDerivedPlanningSurfaces();
@@ -6287,7 +6295,7 @@ function checkInterviewRoundHealthFlags() {
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[overdue-outcome]');
     }
 
-    if (status === 'Completed' && notes.indexOf('[interview-debrief]') === -1) {
+    if (status === 'Completed' && notes.indexOf('[debrief-completed]') === -1) {
       appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-debrief] Add substantive debrief notes');
       createInterviewDebriefTask(roundId);
       flagged++;
