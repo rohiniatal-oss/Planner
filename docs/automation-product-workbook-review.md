@@ -70,6 +70,8 @@ Category 0 first implementation slice:
 | Capture submenu labels are intent-shaped | Raw tab nouns made the capture menu less self-explanatory | L5 popup entry copy | Open The Planner > Capture update; labels read Job / opportunity, Person / contact, Interview / round, etc. |
 | Row action says Close selected Person/Job row | Soft-close was internal wording for a terminal state change | L4/L6-ish explicit row action | Select a People or Jobs row; menu label and toast say the row was closed and linked work was cancelled |
 | Menu says Build / refresh Today's plan | Populate Today was backend wording for the main daily planning action | L1/L4 execution-surface copy | Open The Planner menu and Today submenu; the action reads Build / refresh Today's plan |
+| Today execution actions use plain language | Pull/Top up/Lock were compact but required planner jargon | L4 execution-surface copy | Today submenu labels describe adding a task, adding time, and keeping/releasing row position |
+| Top menu says Add one-off task | Ad-hoc was backend-ish wording | L4 capture-lite action copy | Top-level menu, prompt, and toast use one-off task language |
 
 Product architecture to preserve:
 

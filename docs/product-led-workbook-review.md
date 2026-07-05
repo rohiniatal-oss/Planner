@@ -125,6 +125,8 @@ Category 0 issue queue:
 | Capture submenu labels are raw tab nouns | P2 | Short labels like Job/Person/Interview assume the user already knows the data model | 0 + 5 | Fixed: labels now say Job / opportunity, Person / contact, Interview / round, etc. |
 | Row action says Soft-close selected row | P2 | Internal wording does not tell the user what will happen to the Person/Job | 0 + 5 | Fixed: menu says Close selected Person/Job row and confirms cancelled linked work |
 | Menu/Guide says Populate Today | P2 | Backend wording makes the daily action less obvious | 0 + 2 + 5 | Fixed: menu and Guide now say Build / refresh Today's plan |
+| Today menu uses jargon like Pull/Top up/Lock | P2 | Daily execution controls are harder to understand than they need to be | 0 + 2 + 5 | Fixed: labels now describe adding a task, adding time, and keeping/releasing row position |
+| Top menu says Add ad-hoc task | P2 | Ad-hoc is backend-ish wording for a one-off task | 0 + 5 | Fixed: label, prompt, and toast now say one-off task |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -146,6 +148,8 @@ Implemented after this review began:
 - Capture update menu labels now explain the user object being captured, e.g. Job / opportunity and Person / contact.
 - Row actions now say "Close selected Person/Job row" instead of "Soft-close selected row" and confirm which linked work was cancelled.
 - Today build actions now say "Build / refresh Today's plan" instead of "Populate Today" in the menu and Guide.
+- Today menu actions now use plain language for adding a selected task, adding more time, and keeping/releasing row position.
+- The top-level one-off task action no longer uses "ad-hoc" in menu, prompt, or success feedback.
 
 ## Pass 1 - User Journey Review
 

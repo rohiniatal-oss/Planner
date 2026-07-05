@@ -8019,7 +8019,7 @@ function pullSelectedTaskIntoToday() {
     }, 'Commit');
     applyTodayRowStatusDropdowns(todaySheet);
     ss.setActiveSheet(todaySheet);
-    SpreadsheetApp.getActiveSpreadsheet().toast('Pulled selected task into Today.', 'The Planner', 3);
+    SpreadsheetApp.getActiveSpreadsheet().toast("Added selected task to Today's plan.", 'The Planner', 3);
   }, { label: 'pullSelectedTaskIntoToday' });
 }
 
@@ -8032,7 +8032,7 @@ function lockTodayRow() {
     var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '');
     if (notes.indexOf('[locked]') === -1) sheet.getRange(row, COLS.TODAY.NOTES).setValue('[locked] ' + notes);
     sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('bold');
-    SpreadsheetApp.getActiveSpreadsheet().toast('Row locked — stays in place on the next refresh.', 'The Planner', 3);
+    SpreadsheetApp.getActiveSpreadsheet().toast('This row will stay in place on the next refresh.', 'The Planner', 3);
   }, { label: 'lockTodayRow' });
 }
 
@@ -8045,7 +8045,7 @@ function unlockTodayRow() {
     var notes = String(sheet.getRange(row, COLS.TODAY.NOTES).getValue() || '').replace(/\[locked\]\s*/g, '').trim();
     sheet.getRange(row, COLS.TODAY.NOTES).setValue(notes);
     sheet.getRange(row, COLS.TODAY.TASK).setFontWeight('normal');
-    SpreadsheetApp.getActiveSpreadsheet().toast('Row unlocked.', 'The Planner', 3);
+    SpreadsheetApp.getActiveSpreadsheet().toast('This row can move on the next refresh.', 'The Planner', 3);
   }, { label: 'unlockTodayRow' });
 }
 
@@ -8085,7 +8085,7 @@ function topUpToday() {
   var sheet = getSheet('Today');
   if (!sheet) return;
   var ui = SpreadsheetApp.getUi();
-  var resp = ui.prompt('Top up today', 'How many more minutes do you have?', ui.ButtonSet.OK_CANCEL);
+  var resp = ui.prompt('Add more time to Today', 'How many extra minutes do you have?', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var mins = parseInt(resp.getResponseText().trim(), 10);
   if (isNaN(mins) || mins <= 0) { ui.alert('Enter a positive number.'); return; }
@@ -8093,7 +8093,7 @@ function topUpToday() {
     var current = parseInt(sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).getValue(), 10) || 0;
     sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(current + mins);
     populateToday();
-    SpreadsheetApp.getActiveSpreadsheet().toast('Added ' + mins + ' minutes to today.', 'The Planner', 4);
+    SpreadsheetApp.getActiveSpreadsheet().toast("Added " + mins + " minutes and rebuilt Today's plan.", 'The Planner', 4);
   }, { label: 'topUpToday' });
 }
 
@@ -11368,7 +11368,7 @@ function addNewInteraction() {
 
 function addAdHocTodo() {
   var ui = SpreadsheetApp.getUi();
-  var resp = ui.prompt('Add ad-hoc task', 'Task description:', ui.ButtonSet.OK_CANCEL);
+  var resp = ui.prompt('Add one-off task', 'What do you need to do?', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   var task = resp.getResponseText().trim();
   if (!task) { ui.alert('Task description required.', ui.ButtonSet.OK); return; }
@@ -11377,7 +11377,7 @@ function addAdHocTodo() {
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'addAdHocTodo' });
-  SpreadsheetApp.getActiveSpreadsheet().toast('Task added.', 'The Planner', 3);
+  SpreadsheetApp.getActiveSpreadsheet().toast('One-off task added. Today and Home were refreshed.', 'The Planner', 4);
 }
 
 // =============================================================
@@ -12321,14 +12321,14 @@ function buildMenu() {
     .addItem('Set up / redo onboarding', 'runSetupInterview')
     .addItem("Build / refresh Today's plan", 'populateToday')
     .addItem('Refresh Home', 'refreshHome')
-    .addItem('Add ad-hoc task', 'addAdHocTodo')
+    .addItem('Add one-off task', 'addAdHocTodo')
     .addSeparator()
     .addSubMenu(ui.createMenu('Today')
       .addItem("Build / refresh Today's plan", 'populateToday')
-      .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
-      .addItem('Top up Today', 'topUpToday')
-      .addItem('Lock selected Today row', 'lockTodayRow')
-      .addItem('Unlock selected Today row', 'unlockTodayRow')
+      .addItem("Add selected Task to Today's plan", 'pullSelectedTaskIntoToday')
+      .addItem('Add more time to Today', 'topUpToday')
+      .addItem('Keep selected Today row in place', 'lockTodayRow')
+      .addItem('Let selected Today row move again', 'unlockTodayRow')
       .addItem('Move selected row up', 'moveTodayRowUp')
       .addItem('Move selected row down', 'moveTodayRowDown')
       .addItem('Show all Today columns', 'showAllColumns'))
