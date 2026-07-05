@@ -695,8 +695,8 @@ Stage 9 decision/work trace:
 
 | Trigger/output | Should be Decision? | Should be Task? | Should be Popup? | Current behaviour | Fix |
 |---|---:|---:|---:|---|---|
-| Org marked Active | Yes | No direct task | No | `fireOrgActiveCascade` creates People sourcing / Org job scan decisions; Yes creates/reuses Tasks | None |
-| Sector sub-sector added | Yes | Only after Yes | No | `fireSubsectorAddedDecision` asks whether to market-map; Yes creates Market mapping task | None |
+| Org marked Active | Yes | No direct task | No | `fireOrgActiveCascade` creates People sourcing / Org job scan decisions; Confirm creates/reuses Tasks from Home | None |
+| Sector sub-sector added | Yes | Only after Yes | No | `fireSubsectorAddedDecision` asks whether to market-map; Confirm creates Market mapping task from Home | None |
 | Source-led scan completed | Yes | No direct child until decision/popup | Yes | `handleSourceLedScanCompletion` creates Capture data decision; Yes opens result popup and stays Pending until save | None |
 | Referral search completed | Yes | Outreach task only after contact result | Yes | Completion creates Capture data decision; result popup links/adds person or closes without blocking submit | None |
 | Application needs planning | Yes | Tasks from plan | Yes | Application-plan decision opens planning popup; `completeApplicationPlanFromPopup` resolves only after successful save | None |
@@ -851,7 +851,7 @@ Stage 12 copy trace:
 
 | Surface | Current wording | Problem | Better wording | Implementation location |
 |---|---|---|---|---|
-| Decisions column 13 | `Decision action type` | Backend wording on a visible helper column | `What Yes does` | `HEADERS['Pending decisions']`, `HEADER_GUIDANCE`, `userFacingHeaderHint`, dropdown integrity label |
+| Decisions column 13 | `Decision action type` | Backend wording on a visible helper column | `What Confirm does` | `HEADERS['Pending decisions']`, `HEADER_GUIDANCE`, `userFacingHeaderHint`, dropdown integrity label |
 | Home refresh checkbox | `Refresh Home status` | Does not say what state is being reread | `Refresh Home from Tasks, Today, and Decisions` | `refreshHome` |
 | Top menu refresh | `Refresh Home status` | Same ambiguity in menu | `Refresh Home` | `buildMenu` |
 | Planner setup menu | `Repair edit actions` | Users do not think in trigger/edit-action terms | `Repair dropdowns, popups, and checkboxes` | `buildMenu` |
@@ -864,7 +864,7 @@ Stage 12 decision:
 Implemented only non-Guide user-facing copy fixes. These changes keep the same functions, columns, and workflows while making visible controls answer "what will happen if I use this?"
 
 Acceptance tests:
-1. Decisions repair/header rebuild writes `What Yes does` in the action-type column.
+1. Decisions repair/header rebuild writes `What Confirm does` in the action-type column.
 2. The Home refresh checkbox explains that it rereads Tasks, Today, and Decisions.
 3. The main menu uses outcome language for setup/automation controls.
 4. No Guide rewrite is triggered by this stage.
@@ -1347,7 +1347,7 @@ Required output:
 |---|---|---|---|---|
 | Home | No new code issue found. Custom renderer clears stale fills and keeps Home to decisions, capture, Today, open applications, upcoming, and compact repair/refresh. | Home should remain an operating cockpit, not a dashboard. | None in this pass. | Yes, after deploy: confirm empty decisions, open applications, upcoming, and refresh utility do not look stranded or crowded. |
 | Today | No new code issue found. Focus/minutes/energy notes now explain what refresh changes; Status and Why/notes are manual-owned. | User can understand capacity changes without guessing whether Today mutates source tabs. | None in this pass. | Yes, after deploy: confirm capacity headline, options, and Needs planning sections fit without overlap. |
-| Decisions | No new visual issue found. `What Yes does`, `Review by`, `Linked to`, and `Result` are visible audit fields; helper IDs stay hidden. | Decisions reads as a queue/audit trail while Home carries the top 3 decisions. | None in this pass. | Optional, after deploy: confirm long decision cards wrap cleanly. |
+| Decisions | No new visual issue found. `What Confirm does`, `Review by`, `Linked to`, and `Result` are visible audit fields; helper IDs stay hidden. | Decisions reads as a queue/audit trail while Home carries the top 3 decisions. | None in this pass. | Optional, after deploy: confirm long decision cards wrap cleanly. |
 | Tasks | No new visual issue found. Commitment class, Ready for Today, child progress, blockers, and links stay visible for inspection/repair; backend IDs stay hidden. | Tasks remains inspect/repair-friendly rather than a daily execution surface. | None in this pass. | Optional, after deploy: confirm wide visible helper columns remain readable. |
 | Sectors | No new visual issue found. Sector/Sub-sector/status/notes are editable; IDs are hidden. | User sees taxonomy fields, not backend IDs. | None in this pass. | Optional. |
 | Organisations | No new visual issue found. Counts/review dates are helper-owned/hidden or system-styled; user edits name/classification/tier/status/notes. | Organisations remains a source tab, not a dashboard. | None in this pass. | Optional. |
@@ -1516,6 +1516,7 @@ Product taste findings:
 | Home decision copy still sounded like backend queue state. | P2 | Home section said Pending Decisions, which is the data/audit model rather than the user's moment of judgement. | Fixed now: Home says Decisions to make; Decisions tab remains the audit queue. |
 | Home decision overflow still sent the user to the backend queue. | P2 | The fourth pending decision became an "open queue" link to Decisions, even though Home is meant to be self-sufficient for daily judgement. | Fixed now: Home keeps three fixed card slots and pages the pending queue with Prev/Next controls. |
 | Home decisions lacked a non-judgement skip. | P2 | Home offered Yes/No only, but No is a judgement and sometimes the user only wants to move past a card for now. | Fixed now: Skip hides the card from Home until refresh while leaving the Decision pending. |
+| Home decision labels still sounded like backend audit states. | P2 | Yes/No describes stored decision state, not the user intent at the moment of action. | Fixed now: Home shows Confirm / Not now / Skip while Decisions still stores Yes / No / Auto-dismissed for audit compatibility. |
 | Notes flags still sounded like internal system state. | P2 | Visible notes used labels such as HOT, stale, missing prep plan, and rejected, which are true but not recovery-oriented. | Fixed now for new flags: bracket tokens remain machine-readable, but common visible flags are rewritten into clearer recovery guidance. |
 | Home lacked a light momentum signal. | P3 | The product guides tasks and decisions but did not reflect recent progress, making the search feel more static than it is. | Fixed now: Home shows a compact weekly momentum line from completed Tasks and logged Conversations. |
 | Setup menu copy still exposed automation as the product concept. | P2 | User-facing paths said Setup & automation even when the user goal is simply turning the Planner on. | Fixed now: visible menu/path says Planner setup; repair actions say Repair rather than Fix. |
@@ -1531,6 +1532,7 @@ Immediate Stage 17 implementation:
 - Rename Home's decision section to Decisions to make while preserving Decisions as the audit queue.
 - Replace Home's decision overflow link with Prev/Next paging across the same three card slots.
 - Add a Home-only Skip action that keeps the Decision pending and brings forward the next card.
+- Rename Home decision actions to Confirm / Not now / Skip while preserving the Decisions audit values.
 - Preserve Notes tag tokens but rewrite common new flags as recovery guidance.
 - Add a quiet Home momentum line from completed Tasks and logged Conversations.
 - Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.

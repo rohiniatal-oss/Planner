@@ -214,7 +214,7 @@ var HEADERS = {
     'Decision ID', 'Created', 'Decision key', 'Trigger', 'Suggested action',
     'Target type', 'Target ID', 'Suggested workflow', 'Notes',
     'Decision', 'Decided at', 'Resulting To-do ID',
-    'What Yes does', 'Review by', 'Linked to', 'Result'
+    'What Confirm does', 'Review by', 'Linked to', 'Result'
   ],
   "Today's plan": [
     'Slot', 'Task', 'Linked Task ID', 'Estimated min',
@@ -7994,7 +7994,7 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
       .setBackground('#EAF4F5').setFontColor('#1B474D').setFontWeight('bold').setWrap(true)
       .setNote('Why: ' + trigger + (linked ? '\nLinked to: ' + linked : '') + (notes ? '\nNotes: ' + notes : ''));
     sheet.getRange(slot.action).setValue('').setBackground(MANUAL_COLOR).setFontWeight('bold');
-    setDropdown(sheet.getRange(slot.action), ['', 'Yes', 'No', 'Skip']);
+    setDropdown(sheet.getRange(slot.action), ['', 'Confirm', 'Not now', 'Skip']);
   });
 
   renderDecisionPagingControls(sheet, moreRow, offset, count, pageSize);
@@ -8017,8 +8017,15 @@ function decisionIdForCell(sheet, row, col) {
   return '';
 }
 
+function normalizeHomeDecisionAction(action) {
+  var value = String(action || '');
+  if (value === 'Confirm') return 'Yes';
+  if (value === 'Not now') return 'No';
+  return value;
+}
+
 function handleDecisionAction(sheet, action, decisionId) {
-  action = String(action || '');
+  action = normalizeHomeDecisionAction(action);
   if (!action) return;
   sheet.getRange('B' + HOME_DECISIONS_ACTION_ROW).setValue('');
   sheet.getRange('D' + HOME_DECISIONS_ACTION_ROW).setValue('');
@@ -10613,8 +10620,8 @@ var HEADER_GUIDANCE = {
   'Pending decisions': {
     'Decision ID': 'Filled automatically.', 'Created': 'Filled automatically.', 'Decision key': 'Filled automatically.', 'Trigger': 'Why this decision exists.', 'Suggested action': 'What you are deciding.',
     'Target type': 'Linked object type.', 'Target ID': 'Filled automatically.', 'Suggested workflow': 'Suggested next-step type.', 'Notes': 'Context.',
-    'Decision': 'Choose Yes or No; Auto-dismissed means the situation changed.', 'Decided at': 'Filled automatically.', 'Resulting To-do ID': 'Filled when Yes creates a task.',
-    'What Yes does': 'Create task / open popup / capture data / update source / dismiss.',
+    'Decision': 'Home shows Confirm / Not now / Skip. This audit column stores Yes / No / Auto-dismissed.', 'Decided at': 'Filled automatically.', 'Resulting To-do ID': 'Filled when confirming creates a task.',
+    'What Confirm does': 'Create task / open popup / capture data / update source / dismiss.',
     'Review by': 'When this should be reviewed; urgent decisions sort first.', 'Linked to': 'Link to the source row.', 'Result': 'What happened after deciding.'
   }
 };
@@ -10658,10 +10665,10 @@ function userFacingHeaderHint(canonicalName, name, hint) {
     if (name === 'Source') return 'Where the task came from';
   }
   if (canonicalName === 'Decisions') {
-    if (name === 'Decision') return 'Choose Yes or No; Auto-dismissed means the situation changed';
+    if (name === 'Decision') return 'Home uses Confirm / Not now / Skip; this audit stores Yes / No / Auto-dismissed';
     if (name === 'Decided at') return 'Filled when decided';
-    if (name === 'Resulting To-do ID') return 'Filled when Yes creates a task';
-    if (name === 'What Yes does') return 'What Yes will do';
+    if (name === 'Resulting To-do ID') return 'Filled when confirming creates a task';
+    if (name === 'What Confirm does') return 'What Confirm will do';
     if (name === 'Review by') return 'When this should be reviewed; urgent decisions sort first';
     if (name === 'Result') return 'What happened after deciding';
   }
@@ -11377,7 +11384,7 @@ function dropdownIntegrityRules() {
     { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.STATUS, notesCol: COLS.ROUNDS.NOTES, label: 'Round status', values: DROPDOWNS.ROUND_STATUS },
     { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.OFFICIAL_OUTCOME, notesCol: COLS.ROUNDS.NOTES, label: 'Official outcome', values: DROPDOWNS.OFFICIAL_OUTCOME },
     { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.DECISION, notesCol: COLS.DECISIONS.NOTES, label: 'Decision', values: DROPDOWNS.DECISION },
-    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.ACTION_TYPE, notesCol: COLS.DECISIONS.NOTES, label: 'What Yes does', values: DROPDOWNS.DECISION_ACTION_TYPE }
+    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.ACTION_TYPE, notesCol: COLS.DECISIONS.NOTES, label: 'What Confirm does', values: DROPDOWNS.DECISION_ACTION_TYPE }
   ];
 }
 
@@ -12366,7 +12373,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Your daily 10 minutes');
-  r = writeKV(sheet, r, '1. Open Home', 'Resolve any decisions to make. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
+  r = writeKV(sheet, r, '1. Open Home', 'Resolve any decisions to make. Confirm creates the suggested task, opens the relevant popup, or routes the update shown on the card. Not now dismisses it; Skip leaves it pending and moves on for now.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add or update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
   r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed.");
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
@@ -12384,7 +12391,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'What each tab is for');
   r = writeKV(sheet, r, 'Home', 'Start here. Add updates, resolve decisions, see what needs attention.');
   r = writeKV(sheet, r, 'Today', 'Do the work here. It is rebuilt from Tasks, but your notes and locked/pulled rows are preserved.');
-  r = writeKV(sheet, r, 'Decisions', 'Judgment queue and audit trail. Action type shows what Yes will do; Review by controls urgency.');
+  r = writeKV(sheet, r, 'Decisions', 'Judgment queue and audit trail. What Confirm does shows the routed action; Review by controls urgency.');
   r = writeKV(sheet, r, 'Tasks', 'Master task queue. Usually inspect or repair here, not daily capture.');
   r = writeKV(sheet, r, 'Sectors / Organisations / Jobs / People', 'The main source tabs. Home popups write here for you.');
   r = writeKV(sheet, r, 'Conversations / Interviews', 'Mostly filled from updates and task completions. Edit when you need to correct details.');
@@ -12406,7 +12413,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Blocked / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
   r = writeKV(sheet, r, 'Interview outcomes', 'Waiting creates follow-up work. Next round creates the next round. Declined and Parked close the job; Offer creates offer-decision work.');
-  r = writeKV(sheet, r, 'Decisions', 'Pending / Yes / No / Auto-dismissed. Auto-dismissed means the underlying situation changed. Review by is the decision urgency date.');
+  r = writeKV(sheet, r, 'Decisions', 'Home shows Confirm / Not now / Skip. The audit tab stores Pending / Yes / No / Auto-dismissed. Review by is the decision urgency date.');
   r++;
 
   r = writeH2(sheet, r, 'Good to know');
