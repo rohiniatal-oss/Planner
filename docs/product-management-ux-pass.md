@@ -155,6 +155,32 @@ For every menu item, checkbox, link, row action, popup entry, and visible helper
 
 If the action is not needed directly, remove it from the user surface or fold it into Repair all tabs / automation. If it is needed, keep it and rename it until a first-time user can infer what will happen.
 
+Surface placement and ordering rule:
+Before adding or keeping anything visible, decide what moment the user is in and which surface owns that moment.
+
+1. Is this a judgement, an executable task, a durable source fact, a warning/recovery path, a planning control, or reference explanation?
+2. Does the user need it on this tab to act now, or can it live one layer deeper without making the workflow harder?
+3. If it belongs on Home or Today, is it immediately actionable there?
+4. If it belongs on a source tab, is it durable truth rather than daily operating work?
+5. If it belongs in Tasks or Decisions, does it preserve the boundary between work and judgement?
+
+Default placement:
+
+| Item type | Primary surface | Notes |
+|---|---|---|
+| Cross-workbook warning or blocked recovery | Home, with detail in Tasks/source tab | Keep compact and point to the recovery surface |
+| Judgement call | Home card + Decisions audit | Yes/No must say what happens |
+| Executable work | Tasks, pulled into Today when ready | Do not duplicate ordinary work on Home |
+| Capacity/planning control | Today | Explain effect where the user changes it |
+| Durable job/person/org/interview fact | Source tab | Keep source tabs calm records |
+| Stable explanation | Guide | Guide last, after behavior is settled |
+
+Default ordering:
+- Put unsafe, stale, or blocked states before optional work.
+- Put judgement before execution when the decision gates work.
+- Put today's executable work before reference/detail.
+- Put utilities and audit information last.
+
 ## Current Improvement: Home Today State
 
 User story:

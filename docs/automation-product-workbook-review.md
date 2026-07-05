@@ -59,6 +59,18 @@ Category 0 acceptance standard:
 - Do not add complexity unless it reduces cognitive burden or improves trust.
 - Defer Guide updates until behavior is settled, but record Guide implications.
 - User-facing menus must be audited action by action. For each visible action, ask: does the user need this action directly, or is it an internal helper? If the user does not need it, remove it from the visible surface or fold it into Repair. If the user does need it, keep it and rename it so the label describes the user outcome, not the internal mechanism.
+- Surface placement is a product decision, not a layout afterthought. For every warning, helper, action, dropdown, count, task, decision, and link, ask which user moment it serves, which tab owns that moment, whether it is actionable there, and whether moving it one layer deeper would make the workbook calmer without hiding necessary action.
+
+Surface placement order:
+
+| Surface | User moment | Show | Keep out | Order |
+|---|---|---|---|---|
+| Home | Start, decide, capture, regain trust | Critical setup/repair warnings, pending judgement, capture, Today state, open/waiting/scheduled items | Raw work queues, all follow-ups, helper metrics | Warnings -> Decisions -> Capture -> Today -> Open/upcoming -> Utilities |
+| Today | Execute and recover today | Capacity controls, committed work, spare-capacity options, blocked/needs-planning recovery, wrap-up | Source records, backlog browsing, passive metrics | Controls -> State -> Commit -> Options -> Recovery -> Wrap-up |
+| Tasks | Own work truth | Task text, status, readiness, blockers, sequencing, due/context | Daily cockpit or source facts | Action fields before helper/audit fields |
+| Decisions | Own judgement | Pending decisions, action type, linked target, result/audit | Ordinary tasks or passive status | Due/overdue pending items before resolved audit |
+| Source tabs | Own durable records | Canonical labels, IDs/links, user facts, status/outcome, derived helpers | Daily reminders or dashboards | Identity -> facts -> state -> helpers -> notes |
+| Guide | Explain stable behavior | Setup, daily routine, tab roles, recovery | Instructions that the current sheet should make obvious | Daily use before reference detail |
 
 Category 0 first implementation slice:
 

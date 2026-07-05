@@ -97,6 +97,18 @@ Category 0 acceptance standard:
 - Today must remain an execution surface, not a backlog.
 - Source tabs must remain records, not daily operating surfaces.
 - Every visible action must pass the user-action test: why does the user need to see this, what choice or outcome does it support, and what happens if it is removed? If it is not needed, remove it from the user surface. If it is needed, keep it and label it in user outcome language. Legacy migrations, schema cleanup, and implementation helpers belong inside Repair unless the user truly needs to choose them directly.
+- Every visible item must pass the surface-placement test: what is the user trying to do at that moment, which surface owns that moment, is the item actionable there, and what would be lost if it lived one tab deeper? Put items on the shallowest surface where they are useful without turning Home or Today into dashboards.
+
+Surface placement and ordering rule:
+
+| Surface | Show here when | Do not show here when | Ordering principle |
+|---|---|---|---|
+| Home | It needs cross-workbook attention, judgement, capture, setup/repair trust, or a next step into Today | It is raw backlog, source-table detail, helper state, or ordinary executable work | Critical warnings/setup -> pending judgement -> capture -> Today state -> open/waiting/scheduled items -> quiet utilities |
+| Today | It is executable now, affects today's capacity/selection, or is recovery work that blocks execution | It is source recordkeeping, backlog browsing, or a judgement queue | Plan controls -> plan state -> committed work -> options/spare-capacity work -> needs-planning recovery -> end-of-day wrap-up |
+| Tasks | It defines work existence, readiness, sequencing, blocking, due dates, or audit context | It is the user's daily landing page or source-record substitute | Ready/recovery fields before helper/audit detail; task text and status stay most prominent |
+| Decisions | It requires judgement and Yes/No has a real consequence | It is already executable work or passive reference data | Pending/overdue judgement first, then action/result/audit context |
+| Source tabs | It is durable truth about a sector, organisation, job, person, interview, or conversation | It is only a daily action, transient reminder, or operating dashboard metric | Identity/link fields -> user-owned facts -> state/outcome -> derived helpers -> notes |
+| Guide | It explains stable behavior after the workflow is settled | It compensates for unclear UI or carries instructions needed for today's action | Start/setup -> daily routine -> capture -> tab roles -> recovery/troubleshooting |
 
 Category 0 current workbook scan:
 
