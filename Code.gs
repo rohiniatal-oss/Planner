@@ -6408,7 +6408,7 @@ function renderNeedsBreakdown(sheet) {
       .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
     return;
     sheet.getRange(TODAY_NEEDS_BREAKDOWN_FIRST_ROW + idx, 2, 1, 7).merge()
-      .setValue(item.task + ' — use Row actions → Break down (on Tasks)').setFontColor('#964219');
+      .setValue(item.task + ' - use Row actions > Make selected Task multi-step').setFontColor('#964219');
   });
 }
 
@@ -8467,7 +8467,7 @@ var HEADER_GUIDANCE = {
     'Effort': 'light/medium/deep', 'Status': 'tick Done here', 'Actual min': 'optional', 'Why / notes': 'which stage of the priority waterfall selected this — anything you add after it is kept on refresh'
   },
   'Pending decisions': {
-    'Decision ID': 'system', 'Created': 'system', 'Decision key': 'system', 'Trigger': 'what happened', 'Suggested task': 'what could happen next',
+    'Decision ID': 'system', 'Created': 'system', 'Decision key': 'system', 'Trigger': 'what happened', 'Suggested action': 'what could happen next',
     'Target type': 'linked object type', 'Target ID': 'system', 'Suggested workflow': 'cascade type', 'Notes': 'context',
     'Decision': 'Pending / Yes / No / Auto-dismissed', 'Decided at': 'system', 'Resulting To-do ID': 'system'
   }
