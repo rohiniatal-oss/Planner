@@ -720,6 +720,68 @@ Stage 9 checks:
 Stage 9 implementation:
 Added audit notes for user-driven `No` and manual `Auto-dismissed` decisions in `resolveDecisionAction`, so Decisions remains a judgement trail and not only a status table.
 
+## Stage 10 - Automation and Workflow Intelligence
+
+Required output:
+
+| Automation candidate | Current behaviour | Correct level | Risk | User override | Implement? |
+|---|---|---|---|---|---|
+
+Stage 10 automation boundary trace:
+
+| Automation candidate | Current behaviour | Correct level | Risk | User override | Implement? |
+|---|---|---|---|---|---|
+| Applying to jobs | Application status can be set by user/task completion; planning asks first | L0/L3/L5 | Silent apply would be unsafe | User chooses status and planning | No |
+| Application planning | In progress queues a planning decision; Yes opens effort-band popup; tasks created from popup | L3/L5 -> L4 | Task spam if every sub-item is automatic | Popup item/effort choices | No new gap |
+| Referral outreach | Planning/search can create/link People and outreach tasks only after user choice | L3/L5 -> L4 | Silent social outreach would be unsafe | Referral choice/popup result | No new gap |
+| Source-led opportunity scan | Task completion opens capture-data decision/popup | L4 -> L3/L5 | Search results should not silently become rows unless user captures them | User can capture or close with no results | No new gap |
+| Source-led people scan | Task completion opens capture-data decision/popup; People saved as Identified only | L4 -> L5 | Auto-outreach would be too aggressive | User later moves stage to outreach | No new gap |
+| Interview scheduling/prep | Scheduled round creates Plan interview prep task; completion opens prep popup and creates parent/child prep tasks | L4/L5 | Prep can be heavy, but user selects areas/bands | Prep popup and task cancellation/reschedule paths | No new gap |
+| People outreach follow-up | Due follow-ups are materialized by maintenance | L4 | Due-today follow-ups could be missed until tomorrow | User can skip/cancel/edit task | Fixed |
+| Application response check | Waiting/submitted applications have response checks; maintenance materializes missing due checks | L4 | Imported/missing due-today checks could wait until tomorrow | User can update result directly | Fixed |
+| Interview response check | Completed waiting rounds have follow-up checks | L4 | Imported/missing due-today checks could wait until tomorrow | User can update outcome directly | Fixed |
+| Duplicate/stale work | Repair/daily flags duplicate open tasks and duplicate pending decisions; Today excludes duplicate-linked tasks | L2 | Over-automation could delete valid parallel work | User reviews/cancels duplicate | No new gap |
+| Dormant/reactivation/org review | Live evidence on Dormant queues a decision; due org review queues a decision | L3 | Silent reactivation would override strategy | User decides via org update | No new gap |
+
+Stage 10 finding:
+
+## Issue: Due-today reminders could materialize one day late
+
+Severity: P2
+
+Stage: 10
+Area: Automation and workflow intelligence
+Tab/surface: People / Jobs / Interviews / Tasks / Today
+Column/function: `materializeDueTasks`
+
+Evidence:
+- Code evidence: People outreach and keep-warm follow-ups used `new Date(followUpDate) < todayDate`.
+- Code evidence: Submitted-job response checks used `new Date(reviewDate) < todayDate`.
+- Code evidence: completed-interview response checks used `new Date(rExpResp) < todayDate`.
+- Product evidence: The planner should surface work that is due today, not only work that became overdue yesterday.
+
+Current behaviour:
+If a due task already existed, Today could still pick it up. But if the due task was missing because of import, trigger-off editing, repair, or older data, daily maintenance would not create it until the day after the due date.
+
+Expected behaviour:
+Due-work materialization should treat due today as due now.
+
+User impact:
+Follow-ups and response checks appear on the day they are due rather than slipping quietly.
+
+Automation boundary:
+L4 task materialization. This creates only concrete due reminder tasks, not strategic/social judgement.
+
+Implemented fix:
+Changed the People follow-up, keep-warm check-in, Jobs response-check, and Interviews response-check branches in `materializeDueTasks` to use `isDueOnOrBefore(..., todayDate)`.
+
+Acceptance tests:
+1. People outreach follow-up due today materializes a Contact follow-up task if none is open.
+2. Keep-warm follow-up due today materializes a Contact follow-up task if none is open.
+3. Submitted job review date due today materializes a Check application response task if none is open.
+4. Completed interview expected response due today materializes an Interview follow-up task if none is open.
+5. Org review due-today behavior remains unchanged.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3

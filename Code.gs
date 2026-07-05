@@ -11347,10 +11347,10 @@ function materializeDueTasks() {
       var closed = stage === 'Closed';
       if (!personId || !personName) continue;
       if (closed) continue;
-      if (!keepWarm && !closed && replyReceived !== 'Yes' && stage === 'Outreach sent' && followUpDate && new Date(followUpDate) < todayDate && followUpSent === 'No') {
+      if (!keepWarm && !closed && replyReceived !== 'Yes' && stage === 'Outreach sent' && isDueOnOrBefore(followUpDate, todayDate) && followUpSent === 'No') {
         if (appendTodoOnceForWorkflow('Follow up with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', followUpDate, '15 min', '', 'Auto-triggered')) created++;
       }
-      if (keepWarm && followUpDate && new Date(followUpDate) < todayDate) {
+      if (keepWarm && isDueOnOrBefore(followUpDate, todayDate)) {
         if (appendTodoOnceForWorkflow('Keep-warm check-in with ' + personName, 'Person', personId, orgName, 'Contact follow-up', 'Not started', followUpDate, '15 min', '', 'Auto-triggered')) created++;
       }
     }
@@ -11370,7 +11370,7 @@ function materializeDueTasks() {
       var outcome = normalizeJobOutcome(jData[jj][COLS.JOBS.OUTCOME - 1]);
       if (!jobId || !jobTitle) continue;
       var stillWaiting = !response || response === 'No' || outcome === 'Waiting';
-      if (jobStatus === 'Submitted' && reviewDate && new Date(reviewDate) < todayDate && stillWaiting) {
+      if (jobStatus === 'Submitted' && isDueOnOrBefore(reviewDate, todayDate) && stillWaiting) {
         if (appendTodoOnceForWorkflow('Check application response: ' + jobTitle + ' at ' + jobOrg, 'Job', jobId, jobOrg, 'Check application response', 'Not started', reviewDate, '15 min', '', 'Auto-triggered')) created++;
       }
     }
@@ -11406,7 +11406,7 @@ function materializeDueTasks() {
       var rOutcome = String(rData[rr][COLS.ROUNDS.OFFICIAL_OUTCOME - 1]);
       var rExpResp = rData[rr][COLS.ROUNDS.EXPECTED_RESPONSE - 1];
       if (!rId) continue;
-      if (rStatus === 'Completed' && (!rOutcome || rOutcome === 'Waiting') && rExpResp && new Date(rExpResp) < todayDate) {
+      if (rStatus === 'Completed' && (!rOutcome || rOutcome === 'Waiting') && isDueOnOrBefore(rExpResp, todayDate)) {
         if (appendTodoOnceForWorkflow('Check response from ' + rOrgDisp + ' Round ' + rRound, 'Interview round', rId, rOrgDisp, 'Interview follow-up', 'Not started', rExpResp, '15 min', '', 'Auto-triggered')) created++;
       }
     }
