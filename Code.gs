@@ -2011,9 +2011,19 @@ function resolveUpdateSourceDecision(ctx) {
     return { ok: true, pending: true, popupOpened: true };
   }
   var captureType = '';
-  if (String(ctx.key || '').indexOf('INTERVIEW_OUTCOME:') === 0) captureType = 'Add/update interview';
-  else if (String(ctx.key || '').indexOf('PERSON_REPLY_OUTCOME:') === 0) captureType = 'Add/update conversation';
-  else if (String(ctx.key || '').indexOf('OFFER_DECISION_DONE:') === 0) captureType = 'Application update';
+  if (String(ctx.key || '').indexOf('INTERVIEW_OUTCOME:') === 0) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runInterviewOutcomePopup(ctx.targetId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  if (String(ctx.key || '').indexOf('OFFER_DECISION_DONE:') === 0 && ctx.targetType === 'Job') {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runOfferDecisionPopup(ctx.targetId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  if (String(ctx.key || '').indexOf('PERSON_REPLY_OUTCOME:') === 0) captureType = 'Add/update conversation';
   if (captureType) {
     ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
     runCapturePopup(captureType, ctx.id);
@@ -9368,6 +9378,122 @@ function completeApplicationResultFromPopup(payload) {
       return popupExceptionResult('completeApplicationResultFromPopup', err);
     }
   }, { label: 'completeApplicationResultFromPopup', timeoutMs: 30000 });
+}
+
+function buildInterviewOutcomeHtml(roundId, decisionId) {
+  var round = getRoundById(roundId);
+  if (!round) return '<p>Interview round not found.</p>';
+  var data = {
+    roundId: round.id,
+    decisionId: decisionId || '',
+    job: round.job,
+    org: round.org,
+    round: round.round,
+    current: round.officialOutcome || 'Waiting',
+    outcomes: DROPDOWNS.OFFICIAL_OUTCOME
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Interview outcome</h2><p id="roundLine"></p>' +
+    '<label>Official outcome<select id="outcome"></select></label>' +
+    '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("roundLine").textContent="Round "+data.round+" - "+data.job+(data.org?" at "+data.org:"");' +
+    'var outcome=document.getElementById("outcome");data.outcomes.forEach(function(o){var opt=document.createElement("option");opt.value=o;opt.textContent=o;outcome.appendChild(opt);});outcome.value=data.current;' +
+    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Decisions.";}).completeInterviewOutcomeFromPopup({roundId:data.roundId,decisionId:data.decisionId,outcome:outcome.value});}</script>';
+}
+
+function runInterviewOutcomePopup(roundId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildInterviewOutcomeHtml(roundId, decisionId || '')).setWidth(460).setHeight(300).setTitle('Interview outcome');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Interview outcome');
+}
+
+function completeInterviewOutcomeFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var round = getRoundById(payload.roundId);
+      if (!round) return failResult('I could not find that interview round.', '', 'ROUND_NOT_FOUND');
+      var outcome = String(payload.outcome || '');
+      if (DROPDOWNS.OFFICIAL_OUTCOME.indexOf(outcome) === -1) return failResult('Pick a valid interview outcome.', 'outcome', 'INVALID_OUTCOME');
+      handleInterviewOfficialOutcome(round.id, outcome, { source: 'interview-outcome-popup' });
+      resolvePopupDecision(payload.decisionId, '', 'Interview outcome recorded: ' + outcome);
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      return okResult('Interview outcome recorded: ' + outcome + '.');
+    } catch (err) {
+      return popupExceptionResult('completeInterviewOutcomeFromPopup', err);
+    }
+  }, { label: 'completeInterviewOutcomeFromPopup', timeoutMs: 30000 });
+}
+
+function buildOfferDecisionHtml(jobId, decisionId) {
+  var job = getJobRowById(jobId);
+  if (!job) return '<p>Job not found.</p>';
+  var data = {
+    jobId: job.id,
+    decisionId: decisionId || '',
+    title: job.title,
+    org: job.org,
+    outcomes: ['Accepted', 'Declined', 'Parked', 'Still deciding']
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    'label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}' +
+    'select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Offer decision</h2><p id="jobLine"></p>' +
+    '<label>Decision<select id="outcome"></select></label>' +
+    '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;' +
+    'var outcome=document.getElementById("outcome");data.outcomes.forEach(function(o){var opt=document.createElement("option");opt.value=o;opt.textContent=o;outcome.appendChild(opt);});' +
+    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Decisions.";}).completeOfferDecisionFromPopup({jobId:data.jobId,decisionId:data.decisionId,outcome:outcome.value});}</script>';
+}
+
+function runOfferDecisionPopup(jobId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildOfferDecisionHtml(jobId, decisionId || '')).setWidth(460).setHeight(300).setTitle('Offer decision');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Offer decision');
+}
+
+function completeOfferDecisionFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var job = getJobRowById(payload.jobId);
+      if (!job) return failResult('I could not find that job.', '', 'JOB_NOT_FOUND');
+      var outcome = String(payload.outcome || '');
+      if (['Accepted', 'Declined', 'Parked', 'Still deciding'].indexOf(outcome) === -1) return failResult('Pick a valid offer decision.', 'outcome', 'INVALID_OUTCOME');
+      var sheet = getSheet('Jobs');
+      appendNoteFlag(sheet, job.row, COLS.JOBS.NOTES, '[offer-decision] ' + outcome + ' on ' + formatDateHuman(today()));
+      if (outcome === 'Still deciding') {
+        appendTodoOnceForWorkflow('Decide on offer: ' + job.title + ' at ' + job.org, 'Job', job.id, job.org,
+          'Offer decision', 'Not started', addDays(today(), 2), '30 min', 'Offer still under review.', 'Auto-triggered');
+      } else {
+        setJobStatus(job.id, 'Closed', { source: 'offer-decision-popup' });
+        setOpenTodosForTarget('Job', job.id, 'Cancelled', 'Offer decision recorded', ['Offer decision']);
+      }
+      resolvePopupDecision(payload.decisionId, '', 'Offer decision recorded: ' + outcome);
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      return okResult('Offer decision recorded: ' + outcome + '.');
+    } catch (err) {
+      return popupExceptionResult('completeOfferDecisionFromPopup', err);
+    }
+  }, { label: 'completeOfferDecisionFromPopup', timeoutMs: 30000 });
 }
 
 function buildSubmitApplicationHtml(todoId) {
