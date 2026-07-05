@@ -4958,6 +4958,7 @@ function onEditJobs(sheet, row, col, newVal, e) {
     sheet.getRange(row, COLS.JOBS.ID).setValue(id);
     if (!sheet.getRange(row, COLS.JOBS.ORG).getValue()) {
       appendNoteFlag(sheet, row, COLS.JOBS.NOTES, '[pending-org] Add Organisation to activate this job\u2019s tasks.');
+      requestHomeRefresh();
       return;
     }
     inheritOrgFields(sheet, row, COLS.JOBS.ORG, COLS.JOBS.ORG_ID);
@@ -5034,6 +5035,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
       appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[no-org] Organisation optional; add one later if this should link to an organisation.');
     }
     refreshLinkedContactsDisplay();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.PEOPLE.REPLY_RECEIVED && String(newVal) === 'Yes') {
@@ -5425,6 +5427,7 @@ function onEditInteractions(sheet, row, col, newVal) {
       routeInteractionStatusForPerson(sheet, row, datedStatus);
       refreshDerivedPlanningSurfaces();
       syncPeopleHelperColumns();
+      requestHomeRefresh();
     }
     return;
   }
@@ -5432,6 +5435,7 @@ function onEditInteractions(sheet, row, col, newVal) {
     if (routeInteractionStatusForPerson(sheet, row, newVal)) {
       refreshDerivedPlanningSurfaces();
       syncPeopleHelperColumns();
+      requestHomeRefresh();
     }
     return;
   }
