@@ -1,5 +1,6 @@
 /**
  * The Planner — Code.gs (v7.3)
+ * Runtime version: see SCRIPT_VERSION below.
  * =============================
  * Career-search planning system on a single Google Sheet.
  *
@@ -263,7 +264,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.4';
+var SCRIPT_VERSION = 'v7.7.5';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -10519,7 +10520,9 @@ var STATUS_COLOR_MAP = {
   'Organisations': { col: COLS.ORGS.STATUS, colors: { 'Mapped': '#E8EAED', 'Active': '#CEEAD6', 'Dormant': '#FEF7CD', 'Archived': '#EAE3DD' } },
   'People': { col: COLS.PEOPLE.STAGE, colors: { 'Identified': '#E8EAED', 'To outreach': '#FEF7CD', 'Outreach drafted': '#FEF7CD', 'Outreach sent': '#C2DBFF', 'Replied': '#B6E3E0', 'Conversation scheduled': '#D2E3FC', 'Conversation completed': '#CEEAD6', 'Keep warm': '#FEF7CD', 'Closed': '#EAE3DD' } },
   'Jobs': { col: COLS.JOBS.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Submitted': '#B6E3E0', 'Closed': '#F1F3F4' } },
+  'Interactions': { col: COLS.INTERACTIONS.STATUS, colors: { 'Scheduled': '#D2E3FC', 'Completed': '#CEEAD6', 'Cancelled': '#EAE3DD' } },
   'To-do': { col: COLS.TODO.STATUS, colors: { 'Not started': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Skipped': '#F1F3F4', 'Cancelled': '#EAE3DD' } },
+  'Interview rounds': { col: COLS.ROUNDS.STATUS, colors: { 'To schedule': '#FEF7CD', 'Scheduled': '#D2E3FC', 'Completed': '#CEEAD6', 'Cancelled': '#EAE3DD', 'Reschedule': '#FDE9D9' } },
   "Today's plan": { col: COLS.TODAY.STATUS, colors: { 'Planned': '#FFFFFF', 'In progress': '#FEF7CD', 'Blocked': '#FDE9D9', 'Done': '#CEEAD6', 'Deferred': '#D2E3FC', 'Skipped': '#F1F3F4' } },
   'Pending decisions': { col: COLS.DECISIONS.DECISION, colors: { 'Pending': '#FEF7CD', 'Yes': '#CEEAD6', 'No': '#F1F3F4', 'Auto-dismissed': '#EAE3DD' } }
 };

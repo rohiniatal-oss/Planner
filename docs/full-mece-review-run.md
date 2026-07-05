@@ -1326,3 +1326,40 @@ Verification:
 - Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
 - HEADERS/COLS schema check clean
 - Stage 6 column config bounds check clean
+
+## Stage 13 - Visual and Interaction Polish Across All Tabs
+
+User correction:
+Stage 13 must cover every workbook tab, including source tabs, before Stage 14 Guide work. This pass is not a Guide rewrite.
+
+Config evidence checked:
+- `CANONICAL_TAB_ORDER` keeps the operating path first: Home > Today > Decisions > Tasks > source tabs > Guide.
+- `MANUAL_COLUMNS`, `COLUMN_WIDTHS`, and `WRAP_COLUMNS` cover all table tabs with manual fields; no manual tab lacks a width config.
+- `hiddenColumnsFor` hides helper IDs and backend links while leaving key user-facing helper fields visible on Tasks and People.
+- `clearBodyDropdowns` clears stale body validations before source-tab dropdowns are reapplied; Today uses row-specific dropdown repair through `applyTodayRowStatusDropdowns`.
+- `hardResetHomeSheet` and `hardResetTodaySheet` clear stale content, fills, validations, notes, and merges before custom surfaces are redrawn.
+- `clearRetiredSchemaColumns` clears out-of-schema content, notes, validations, and formatting on repair.
+- Schema/config verifier: Sectors 6/6, Organisations 13/13, People 17/17, Jobs 13/13, Conversations 9/9, Tasks 30/30, Interviews 12/12, Decisions 16/16, Today 9/9.
+
+Required output:
+
+| Tab | Visual issue | User impact | Fix | Screenshot/live-sheet check needed? |
+|---|---|---|---|---|
+| Home | No new code issue found. Custom renderer clears stale fills and keeps Home to decisions, capture, Today, open applications, upcoming, and compact repair/refresh. | Home should remain an operating cockpit, not a dashboard. | None in this pass. | Yes, after deploy: confirm empty decisions, open applications, upcoming, and refresh utility do not look stranded or crowded. |
+| Today | No new code issue found. Focus/minutes/energy notes now explain what refresh changes; Status and Why/notes are manual-owned. | User can understand capacity changes without guessing whether Today mutates source tabs. | None in this pass. | Yes, after deploy: confirm capacity headline, options, and Needs planning sections fit without overlap. |
+| Decisions | No new visual issue found. `What Yes does`, `Review by`, `Linked to`, and `Result` are visible audit fields; helper IDs stay hidden. | Decisions reads as a queue/audit trail while Home carries the top 3 decisions. | None in this pass. | Optional, after deploy: confirm long decision cards wrap cleanly. |
+| Tasks | No new visual issue found. Commitment class, Ready for Today, child progress, blockers, and links stay visible for inspection/repair; backend IDs stay hidden. | Tasks remains inspect/repair-friendly rather than a daily execution surface. | None in this pass. | Optional, after deploy: confirm wide visible helper columns remain readable. |
+| Sectors | No new visual issue found. Sector/Sub-sector/status/notes are editable; IDs are hidden. | User sees taxonomy fields, not backend IDs. | None in this pass. | Optional. |
+| Organisations | No new visual issue found. Counts/review dates are helper-owned/hidden or system-styled; user edits name/classification/tier/status/notes. | Organisations remains a source tab, not a dashboard. | None in this pass. | Optional. |
+| Jobs | No new visual issue found. Application status is color-coded; result remains readable text. | User can scan application lifecycle without turning Jobs into Home. | None in this pass. | Optional. |
+| People | No new visual issue found. Relationship status is color-coded; helper fields Last interaction/Next action/Linked jobs stay visible. | Relationship work is legible without exposing IDs. | None in this pass. | Optional. |
+| Conversations | Interaction status was a workflow-driving column but had no status color coding, unlike peer source tabs. | Scheduled/completed/cancelled conversations were harder to scan than Jobs/People/Orgs. | Added `STATUS_COLOR_MAP` colors for Scheduled, Completed, and Cancelled using existing palette. | Yes, after deploy: confirm the color helps scan without making the log noisy. |
+| Interviews | Round status was a workflow-driving column but had no status color coding. | Scheduled/reschedule/completed interview rounds were harder to scan than other workflow statuses. | Added `STATUS_COLOR_MAP` colors for To schedule, Scheduled, Completed, Cancelled, and Reschedule using existing palette. | Yes, after deploy: confirm prep/outcome columns still read cleanly. |
+| Guide | Deferred by rule. | Guide should not become stale while behaviour is still changing. | No Guide content change in Stage 13. | Stage 14. |
+
+Additional maintenance-surface fix:
+- Bumped `SCRIPT_VERSION` to `v7.7.5` so repair/audit/version surfaces report the current code batch instead of `v7.7.4`.
+- Added a plain header note that `SCRIPT_VERSION` is the runtime version source, avoiding confusion from older historical header prose.
+
+Stage 13 decision:
+Source-tab visual polish should improve scanability of workflow state, not add dashboard summaries. This pass adds only missing status colours and version/audit alignment; it does not change schemas, cascades, dropdown values, Home contents, Today selection, or Guide text.
