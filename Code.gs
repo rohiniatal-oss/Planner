@@ -1580,7 +1580,11 @@ function findPersonByNameOrg(name, org) {
   var n = normalizeKeyPart(name), o = normalizeKeyPart(org);
   var best = null, bestScore = 0;
   for (var i = 0; i < data.length; i++) {
-    var sameOrg = !o || normalizeKeyPart(data[i][COLS.PEOPLE.ORG - 1]) === o || normalizeKeyPart(data[i][COLS.PEOPLE.ORG_ID - 1]) === o;
+    var existingOrg = normalizeKeyPart(data[i][COLS.PEOPLE.ORG - 1]);
+    var existingOrgId = normalizeKeyPart(data[i][COLS.PEOPLE.ORG_ID - 1]);
+    var sameOrg = o
+      ? (existingOrg === o || existingOrgId === o)
+      : (!existingOrg && !existingOrgId);
     if (!sameOrg) continue;
     var score = similarity(n, normalizeKeyPart(data[i][COLS.PEOPLE.NAME - 1]));
     if (score > bestScore) { bestScore = score; best = { row: i + 2, data: data[i], score: score }; }
@@ -8721,7 +8725,7 @@ function saveSetupProfile(profile) {
 function setupLabel(profile) {
   if (!profile) return 'Not set up yet';
   var goalLabels = { explore_space: 'Exploring a new space', in_process: 'Already in the process', skipped: 'Setup skipped' };
-  var entryLabels = { sectors: 'Sectors', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', not_sure: 'Not sure', skip: 'Skipped' };
+  var entryLabels = { sectors: 'Sectors', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', routines: 'Search routines', not_sure: 'Not sure', skip: 'Skipped' };
   return (goalLabels[profile.goal] || profile.goal || 'Setup') + (profile.entryPoint ? ' — ' + (entryLabels[profile.entryPoint] || profile.entryPoint) : '');
 }
 
@@ -9157,6 +9161,17 @@ function refreshHome() {
     var nextItem = nextIncompleteChecklistItem(profile);
     var detail = editReady ? setupLabel(profile) + (nextItem ? ' — next: ' + (nextItem.label || nextItem.text) : '') : 'Run The Planner > Setup & automation > Turn on Planner, then continue onboarding.';
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge().setValue(detail).setWrap(true).setFontColor('#5F625E');
+  } else if (profile && profile.goal === 'skipped') {
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
+      .setValue('Setup skipped').setFontWeight('bold').setFontColor('#7A7974');
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
+      .setValue('Starting facts')
+      .setNote('Reopens setup to add or update starting facts. To clear planner data, use Data safety & repair > Start fresh.')
+      .setFontSize(9).setFontColor('#7A7974');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
+      .setValue('Add starting facts when you are ready. Existing planner data is kept.')
+      .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground('#EAF4F5').setWrap(true);
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
       .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
@@ -9618,10 +9633,7 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
     if (!fields.jobTitle) return failResult('I need at least a job title to capture an interview.', 'jobTitle', 'MISSING_JOB_TITLE');
     if (!fields.org) return failResult('I need the organisation name to capture an interview.', 'org', 'MISSING_ORG');
   }
-  if (entryPoint === 'people') {
-    if (!fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
-    if (!fields.org) return failResult('I need the organisation name to capture this person.', 'org', 'MISSING_ORG');
-  }
+  if (entryPoint === 'people' && !fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
   if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   }
@@ -9786,7 +9798,8 @@ function processPeopleOnboarding(fields) {
     else routePersonReplyReceived(personId, { source: 'capture' });
   }
   if (fields.notes) appendNoteFlag(getSheet('People'), getPersonRowById(personId).row, COLS.PEOPLE.NOTES, fields.notes);
-  return okResult((existingPerson ? 'Updated existing' : 'Created') + ' person: ' + fields.name + ' at ' + (org ? org.name : fields.org) + '. Routed the outreach/follow-up state.');
+  var orgSuffix = org ? ' at ' + org.name : '';
+  return okResult((existingPerson ? 'Updated existing' : 'Created') + ' person: ' + fields.name + orgSuffix + '. Routed the outreach/follow-up state.');
 }
 
 // v7.1: honors the Status the user explicitly picked (Mapped/Active/
@@ -10082,6 +10095,7 @@ function completeSetupFromPopup(payload) {
       if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
       var suffix = shouldReset ? ' Existing planner data was cleared first.' : (goal !== 'skipped' && entryPoint !== 'skip' ? ' Existing planner data was kept.' : '');
       if (backup) suffix += ' Backup copy created: ' + backup.name + '. Use that copy if you need to recover cleared data.';
+      if (result.warnings && result.warnings.length) suffix += ' ' + result.warnings.join(' ');
       result.message = (result.message || 'Onboarding saved.') + suffix;
       return result;
     } catch (err) {
