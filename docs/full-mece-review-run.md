@@ -21,7 +21,7 @@ Required output:
 | New user | Turn the Planner on, understand setup, and avoid accidental data loss | Home, Planner setup menu, setup popup | `refreshHome` has a trigger banner; `runSetupInterview` is additive; destructive start-fresh is separate under Maintenance | Verify first-run Home state, trigger-off state, setup popup, and start-fresh backup path before declaring onboarding solved | P1 |
 | Daily user | See what needs attention and start work without visiting source tabs | Home -> Today | `refreshHome` gives Decisions, capture, Today state, open applications, upcoming, and utility refresh; still needs live Home/Today consistency proof | Stage 8 must prove Home never says Not built when Today has a current usable plan | P1 |
 | Low-energy day | Adjust the plan to a realistic day | Today | `bootstrapToday` now explains Focus, Available minutes, Energy, and build/refresh effects; low-energy/minimum-day cue needs rendered-sheet review | Stage 7 must test whether low capacity/low energy creates clear enough Today feedback without adding dashboard noise | P2 |
-| Missed-days restart | Regain control after not using the Planner for a few days | Home, Today, Maintenance | `readMaintenanceHealth` can surface stale daily/weekly automation and Today can rebuild, but the product path is not named as a recovery mode | Decide after Stage 8/11 whether Home needs a compact "restart today" cue or whether existing maintenance/Today cues are enough | P2 |
+| Missed-days restart | Regain control after not using the Planner for a few days | Home, Today, Maintenance | `readMaintenanceHealth` can surface stale daily/weekly automation and Today can rebuild; `Restart today` now names the recovery path | Live-test stale Home state after deploy | P2 |
 | Application sprint | Move from opportunity to application plan to submission to response tracking | Home capture, Jobs, Decisions, Tasks, Today | Prior ledger says application planning exists, but final checklist requires proof from current `Code.gs` and scenarios | Re-run Jobs/Application workflow lineage before changing application logic | P1/P2 |
 | Interview sprint | Track interview date, prep plan, outcome, and follow-up | Interviews, Tasks, Today, Home Upcoming | Prior ledger says prep is task-led; current code evidence must prove prep is not buried in notes | Re-run Interviews workflow lineage and Today prep-readiness checks | P1/P2 |
 | Networking day | Capture people and conversations without forced outreach | People, Conversations, Tasks, Today | Product boundary looks right: discovery should not auto-create outreach; needs state-machine verification | Re-run People/Conversations state machine and no-task-spam checks | P1/P2 |
@@ -38,7 +38,7 @@ Stage 0 evidence map from current code:
 | Home user modes | `refreshHome`, `collectHomeAttentionItems`, `todayPlanCounts`, `collectOpenApplications`, `collectUpcomingItems` | Home is intended as command centre, not raw dashboard | Needs live visual/state test |
 | Today user modes | `bootstrapToday`, `stagedTodaySelection`, `collectNeedsPlanningTasks`, end-of-day section | Today is intended as execution/capacity/recovery surface | Needs Stage 7 readiness/capacity edge tests |
 | Setup and reset safety | `runSetupInterview`, `completeSetupFromPopup`, `resetPlannerDataForOnboarding`, backup copy path | New-user and redo-setup flows are designed with backup-before-clear | Needs Stage 3 destructive-action inventory and live popup test |
-| Weekly/restart support | `readMaintenanceHealth`, `weeklyReviewImpl`, `dailyMaintenance`, Home maintenance messaging | The system has heartbeat and stale-maintenance signals | Does not yet create a named missed-days recovery experience |
+| Weekly/restart support | `readMaintenanceHealth`, `weeklyReviewImpl`, `dailyMaintenance`, Home maintenance messaging, `restartToday` | The system has heartbeat, stale-maintenance signals, and a named missed-days recovery action | Needs live stale-state render test |
 | Guide-last | Final checklist source-of-truth rule plus existing `rewriteGuide` presence | Guide is recognized as documentation surface | Guide content may still lag; update only at Stage 14 |
 
 Stage 0 re-check from `585cce1`:
@@ -48,7 +48,7 @@ Stage 0 re-check from `585cce1`:
 | New user | `refreshHome` renders trigger-off setup guidance; `runSetupInterview` / `completeSetupFromPopup` offer backup-before-reset when existing rows are present | Covered for now; destructive-action inventory still belongs to Stage 3 |
 | Daily user | `refreshHome` renders Decisions, Capture update, Today state, Open applications, Upcoming, and maintenance status | Covered for code structure; Home/Today truth must be proven in Stage 8 |
 | Low-energy day | `bootstrapToday` exposes Focus, Available minutes, Energy, and notes explaining that refresh re-fits work | Covered for code structure; capacity behaviour must be proven in Stage 7 |
-| Missed-days restart | `readMaintenanceHealth`, Home attention items, Today rebuild, and maintenance menu actions exist, but there is no named recovery mode | Carry forward as the active Stage 0 product gap; decide placement in Stage 8 rather than adding Home noise now |
+| Missed-days restart | `readMaintenanceHealth`, Home attention items, Today rebuild, and `Restart today` menu action | Implemented as a compact stale-state cue, not a dashboard |
 | Application sprint | Open applications, response checks, application workflows, and application capture paths exist in code | Needs Stage 4/6 lineage proof before changing application logic |
 | Interview sprint | Interview scheduling/prep/follow-up workflows exist, including task-led prep workflows | Needs Stage 4/6/7 proof that prep is task-visible and Today-ready |
 | Networking day | People and Conversations workflows exist; source-led people capture exists | Needs Stage 5/6 no-task-spam proof |
@@ -422,7 +422,7 @@ Do not do:
 |---|---|---|---|---|---|---|---|
 | Duplicate broad Sector IDs on sector-only rows are not detected | P1 | 2 | Sector links can resolve to the wrong broad sector | None | Batch 1 data safety and trust | Duplicate sector-only SEC rows flagged; child rows not falsely flagged | Fixed in current batch |
 | Home/Today navigation still needs rendered consistency proof | P1/P2 | 1/8/13 | Trust depends on rendered Home matching Today | Live sheet or Apps Script sync | Batch 2 | Home ready/not-built/stale states verified | Open |
-| Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Batch 2 or 5, depending on finding | Home stale-state scenario has one clear next action | Open |
+| Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Implemented | Home stale-state scenario has one clear next action: The Planner > Restart today | Live verify |
 | Guide can be regenerated before the Guide-last phase | P2/P3 | 1/3/14 | Guide may look authoritative before behaviour settles | Repair inventory and Guide-last stage | Batch 6 or Stage 3 repair decision | Repair/Guide behaviour reviewed before content change | Open |
 | Today row movement menu labels are too context-dependent | P3 | 1/12 | Minor menu ambiguity | None | Batch 5 UX/copy | Menu labels change only; functions unchanged | Fixed in `e3c9dc3` |
 
@@ -1521,7 +1521,7 @@ Product taste findings:
 | Home lacked a whole-pipeline view. | P2 | People, Jobs, and Interviews each worked as line-item systems, but Home did not answer "what shape is my search taking this month?" | Fixed now: Home shows a compact This month section with conversations, applications, interviews, and funnel shape. |
 | Interview prep did not learn from repeated behaviour. | P2/P3 | Prep plans stored area/band tokens, but the popup always started blank unless the same round already had a saved plan. | Fixed now: new interview prep plans preselect historical area/band defaults from prior prep parent tasks; existing saved plans still take precedence. |
 | Setup menu copy still exposed automation as the product concept. | P2 | User-facing paths said Setup & automation even when the user goal is simply turning the Planner on. | Fixed now: visible menu/path says Planner setup; repair actions say Repair rather than Fix. |
-| Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user has warnings and refreshes, not a calm "restart today" flow. | Structural redesign candidate after Home/Today review. |
+| Missed-days restart is not a named product experience. | P2 | Stage 0 already carried this as a gap; user had warnings and refreshes, not a calm restart path. | Fixed now: Home stale cues and the top menu point to `Restart today`. |
 | Source tabs are powerful but still feel spreadsheet-like. | P2/P3 | Direct editable tables, row actions, hidden helper columns, header hints. | Backlog: stronger inspect/repair framing, filters/views, or fewer daily-visible source mechanics. |
 
 Immediate Stage 17 implementation:
@@ -1539,6 +1539,7 @@ Immediate Stage 17 implementation:
 - Preselect interview prep areas/bands from prior prep history when a round has no saved plan yet.
 - Rename Setup & automation to Planner setup and make setup repair labels more outcome-oriented.
 - Strengthen destructive reset so Start fresh rebuilds data tabs to the intended schema shape instead of leaving old dropdowns, formatting, or retired columns behind.
+- Add `Restart today` as the named missed-days recovery path.
 
 Stage 17 decision:
 This stage is now the product-taste gate before Guide-last. It should not stop at correctness. Bigger structural ideas stay as redesign candidates unless the current code has a low-risk product-model fix, like setup/reset separation.
@@ -1573,3 +1574,23 @@ Acceptance:
 - Start fresh still creates a backup before clearing.
 - Data tabs no longer retain out-of-schema columns or old formatted/validated body rows after reset.
 - Existing setup remains additive unless a legacy guarded reset payload explicitly requests reset.
+
+## Stage 17 restart/product-excellence follow-up
+
+Implemented:
+- Added `The Planner > Restart today` as the named recovery path for returning after missed days.
+- `restartToday()` reuses the existing daily maintenance path, and runs weekly review when the weekly heartbeat is stale. It refreshes due tasks, helper state, Today, Home, trigger health, and maintenance heartbeats.
+- Home stale-state messaging now points to `Restart today` instead of scattering users across lower-level maintenance actions.
+- Home attention hints now say `Restart today` for maintenance/weekly-review staleness.
+- Guide copy now tells users to use `Restart today` when returning after several days.
+
+Product-excellence backlog deliberately not implemented in this small patch:
+- Unify application/interview planning popups: worthwhile medium refactor, but not a safe wording/recovery patch.
+- Gradually migrate Notes-tags-as-state: worth doing only tag family by tag family where it has caused bugs.
+- Source-tab redesign: source tabs still feel spreadsheet-like; improving that needs a focused source-tab product pass, not a hidden tweak.
+- Rhythm guidance on Home: Home now has monthly pipeline shape; any stronger pacing or benchmark layer should be designed carefully so Home does not become a dashboard.
+- Maintenance simplification beyond current labels: keep reducing machinery language as concrete labels surface, but avoid hiding genuinely dangerous actions like Start fresh.
+
+Remaining verification:
+- Live stale-state check: set or observe stale maintenance state and confirm Home shows one calm `Restart today` path.
+- Run `Restart today` from the menu and confirm Today/Home refresh, weekly review runs when weekly-stale, and the stale cue clears.

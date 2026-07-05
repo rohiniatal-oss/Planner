@@ -8714,11 +8714,17 @@ function homeAttentionActionHint(items) {
     if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
     if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
   });
-  if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then run Maintenance if repair remains';
+  if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
   if (hasTaskRecovery) return 'Open Today > Needs planning or Tasks row actions';
   if (hasRepair) return 'Use Maintenance > Repair all tabs';
-  if (hasMaintenance) return 'Use The Planner > Maintenance';
+  if (hasMaintenance) return 'Use The Planner > Restart today';
   return 'Review the highlighted planner items';
+}
+
+function shouldShowRestartTodayCue(maint, planCounts) {
+  maint = maint || readMaintenanceHealth();
+  planCounts = planCounts || todayPlanCounts();
+  return !!(maint.error || maint.stale || maint.weeklyStale || planCounts.unverified);
 }
 
 function hardResetHomeSheet(sheet) {
@@ -9073,14 +9079,14 @@ function refreshHome() {
     .setFontSize(9).setFontColor('#8A8D87');
 
   var maint = readMaintenanceHealth();
-  if (maint.error || maint.stale) {
-    var maintText = maint.error ? ('Maintenance issue: ' + (maint.errorText || maint.error)) : 'Maintenance has not run in 2 days. Use The Planner > Maintenance > Refresh due tasks and health checks.';
+  if (shouldShowRestartTodayCue(maint, planCounts)) {
+    var maintText = maint.error
+      ? ('Restart today: use The Planner > Restart today. Maintenance issue: ' + (maint.errorText || maint.error))
+      : (maint.weeklyStale
+        ? 'Restart today: use The Planner > Restart today. This refreshes due tasks, reviews active organisations, rebuilds Today, and updates Home.'
+        : 'Restart today: use The Planner > Restart today. This refreshes due tasks, rebuilds Today, and updates Home.');
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
-  } else if (maint.weeklyStale) {
-    sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
-      .setValue('Weekly review has not run in 8 days. Use The Planner > Maintenance > Review active organisations.')
-      .setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklySummary) {
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maint.weeklySummary)
@@ -12437,7 +12443,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Your daily 10 minutes');
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any decisions to make. Confirm creates the suggested task, opens the relevant popup, or routes the update shown on the card. Not now dismisses it; Skip leaves it pending and moves on for now.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Add or update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
-  r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed.");
+  r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed. If you are returning after several days, use The Planner > Restart today first.");
   r = writeKV(sheet, r, '4. Check the month shape', 'Home shows this month\'s conversations, applications, and interviews so you can see whether the search is balanced without opening source tabs.');
   r = writeKV(sheet, r, '5. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
   r = writeKV(sheet, r, '6. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
@@ -12496,7 +12502,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Planner setup > Turn on Planner actions (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
   r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
-  r = writeKV(sheet, r, 'Coming back after time away', 'Start on Home, add what changed, then build Today. If warnings remain, run Maintenance > Repair all tabs.');
+  r = writeKV(sheet, r, 'Coming back after time away', 'Use The Planner > Restart today, then start from Home and Today. If warnings remain after that, run Maintenance > Repair all tabs.');
   r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
   r = writeKV(sheet, r, 'Broken source link', 'Tasks with [no-link], [orphaned-link], [orphaned-sector], or [orphaned-org] stay out of Today until the linked source row is repaired.');
   r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
@@ -12795,7 +12801,7 @@ function repairAllTabsImpl() {
 function dailyMaintenance() {
   // v7.3: whole daily batch runs under the document lock so it can't
   // interleave with a user edit mid-cascade.
-  withDocumentLock(function () {
+  return withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
     var migratedJobs = migrateJobsDeadlineStatusSchema();
     var migratedInteractions = migrateInteractionsStatusSchema();
@@ -12834,7 +12840,24 @@ function dailyMaintenance() {
     checkTriggerHealth();
     recordMaintenanceHeartbeat('lastDailyMaintenanceAt');
     Logger.log('dailyMaintenance: DONE ' + new Date());
+    return true;
   }, { label: 'dailyMaintenance', timeoutMs: 30000, failOpen: false });
+}
+
+function restartToday() {
+  var health = readMaintenanceHealth();
+  var result = dailyMaintenance();
+  if (result === null) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Restart skipped because another Planner action is running. Try again in a minute.', 'The Planner', 6);
+    return null;
+  }
+  if (health.weeklyStale) {
+    var weekly = weeklyReview();
+    if (!weekly) return null;
+  }
+  refreshHome();
+  SpreadsheetApp.getActiveSpreadsheet().toast("Planner restarted. Open Today and build or review today's plan.", 'The Planner', 6);
+  return true;
 }
 
 function fullRefresh() {
@@ -12894,6 +12917,7 @@ function buildMenu() {
   ui.createMenu('The Planner')
     .addItem('Set up / add starting facts', 'runSetupInterview')
     .addItem("Build / refresh Today's plan", 'populateToday')
+    .addItem('Restart today', 'restartToday')
     .addItem('Refresh Home', 'refreshHome')
     .addItem('Add one-off task', 'addAdHocTodo')
     .addSeparator()
