@@ -549,6 +549,20 @@ Stage 4 schema/config scan:
 | Dropdown-driven columns | `applySheetDropdowns` and `dropdownIntegrityRules` define strict/value-list fields | Deeper dropdown semantics continue in Stage 5 |
 | Column bounds | HEADERS/COLS and config-bounds checks pass in verification | Clean |
 
+Stage 4 lineage summary from current code:
+
+| Tab | Identity/link columns | User-owned columns | System/helper columns | Logic-driving columns | Current Stage 4 status |
+|---|---|---|---|---|---|
+| Today | Linked Task ID hidden; Slot/Plan/Effort generated | Status and user notes; controls live above the table | Task text, estimate, reason/note metadata, hidden class/effort | Status, focus/minutes/energy, refresh/end-of-day controls | Fixed manual ownership for Status/Notes |
+| Decisions | Decision ID/key/target/todo ID hidden | Decision and Notes | Created, action type, Review by, Linked to, Result | Decision, action type, target/workflow/key | No new Stage 4 fix beyond prior decision-helper work |
+| Tasks | Task ID, linked object, parent/blocker IDs hidden | Status, due date, estimate, notes, plan category/pattern/step/blocker | Commitment class, source/audit fields, readiness, child progress, linked display | Status, due, estimate, parent/step/blocker, notes | Duplicate-open-task flag now affects readiness; broader Tasks flow continues in Stage 7 |
+| Sectors | Sector/Sub-sector IDs hidden | Sector, Sub-sector, Status, Notes | None beyond hidden IDs | Sector/Sub-sector/Status | Prior sector identity fixes verified; no new Stage 4 edit |
+| Organisations | Org/Sector/Sub-sector IDs and review dates hidden | Organisation, Sector/Sub-sector labels, Tier, Status, Notes | Counts, review cadence dates | Organisation, Sector/Sub-sector, Tier, Status | Full org review already carried forward; no new Stage 4 edit |
+| Jobs | Job ID, Org ID, linked contact IDs hidden | Opportunity, Organisation, Deadline, Application status, Submitted date, Response, Result, Notes | People display, response-check date | Opportunity, Organisation, deadline/status/submitted/response/result | No new Stage 4 edit in this slice |
+| People | Person ID and Org ID hidden | Name, Organisation, Role, Relationship source/status, follow-up date, reply, outreach date, conversation date, notes | Follow-up sent/count, last interaction, next action, linked jobs | Organisation, relationship status, reply, outreach/conversation dates | Fixed Outreach date ownership |
+| Interviews | Round ID and Job ID hidden | Round, type, date, status, readiness, official outcome, response/follow-up date, notes | Job/org display | Round date/status/outcome/follow-up | No new Stage 4 edit in this slice |
+| Conversations | Interaction ID and Person ID hidden | Date, Person, Type, Interaction status, Notes, Outcome | Organisation display | Person, date/status/outcome | No new Stage 4 edit in this slice |
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
