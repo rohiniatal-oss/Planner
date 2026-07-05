@@ -1827,7 +1827,8 @@ function inferDecisionActionType(key, targetType, workflow, task) {
       key.indexOf('PERSON_REPLY_OUTCOME:') === 0 || key.indexOf('OFFER_DECISION_DONE:') === 0) return 'Update source';
   if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('ORG_JOBS_FOUND:') === 0 ||
       key.indexOf('ORG_RESEARCH_DONE:') === 0 || key.indexOf('MARKET_MAP_DONE:') === 0 ||
-      key.indexOf('INTERACTION_OPP:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0) return 'Capture data';
+      key.indexOf('INTERACTION_OPP:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0 ||
+      key.indexOf('REFERRAL_SEARCH_DONE:') === 0 || key.indexOf('SOURCE_SCAN_DONE:') === 0) return 'Capture data';
   return 'Create task';
 }
 
@@ -1888,12 +1889,11 @@ function applyDecisionHelperColumns(sheet, row) {
   var targetId = String(sheet.getRange(row, COLS.DECISIONS.TARGET_ID).getValue() || '');
   var workflow = String(sheet.getRange(row, COLS.DECISIONS.WORKFLOW).getValue() || '');
   var task = String(sheet.getRange(row, COLS.DECISIONS.TASK).getValue() || '');
-  if (!sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE).getValue()) {
-    sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE).setValue(inferDecisionActionType(key, targetType, workflow, task));
-  }
-  if (!sheet.getRange(row, COLS.DECISIONS.DUE_DATE).getValue()) {
-    sheet.getRange(row, COLS.DECISIONS.DUE_DATE).setValue(decisionDueDateFor(key, targetType, targetId, workflow) || '');
-  }
+  var decision = String(sheet.getRange(row, COLS.DECISIONS.DECISION).getValue() || '');
+  var actionCell = sheet.getRange(row, COLS.DECISIONS.ACTION_TYPE);
+  var dueCell = sheet.getRange(row, COLS.DECISIONS.DUE_DATE);
+  if (decision === 'Pending' || !actionCell.getValue()) actionCell.setValue(inferDecisionActionType(key, targetType, workflow, task));
+  if (decision === 'Pending' || !dueCell.getValue()) dueCell.setValue(decisionDueDateFor(key, targetType, targetId, workflow) || '');
   writeDecisionLinkedTo(sheet, row, targetType, targetId);
   writeDecisionResult(sheet, row);
 }
@@ -1965,10 +1965,63 @@ function resolveOpenPopupDecision(ctx) {
     applyDecisionHelperColumns(ctx.sheet, ctx.row);
     return { ok: true, pending: true, popupOpened: true };
   }
-  ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
-  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[popup-missing] No popup is wired for this decision type yet');
-  applyDecisionHelperColumns(ctx.sheet, ctx.row);
-  return { ok: false, pending: true, reason: 'No popup is wired for this decision type yet' };
+  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[popup-fallback] No popup was wired; created a manual follow-up task');
+  return resolveCreateTaskDecision(ctx);
+}
+
+function decisionKeySuffix(key, prefix) {
+  var raw = String(key || '');
+  if (raw.indexOf(prefix) !== 0) return '';
+  return raw.slice(prefix.length).split(':')[0];
+}
+
+function captureTypeForDecision(ctx) {
+  var key = String(ctx.key || '');
+  if (key.indexOf('ORG_PEOPLE_FOUND:') === 0 || key.indexOf('INTERACTION_REFERRAL:') === 0 || key.indexOf('REFERRAL_SEARCH_DONE:') === 0) return 'Add/update person';
+  if (key.indexOf('ORG_JOBS_FOUND:') === 0 || key.indexOf('INTERACTION_OPP:') === 0) return 'Add/update job';
+  if (key.indexOf('ORG_RESEARCH_DONE:') === 0) return 'Add/update organisation';
+  if (key.indexOf('MARKET_MAP_DONE:') === 0) return 'Find organisations';
+  return '';
+}
+
+function resolveCaptureDataDecision(ctx) {
+  var sourceScanTodoId = decisionKeySuffix(ctx.key, 'SOURCE_SCAN_DONE:');
+  if (sourceScanTodoId) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runSourceScanResultPopup(sourceScanTodoId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  var captureType = captureTypeForDecision(ctx);
+  if (captureType) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runCapturePopup(captureType, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[capture-fallback] No capture popup was wired; created a manual follow-up task');
+  return resolveCreateTaskDecision(ctx);
+}
+
+function resolveUpdateSourceDecision(ctx) {
+  if (String(ctx.key || '').indexOf('JOB_RESPONSE_OUTCOME:') === 0 && ctx.targetType === 'Job') {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runApplicationResultForJobPopup(ctx.targetId, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  var captureType = '';
+  if (String(ctx.key || '').indexOf('INTERVIEW_OUTCOME:') === 0) captureType = 'Add/update interview';
+  else if (String(ctx.key || '').indexOf('PERSON_REPLY_OUTCOME:') === 0) captureType = 'Add/update conversation';
+  else if (String(ctx.key || '').indexOf('OFFER_DECISION_DONE:') === 0) captureType = 'Application update';
+  if (captureType) {
+    ctx.sheet.getRange(ctx.row, COLS.DECISIONS.DECISION).setValue('Pending');
+    runCapturePopup(captureType, ctx.id);
+    applyDecisionHelperColumns(ctx.sheet, ctx.row);
+    return { ok: true, pending: true, popupOpened: true };
+  }
+  appendNoteFlag(ctx.sheet, ctx.row, COLS.DECISIONS.NOTES, '[update-source-fallback] No source-update popup was wired; created a manual follow-up task');
+  return resolveCreateTaskDecision(ctx);
 }
 
 function resolveCreateTaskDecision(ctx) {
@@ -1996,7 +2049,9 @@ function resolveDecisionAction(ctx) {
       applyDecisionHelperColumns(ctx.sheet, ctx.row);
       return { ok: true, dismissedOnly: true };
     case 'Capture data':
+      return resolveCaptureDataDecision(ctx);
     case 'Update source':
+      return resolveUpdateSourceDecision(ctx);
     case 'Create task':
     default:
       return resolveCreateTaskDecision(ctx);
@@ -8797,6 +8852,17 @@ function resolveApplicationPlanDecision(decisionId, todoId) {
   applyDecisionHelperColumns(found.sheet, found.row);
 }
 
+function resolvePopupDecision(decisionId, todoId, note) {
+  if (!decisionId) return;
+  var found = getDecisionRowById(decisionId);
+  if (!found) return;
+  found.sheet.getRange(found.row, COLS.DECISIONS.DECISION).setValue('Yes');
+  found.sheet.getRange(found.row, COLS.DECISIONS.DECIDED_AT).setValue(today());
+  if (todoId) found.sheet.getRange(found.row, COLS.DECISIONS.TODO_ID).setValue(todoId);
+  if (note) appendNoteFlag(found.sheet, found.row, COLS.DECISIONS.NOTES, '[handled] ' + note);
+  applyDecisionHelperColumns(found.sheet, found.row);
+}
+
 // Called from the popup. Wipes existing data (unless skipped), captures
 // the new facts, rebuilds the checklist, and refreshes Today/Home.
 function completeSetupFromPopup(payload) {
@@ -8915,9 +8981,9 @@ function captureConfig(captureType) {
   return config[captureType] || config['Task completed / blocked'];
 }
 
-function buildCaptureHtml(captureType) {
+function buildCaptureHtml(captureType, decisionId) {
   var cfg = captureConfig(captureType);
-  var json = JSON.stringify({ captureType: captureType, title: cfg.title, fields: cfg.fields });
+  var json = JSON.stringify({ captureType: captureType, decisionId: decisionId || '', title: cfg.title, fields: cfg.fields });
   return '' +
     '<style>' +
     'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
@@ -8942,12 +9008,12 @@ function buildCaptureHtml(captureType) {
     'status.textContent="Saving...";' +
     'google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("form").elements[res.field])document.getElementById("form").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},700);})' +
     '.withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
-    '.completeCaptureFromPopup({captureType:cfg.captureType,fields:fields});}</script>';
+    '.completeCaptureFromPopup({captureType:cfg.captureType,decisionId:cfg.decisionId,fields:fields});}</script>';
 }
 
-function runCapturePopup(captureType) {
+function runCapturePopup(captureType, decisionId) {
   if (!captureType || captureType === 'No updates') return;
-  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType)).setWidth(600).setHeight(600).setTitle(captureType);
+  var html = HtmlService.createHtmlOutput(buildCaptureHtml(captureType, decisionId || '')).setWidth(600).setHeight(600).setTitle(captureType);
   SpreadsheetApp.getUi().showModalDialog(html, captureType);
 }
 
@@ -9144,11 +9210,11 @@ function completeReferralSearchResultFromPopup(payload) {
   }, { label: 'completeReferralSearchResultFromPopup', timeoutMs: 30000 });
 }
 
-function buildSourceScanResultHtml(todoId) {
+function buildSourceScanResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
   if (!todo || !isSourceLedScanTask(todo)) return '<p>Source scan task not found.</p>';
   var isPeople = todo.workflow === 'People source scan';
-  var data = { todoId: todo.id, workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
+  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
@@ -9157,11 +9223,11 @@ function buildSourceScanResultHtml(todoId) {
     '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
     '<button class="primary" type="button" onclick="save()">Save results</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});' +
-    'function save(){var payload={todoId:data.todoId,workflow:data.workflow,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or close this and skip the task.";return;}if(!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or close this and skip the task.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    'function save(){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or close this and skip the task.";return;}if(!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or close this and skip the task.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
-function runSourceScanResultPopup(todoId) {
-  var html = HtmlService.createHtmlOutput(buildSourceScanResultHtml(todoId)).setWidth(600).setHeight(650).setTitle('Capture scan results');
+function runSourceScanResultPopup(todoId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildSourceScanResultHtml(todoId, decisionId || '')).setWidth(600).setHeight(650).setTitle('Capture scan results');
   SpreadsheetApp.getUi().showModalDialog(html, 'Capture scan results');
 }
 
@@ -9212,6 +9278,7 @@ function completeSourceScanResultFromPopup(payload) {
       }
       if (!result.ok) return result;
       completeTodo(todo.id, 'Done', { source: 'source-scan-popup', sourceScanHandled: true });
+      resolvePopupDecision(payload.decisionId, '', 'Captured source-scan results');
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
@@ -9227,13 +9294,14 @@ function buildApplicationResultHtml(todoId) {
   return buildApplicationResultHtmlForJob('', todoId);
 }
 
-function buildApplicationResultHtmlForJob(jobId, todoId) {
+function buildApplicationResultHtmlForJob(jobId, todoId, decisionId) {
   var todo = todoId ? getTodoById(todoId) : null;
   var job = todo ? getJobRowById(todo.objId) : getJobRowById(jobId);
   if (todoId && (!todo || !isApplicationResponseCheckTask(todo))) return '<p>Application response task not found.</p>';
   if (!job) return '<p>Application not found.</p>';
   var data = {
     todoId: todo ? todo.id : '',
+    decisionId: decisionId || '',
     jobId: job.id,
     title: job.title,
     org: job.org,
@@ -9255,7 +9323,7 @@ function buildApplicationResultHtmlForJob(jobId, todoId) {
     '<button class="primary" type="button" onclick="save()">Save</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("jobLine").textContent=data.title+" at "+data.org;' +
     'var result=document.getElementById("result");data.outcomes.forEach(function(o){var opt=document.createElement("option");opt.value=o;opt.textContent=o;result.appendChild(opt);});result.value=data.current;' +
-    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Home.";}).completeApplicationResultFromPopup({todoId:data.todoId,jobId:data.jobId,outcome:result.value});}</script>';
+    'function save(){var status=document.getElementById("status");status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Home.";}).completeApplicationResultFromPopup({todoId:data.todoId,decisionId:data.decisionId,jobId:data.jobId,outcome:result.value});}</script>';
 }
 
 function runApplicationResultPopup(todoId) {
@@ -9263,8 +9331,8 @@ function runApplicationResultPopup(todoId) {
   SpreadsheetApp.getUi().showModalDialog(html, 'Application result');
 }
 
-function runApplicationResultForJobPopup(jobId) {
-  var html = HtmlService.createHtmlOutput(buildApplicationResultHtmlForJob(jobId, '')).setWidth(460).setHeight(300).setTitle('Application result');
+function runApplicationResultForJobPopup(jobId, decisionId) {
+  var html = HtmlService.createHtmlOutput(buildApplicationResultHtmlForJob(jobId, '', decisionId || '')).setWidth(460).setHeight(300).setTitle('Application result');
   SpreadsheetApp.getUi().showModalDialog(html, 'Application result');
 }
 
@@ -9291,6 +9359,7 @@ function completeApplicationResultFromPopup(payload) {
         sheet.getRange(job.row, COLS.JOBS.OUTCOME).setValue(outcome);
         routeJobOutcome(job.id, outcome, { source: 'application-result-popup' });
       }
+      resolvePopupDecision(payload.decisionId, '', 'Application result recorded: ' + outcome);
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
@@ -9358,6 +9427,7 @@ function completeCaptureFromPopup(payload) {
       payload = payload || {};
       var result = coerceResult(processCapturePayload(payload.captureType, payload.fields || {}), 'Saved and refreshed Today.');
       if (!result.ok) return result;
+      resolvePopupDecision(payload.decisionId, '', 'Captured via ' + payload.captureType);
       populateToday();
       refreshHome();
       renderTodayDecisionCards();
