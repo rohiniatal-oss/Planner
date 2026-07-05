@@ -394,7 +394,7 @@ function popupExceptionResult(context, err) {
 // IMPORTANT (v7.3.1 fix): if the lock can't be acquired within the
 // timeout, fn is STILL RUN (unguarded) rather than silently skipped. In a
 // single-user planner, lock contention is rare, but a user clicking
-// "Populate Today" and getting NOTHING (no plan, no date update, no error)
+// "Build / refresh Today's plan" and getting NOTHING (no plan, no date update, no error)
 // is far worse than a once-in-a-blue-moon race. Correctness of the visible
 // action wins; the lock is best-effort protection, not a gate that can
 // swallow a user's explicit command. The earlier "skip on miss" behavior
@@ -7041,7 +7041,7 @@ function bootstrapToday() {
   // placeholder with the real counts once stagedTodaySelection has run.
   clearTodayPlanHeadlineValidation(sheet);
   sheet.getRange('B3:I3').merge()
-    .setValue('Plan not built yet - tick refresh below to build today\'s plan.')
+    .setValue("Plan not built yet - tick below to build today's plan.")
     .setFontWeight('bold')
     .setFontColor(HEADER_COLOR)
     .setWrap(true);
@@ -7059,7 +7059,7 @@ function bootstrapToday() {
 
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
-    .setValue('✔ Tick to refresh Today’s plan').setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
+    .setValue("Build / refresh Today's plan").setFontWeight('bold').setFontSize(12).setFontColor('#FFFFFF').setBackground(HEADER_COLOR);
 
   sheet.getRange(TODAY_TABLE_HEADER_ROW, 1, 1, HEADERS["Today's plan"].length).setValues([HEADERS["Today's plan"]]).setFontWeight('bold').setBackground('#DDEEEF');
   setDropdown(sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1), DROPDOWNS.TODAY_STATUS);

@@ -72,6 +72,7 @@ Category 0 first implementation slice:
 | Menu says Build / refresh Today's plan | Populate Today was backend wording for the main daily planning action | L1/L4 execution-surface copy | Open The Planner menu and Today submenu; the action reads Build / refresh Today's plan |
 | Today execution actions use plain language | Pull/Top up/Lock were compact but required planner jargon | L4 execution-surface copy | Today submenu labels describe adding a task, adding time, and keeping/releasing row position |
 | Top menu says Add one-off task | Ad-hoc was backend-ish wording | L4 capture-lite action copy | Top-level menu, prompt, and toast use one-off task language |
+| Today checkbox matches menu wording | The sheet said tick refresh while the menu said build / refresh | L1/L4 execution-surface copy | Today row 7 says Build / refresh Today's plan |
 
 Product architecture to preserve:
 
