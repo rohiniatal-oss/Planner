@@ -12445,7 +12445,7 @@ function repairAllTabsImpl() {
 
   bootstrapToday();
   populateToday();
-  rewriteGuide();
+  if (!getSheet('Guide')) rewriteGuide();
   refreshHome();
 
   applyAllRichTextHeaders();

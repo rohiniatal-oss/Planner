@@ -508,7 +508,7 @@ Required output:
 |---|---|---:|---|---:|---:|---:|---|
 | `runSetupInterview` -> `completeSetupFromPopup` -> `resetPlannerDataForOnboarding` | Reset through redo setup | Yes | Sectors, Organisations, Jobs, People, Conversations, Interviews, Tasks, Decisions bodies | Optional, default checked in popup | Yes, but current visible text was too generic | Manual recovery from backup copy only | Strengthen confirmation text, keep backup option, record reset audit |
 | `createPlannerBackupCopy` | Snapshot primitive | No | Copies whole spreadsheet | N/A | N/A | The copy is the recovery artifact | Add user-facing `savePlannerSnapshot` menu action |
-| `repairAllTabs` | Repair/migration | No planner data deletion; deletes obsolete `Dashboard` if present | Headers, dropdowns, helper columns, Today/Home/Guide generated surfaces, repair flags, obsolete legacy tabs | No | No | Not a restore path | Preserve as repair; Guide rewrite remains a Stage 14/Guide-last review item |
+| `repairAllTabs` | Repair/migration | No planner data deletion; deletes obsolete `Dashboard` if present | Headers, dropdowns, helper columns, Today/Home generated surfaces, repair flags, obsolete legacy tabs; Guide is created only if missing | No | No | Not a restore path | Existing Guide content is preserved until Stage 14; fresh workbooks still get a Guide tab |
 | `fullRefresh` / `refreshAllDerivedData` | Refresh | No planner data deletion; deletes obsolete `Dashboard` if present | Derived data, dropdowns, Home/Today helpers, obsolete legacy tabs | No | No | N/A | Current menu says safe; Dashboard is not a Planner data surface |
 | `dailyMaintenance` / `weeklyReview` | Scheduled maintenance | No intended data deletion | Derived helpers, due tasks, review summaries, Home/Today | No | No | N/A | Defer deeper cadence/observability to Stage 11 |
 | `migrateWorkbookSchema` and migration helpers | Migration | Potentially shape-changing, designed to preserve row data | Sectors, Organisations, Jobs, Conversations schema/data ranges | No | No | No automatic rollback | Defer migration-specific proof to Stage 15 unless a failing scenario appears |
@@ -519,6 +519,33 @@ Stage 3 lifecycle decision:
 | Legacy surface | Current-code evidence | Decision |
 |---|---|---|
 | `Dashboard` tab | Not in `CANONICAL_TAB_ORDER`, not in `SHEET_TO_HEADER_KEY`, not referenced by any workflow; only appears in `hideLegacyUtilityTabs` cleanup | Delete as obsolete legacy surface during repair/refresh cleanup |
+
+## Issue: Repair all tabs rewrote existing Guide before Guide-last
+
+Severity: P2
+
+Stage: 3
+Area: Data lifecycle and safety
+Tab/surface: Guide / Maintenance
+Column/function: `repairAllTabsImpl`, `rewriteGuide`
+
+Evidence:
+- Code evidence: `repairAllTabsImpl` called `rewriteGuide()` unconditionally.
+- Product evidence: The final checklist says Guide is the manual after behaviour settles, and the user explicitly asked to do Guide last.
+
+Current behaviour:
+Running Repair all tabs overwrote the Guide content even while behaviour/copy was still under review.
+
+Expected behaviour:
+Repair should preserve existing Guide content until the Guide-last pass, while still creating a Guide on a fresh workbook if none exists.
+
+Fix implemented:
+`repairAllTabsImpl` now calls `rewriteGuide()` only when the Guide tab is missing.
+
+Acceptance tests:
+1. Existing Guide content is not rewritten by Repair all tabs.
+2. A workbook without a Guide still gets a Guide tab when repaired.
+3. Stage 14 remains the only planned Guide content rewrite phase.
 
 Required classifications:
 
