@@ -9531,8 +9531,6 @@ function buildSetupHtml() {
     ' routines:{title:"Create recurring search routines",fields:[{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
-    'function selectedResetMode(){return "append";}' +
-    'function resetSelected(){return false;}' +
     'function updateSetupModeUi(){var btn=document.getElementById("submitButton");if(btn)btn.textContent="Save setup";}' +
     'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
     'function pickGoal(g){goal=g;' +
@@ -9561,13 +9559,11 @@ function buildSetupHtml() {
     'updateSetupModeUi();' +
     'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),btn=document.getElementById("submitButton"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
-    ' var resetMode="append";var resetConfirmed=false;' +
-    ' var backupBeforeReset=false;' +
     ' if(btn)btn.disabled=true;' +
     ' status.textContent="Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status"),btn=document.getElementById("submitButton");if(!res.ok){if(btn)btn.disabled=false;status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){var btn=document.getElementById("submitButton");if(btn)btn.disabled=false;document.getElementById("status").textContent="Could not save. Run Data safety & repair > Repair sheet layout, then try again.";})' +
-    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetMode:resetMode,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
+    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -10040,9 +10036,9 @@ function resolvePopupDecision(decisionId, todoId, note) {
   applyDecisionHelperColumns(found.sheet, found.row);
 }
 
-// Called from the setup popup. Captures starting facts, rebuilds the
-// checklist, and refreshes Today/Home. The normal setup path is additive;
-// legacy reset payloads are still guarded below for backwards compatibility.
+// Called from the setup popup. Captures starting facts additively, rebuilds
+// the checklist, and refreshes Today/Home. Destructive reset lives only in
+// startFreshPlannerData(), where the backup-first flow is explicit.
 function completeSetupFromPopup(payload) {
   payload = payload || {};
   var goal = payload.goal || 'skipped';
@@ -10050,32 +10046,8 @@ function completeSetupFromPopup(payload) {
   var fields = payload.fields || {};
   var validation = validateOnboardingPayload(goal, entryPoint, fields);
   if (!validation.ok) return validation;
-  var resetRequested = payload.resetMode === 'reset' || (!payload.resetMode && payload.resetConfirmed === true);
-  var shouldReset = goal !== 'skipped' && entryPoint !== 'skip' && resetRequested;
-  var rowsBeforeReset = shouldReset ? plannerDataRowCount() : 0;
-  if (shouldReset && rowsBeforeReset > 0 && payload.resetConfirmed !== true) {
-    var resp = SpreadsheetApp.getUi().alert(
-      'Clear existing planner data?',
-      'This clears all Sectors/Organisations/Search Routines/Jobs/People/Conversations/Interviews/Tasks/Decisions data. Make a backup first if you may need to recover it. Continue?',
-      SpreadsheetApp.getUi().ButtonSet.YES_NO);
-    if (resp !== SpreadsheetApp.getUi().Button.YES) return failResult('Setup cancelled. Existing planner data was not changed.', '', 'SETUP_RESET_CANCELLED');
-  }
   return withDocumentLock(function () {
     try {
-      var backup = null;
-      if (shouldReset && payload.backupBeforeReset === true) {
-        try {
-          backup = createPlannerBackupCopy();
-        } catch (backupErr) {
-          Logger.log('completeSetupFromPopup.backup: ' + (backupErr && backupErr.stack ? backupErr.stack : backupErr));
-          return failResult('Backup copy could not be created, so existing data was not cleared. Try again, or untick the backup option if you already saved a copy.', '', 'SETUP_BACKUP_FAILED');
-        }
-      }
-      if (shouldReset) {
-        resetPlannerDataForOnboarding();
-        recordPlannerResetAudit({ rowsCleared: rowsBeforeReset, entryPoint: entryPoint, backup: backup });
-      }
-
       var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
       if (!result.ok) return result;
       var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
@@ -10093,8 +10065,7 @@ function completeSetupFromPopup(payload) {
 
       var todaySheet = getSheet('Today');
       if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
-      var suffix = shouldReset ? ' Existing planner data was cleared first.' : (goal !== 'skipped' && entryPoint !== 'skip' ? ' Existing planner data was kept.' : '');
-      if (backup) suffix += ' Backup copy created: ' + backup.name + '. Use that copy if you need to recover cleared data.';
+      var suffix = goal !== 'skipped' && entryPoint !== 'skip' ? ' Existing planner data was kept.' : '';
       if (result.warnings && result.warnings.length) suffix += ' ' + result.warnings.join(' ');
       result.message = (result.message || 'Onboarding saved.') + suffix;
       return result;
