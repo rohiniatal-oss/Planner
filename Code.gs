@@ -289,7 +289,7 @@ var DROPDOWNS = {
   TODO_OBJ_TYPE: ['Sector', 'Organisation', 'Person', 'Job', 'Interview round', 'None'],
   TODO_WORKFLOW: [
     'Sector selection', 'Market mapping', 'Organisation classification', 'Org research',
-    'Job board scan', 'Org job scan', 'People sourcing',
+    'Job board scan', 'Org job scan', 'Opportunity scan', 'People sourcing', 'People source scan',
     'Outreach', 'Send outreach', 'Contact follow-up',
     'Reply and arrange conversation', 'Conversation prep',
     'Reschedule conversation', 'Conversation debrief', 'Referral search',
@@ -1788,6 +1788,8 @@ function defaultTimeForWorkflow(workflow) {
     case 'Application preparation': return '60 min';
     case 'Application blocker': return '30 min';
     case 'People sourcing':
+    case 'Opportunity scan':
+    case 'People source scan':
     case 'Org job scan':
     case 'Referral search':
     case 'Conversation prep': return '30 min';
@@ -2223,6 +2225,8 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
     case ORG_CLASSIFICATION_WORKFLOW:
     case 'Org research':
     case 'People sourcing':
+    case 'Opportunity scan':
+    case 'People source scan':
     case 'Org job scan':
     case 'Job board scan':
       return 'Pipeline-building';
@@ -2233,7 +2237,7 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 
 function deriveEffortType(workflow) {
   var deep = ['Application preparation', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
-  var medium = ['People sourcing', 'Org job scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
+  var medium = ['People sourcing', 'People source scan', 'Org job scan', 'Opportunity scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
   var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Task unblocker', 'Interview scheduling', 'Plan interview prep', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
@@ -3021,11 +3025,27 @@ function completeTodoRow(sheet, row, status, options) {
 function routeTodoCompletion(todo, options) {
   if (!todo) return;
   if (todo.workflow === 'Task unblocker') return handleUnblockerTodoCompletion(todo, options || {});
+  if (isSourceLedScanTask(todo)) return handleSourceLedScanCompletion(todo, options || {});
   if (todo.objType === 'Job') return handleJobTodoCompletion(todo, options || {});
   if (todo.objType === 'Person') return handlePersonTodoCompletion(todo, options || {});
   if (todo.objType === 'Interview round') return handleInterviewTodoCompletion(todo, options || {});
   if (todo.objType === 'Organisation') return handleOrganisationTodoCompletion(todo, options || {});
   if (todo.objType === 'Sector') return handleSectorTodoCompletion(todo, options || {});
+}
+
+function handleSourceLedScanCompletion(todo, options) {
+  if (options.sourceScanHandled) return;
+  if (todo.workflow === 'Opportunity scan') {
+    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'Opportunity scan completed',
+      'Add/update jobs or organisations found', 'None', '', 'Opportunity scan',
+      'Open the capture flow and add any opportunities or organisations found.' + (todo.notes ? '\n' + todo.notes : ''),
+      { actionType: 'Capture data' });
+  } else if (todo.workflow === 'People source scan') {
+    appendPendingDecision('SOURCE_SCAN_DONE:' + todo.id, 'People source scan completed',
+      'Add/update people found from source scan', 'None', '', 'People source scan',
+      'Add people as Identified contacts. Outreach is a separate choice later.' + (todo.notes ? '\n' + todo.notes : ''),
+      { actionType: 'Capture data' });
+  }
 }
 
 function handleUnblockerTodoCompletion(todo, options) {
@@ -5441,8 +5461,12 @@ function isInterviewPrepPlanningTask(todo) {
   return !!todo && todo.workflow === 'Plan interview prep' && todo.objType === 'Interview round';
 }
 
+function isSourceLedScanTask(todo) {
+  return !!todo && ['Opportunity scan', 'People source scan'].indexOf(String(todo.workflow || '')) !== -1;
+}
+
 function workflowOpensCompletionPopup(workflow) {
-  return ['Submit application', 'Referral search', 'Plan interview prep'].indexOf(String(workflow || '')) !== -1;
+  return ['Submit application', 'Referral search', 'Plan interview prep', 'Opportunity scan', 'People source scan'].indexOf(String(workflow || '')) !== -1;
 }
 
 function createInterviewPrepPlanningTask(roundId) {
@@ -6414,6 +6438,13 @@ function onEditTasks(sheet, row, col, newVal, e) {
       runInterviewPrepPlanPopup(editedTodo.objId, editedTodo.id);
       return;
     }
+    if (isSourceLedScanTask(editedTodo)) {
+      var priorSourceStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
+      sheet.getRange(row, COLS.TODO.STATUS).setValue(priorSourceStatus);
+      sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
+      runSourceScanResultPopup(editedTodo.id);
+      return;
+    }
   }
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE || col === COLS.TODO.TIME_EST) sheet.getRange(row, COLS.TODO.LAST_EDITED).setValue(today());
   if (col === COLS.TODO.STATUS || col === COLS.TODO.DUE_DATE) {
@@ -6756,10 +6787,10 @@ function collectTaskPool(focus, tierLookup) {
 
 function taskMatchesFocus(workflow, objType, focus) {
   if (!focus || focus === 'Default') return true;
-  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Referral search', 'Submit application', 'Check application response', 'Offer decision'].indexOf(workflow) !== -1;
-  if (focus === 'Networking') return objType === 'Person';
+  if (focus === 'Applications') return ['Application preparation', 'Application blocker', 'Referral search', 'Submit application', 'Check application response', 'Offer decision', 'Opportunity scan'].indexOf(workflow) !== -1;
+  if (focus === 'Networking') return objType === 'Person' || workflow === 'People source scan';
   if (focus === 'Interviews') return objType === 'Interview round' || /Interview/.test(workflow);
-  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'People sourcing', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
+  if (focus === 'Pipeline building') return ['Market mapping', 'Org job scan', 'Opportunity scan', 'People sourcing', 'People source scan', 'Sector selection', ORG_CLASSIFICATION_WORKFLOW, 'Org research'].indexOf(workflow) !== -1;
   if (focus === 'Admin / light day') return workflow === 'Admin';
   return true;
 }
@@ -7346,6 +7377,11 @@ function onEditToday(sheet, row, col, newVal) {
     if (isInterviewPrepPlanningTask(todo)) {
       sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
       runInterviewPrepPlanPopup(todo.objId, String(todoId));
+      return;
+    }
+    if (isSourceLedScanTask(todo)) {
+      sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
+      runSourceScanResultPopup(String(todoId));
       return;
     }
   }
@@ -8863,6 +8899,85 @@ function completeReferralSearchResultFromPopup(payload) {
       return popupExceptionResult('completeReferralSearchResultFromPopup', err);
     }
   }, { label: 'completeReferralSearchResultFromPopup', timeoutMs: 30000 });
+}
+
+function buildSourceScanResultHtml(todoId) {
+  var todo = getTodoById(todoId);
+  if (!todo || !isSourceLedScanTask(todo)) return '<p>Source scan task not found.</p>';
+  var isPeople = todo.workflow === 'People source scan';
+  var data = { todoId: todo.id, workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Capture scan results</h2><p id="intro"></p>' +
+    '<div id="peopleBlock" class="hidden"><label>People found<textarea id="personNames" placeholder="One per line, or comma-separated"></textarea></label><label>Relationship source<select id="relType"></select></label><label>Organisation, if relevant<input id="personOrg"></label><label>Notes/source<textarea id="peopleNotes"></textarea></label><div class="hint">People are saved as Identified. Outreach is not created automatically.</div></div>' +
+    '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
+    '<button class="primary" type="button" onclick="save()">Save results</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});' +
+    'function save(){var payload={todoId:data.todoId,workflow:data.workflow,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, or close this and skip the task.";return;}if(!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, or close this and skip the task.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+}
+
+function runSourceScanResultPopup(todoId) {
+  var html = HtmlService.createHtmlOutput(buildSourceScanResultHtml(todoId)).setWidth(600).setHeight(650).setTitle('Capture scan results');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Capture scan results');
+}
+
+function processSourceLedPeopleCapture(fields) {
+  var names = splitInputList(fields.personNames);
+  if (!names.length) return failResult('Add at least one person found by the scan.', 'personNames', 'MISSING_PERSON');
+  var org = fields.personOrg ? createNameOnlyOrg(fields.personOrg, { status: 'Mapped', stub: true }) : null;
+  var relType = DROPDOWNS.PERSON_REL_TYPE.indexOf(fields.relType) !== -1 ? fields.relType : '';
+  var created = 0, reused = 0;
+  names.forEach(function (name) {
+    var existing = findPersonByNameOrg(name, org ? org.name : '');
+    var personId = writePersonRow(name, org, '');
+    var person = getPersonRowById(personId);
+    if (!person) return;
+    if (existing) reused++; else created++;
+    var peopleSheet = getSheet('People');
+    if (relType) peopleSheet.getRange(person.row, COLS.PEOPLE.REL_TYPE).setValue(relType);
+    if (!peopleSheet.getRange(person.row, COLS.PEOPLE.STAGE).getValue()) peopleSheet.getRange(person.row, COLS.PEOPLE.STAGE).setValue('Identified');
+    if (fields.peopleNotes) appendNoteFlag(peopleSheet, person.row, COLS.PEOPLE.NOTES, fields.peopleNotes);
+  });
+  syncPeopleHelperColumns();
+  return okResult('Captured ' + names.length + ' people from source scan as Identified.');
+}
+
+function completeSourceScanResultFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var todo = getTodoById(payload.todoId);
+      if (!todo || !isSourceLedScanTask(todo)) return failResult('I could not find that source-scan task.', '', 'TASK_NOT_FOUND');
+      var result;
+      if (todo.workflow === 'People source scan') {
+        result = processSourceLedPeopleCapture(payload);
+      } else {
+        var captured = [];
+        if (String(payload.orgNames || '').trim()) {
+          var orgResult = processCapturePayload('Find organisations', { orgNames: payload.orgNames, sector: payload.sector, subsector: payload.subsector });
+          if (!orgResult.ok) return orgResult;
+          captured.push('organisations');
+        }
+        if (String(payload.jobTitle || '').trim()) {
+          if (!String(payload.jobOrg || '').trim()) return failResult('Add the organisation for the opportunity.', 'jobOrg', 'MISSING_ORG');
+          var jobResult = processCapturePayload('Add/update job', { jobTitle: payload.jobTitle, org: payload.jobOrg, deadline: payload.deadline, status: 'Not started', urlNotes: payload.urlNotes });
+          if (!jobResult.ok) return jobResult;
+          captured.push('opportunity');
+        }
+        result = okResult('Captured scan result: ' + (captured.length ? captured.join(' and ') : 'nothing new') + '.');
+      }
+      if (!result.ok) return result;
+      completeTodo(todo.id, 'Done', { source: 'source-scan-popup', sourceScanHandled: true });
+      populateToday();
+      refreshHome();
+      renderTodayDecisionCards();
+      colorCodeManualFields();
+      return result;
+    } catch (err) {
+      return popupExceptionResult('completeSourceScanResultFromPopup', err);
+    }
+  }, { label: 'completeSourceScanResultFromPopup', timeoutMs: 30000 });
 }
 
 function buildApplicationResultHtml(todoId) {
