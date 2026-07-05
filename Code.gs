@@ -6133,6 +6133,7 @@ function onEditRounds(sheet, row, col, newVal) {
   if (col === COLS.ROUNDS.ROUND) {
     checkInterviewRoundHealthFlags();
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.INTERVIEW_DATE) {
@@ -6146,6 +6147,7 @@ function onEditRounds(sheet, row, col, newVal) {
       syncOpenInterviewTaskDates(roundId);
     }
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.ROUND_TYPE && newVal) {
@@ -6158,21 +6160,25 @@ function onEditRounds(sheet, row, col, newVal) {
       }
     }
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.DOMAIN_READINESS && String(sheet.getRange(row, COLS.ROUNDS.STATUS).getValue()) === 'Scheduled') {
     createInterviewPrepPlanningTask(roundId);
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.EXPECTED_RESPONSE) {
     updateOpenTodoDueForTargetWorkflow('Interview round', roundId, 'Interview follow-up', newVal || '');
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.OFFICIAL_OUTCOME) {
     handleInterviewOfficialOutcome(roundId, newVal, { source: 'round-outcome' });
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
     return;
   }
   if (col === COLS.ROUNDS.STATUS) {
@@ -6197,6 +6203,7 @@ function onEditRounds(sheet, row, col, newVal) {
       autoDismissPendingForTarget('Interview round', roundId, 'Interview round cancelled');
     }
     refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
   }
 }
 
