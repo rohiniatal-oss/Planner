@@ -179,7 +179,7 @@ var HEADERS = {
   ],
   People: [
     'Person ID', 'Name', 'Organisation', 'Org ID',
-    'Role', 'Relationship source', 'Relationship status',
+    'Role', 'Relationship source', 'Relationship step',
     'Next follow-up date', 'Reply received',
     'Follow-up sent?', 'Outreach date', 'Conversation date',
     'Context / notes', 'Follow-ups sent count',
@@ -262,7 +262,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.7.7';
+var SCRIPT_VERSION = 'v7.7.8';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -3989,7 +3989,7 @@ function createInterviewRoundForJob(jobId, opts) {
 
 // =============================================================
 // PEOPLE — stage routing
-// Relationship status is the visible state machine for outreach and conversations.
+// Relationship step is the visible state machine for outreach and conversations.
 // =============================================================
 
 function movePersonStage(personId, stage, opts) {
@@ -5268,7 +5268,7 @@ function onEditPeople(sheet, row, col, newVal, e) {
     sheet.getRange(row, COLS.PEOPLE.ID).setValue(personId);
     var stage = normalizePersonStage(newVal);
     if (!stage && String(newVal || '').trim()) {
-      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[invalid-value] Relationship status "' + newVal + '" rejected');
+      appendNoteFlag(sheet, row, COLS.PEOPLE.NOTES, '[invalid-value] Relationship step "' + newVal + '" rejected');
       return;
     }
     if (stage !== String(newVal || '')) sheet.getRange(row, COLS.PEOPLE.STAGE).setValue(stage);
@@ -7180,22 +7180,22 @@ function bootstrapToday() {
     .setFontColor(HEADER_COLOR)
     .setWrap(true);
 
-  sheet.getRange('B4').setValue('Focus').setFontWeight('bold');
+  sheet.getRange('B4').setValue('Today focus').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.PRIORITY).setValue('Default');
   setDropdown(sheet.getRange(TODAY_CELLS.PRIORITY), DROPDOWNS.TODAY_PRIORITY);
-  sheet.getRange('B4').setNote("Focus changes which active-pursuit tasks are preferred on the next build / refresh.");
-  sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Choose the focus for the next build / refresh. Existing Done/Blocked status changes are not overwritten.");
+  sheet.getRange('B4').setNote("Today focus is a preference, not a hard filter. Changing it rebuilds Today now.");
+  sheet.getRange(TODAY_CELLS.PRIORITY).setNote("Matching active-pursuit work is preferred first. If time remains, other ready work can still appear. Existing Done/Blocked status changes are not overwritten.");
 
   sheet.getRange('B5').setValue('Available minutes').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setValue(90).setNumberFormat('0');
-  sheet.getRange('B5').setNote("Available minutes is today's capacity. Change it, then build / refresh to re-fit committed work and options.");
-  sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setNote("If minutes go down, over-capacity work is flagged in the headline. If minutes go up, extra ready work can appear from Options or Tasks.");
+  sheet.getRange('B5').setNote("Available minutes is today's capacity. Changing it rebuilds Today now.");
+  sheet.getRange(TODAY_CELLS.AVAILABLE_MIN).setNote("Lower minutes can flag or drop flexible work. Higher minutes can pull in extra ready work. Source tabs change only when task status changes.");
 
   sheet.getRange('B6').setValue('Energy').setFontWeight('bold');
   sheet.getRange(TODAY_CELLS.ENERGY).setValue('Normal');
   setDropdown(sheet.getRange(TODAY_CELLS.ENERGY), DROPDOWNS.TODAY_ENERGY);
-  sheet.getRange('B6').setNote("Energy tunes what kind of work is a good fit for the next build / refresh.");
-  sheet.getRange(TODAY_CELLS.ENERGY).setNote("Low energy favors lighter work where possible. Normal keeps the usual priority waterfall.");
+  sheet.getRange('B6').setNote("Energy is a preference for refitting Today. Changing it rebuilds Today now.");
+  sheet.getRange(TODAY_CELLS.ENERGY).setNote("Low energy pushes deep work lower where possible. Normal keeps the usual priority waterfall.");
 
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1, 1, 6).merge()
@@ -7204,7 +7204,7 @@ function bootstrapToday() {
   sheet.getRange(TODAY_REFRESH_ROW, TODAY_REFRESH_COL + 1).setNote("Build / refresh preserves same-day notes and locked or pulled rows, then re-fits work from Tasks.");
 
   sheet.getRange(TODAY_REFRESH_ROW + 1, TODAY_REFRESH_COL, 1, 7).merge()
-    .setValue('Change Focus, Available minutes, or Energy, then tick Build / refresh. Today re-fits work from Tasks; source tabs update only when you change task status.')
+    .setValue('Change Today focus, Available minutes, or Energy to rebuild immediately. Use Build / refresh when Tasks changed elsewhere. Today re-fits work from Tasks; source tabs update only when you change task status.')
     .setFontSize(9)
     .setFontStyle('italic')
     .setFontColor(HEADER_COLOR)
@@ -8035,6 +8035,7 @@ function renderDecisionCards(sheet, idRow, actionRow, moreRow) {
       .setNote('Why: ' + trigger + (linked ? '\nLinked to: ' + linked : '') + (notes ? '\nNotes: ' + notes : ''));
     sheet.getRange(slot.action).setValue('').setBackground(MANUAL_COLOR).setFontWeight('bold');
     setDropdown(sheet.getRange(slot.action), ['', 'Confirm', 'Not now', 'Skip']);
+    sheet.getRange(slot.action).setNote('Confirm runs the action shown on the card. Not now dismisses it. Skip keeps it pending and hides it from Home until Home is refreshed.');
   });
 
   renderDecisionPagingControls(sheet, moreRow, offset, count, pageSize);
@@ -9010,6 +9011,7 @@ function refreshHome() {
   if (editReady) {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setValue('No updates').setBackground(MANUAL_COLOR);
     setDropdown(sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL), DROPDOWNS.TODAY_UPDATE_TYPES);
+    sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).setNote('Choose what changed. The planner opens the matching popup, writes the source tab, then refreshes Home and Today.');
   } else {
     sheet.getRange(HOME_UPDATE_ROW, HOME_UPDATE_COL).clearDataValidations().setValue('Install triggers first').setBackground(MANUAL_COLOR).setFontColor(HEADER_COLOR).setFontWeight('bold');
   }
@@ -10646,7 +10648,7 @@ var HEADER_GUIDANCE = {
   'People': {
     'Person ID': 'Filled automatically.', 'Name': 'Contact name. Prefer Home > Add or update when adding people.', 'Organisation': 'Link when relevant; blank is okay for broad network leads.', 'Org ID': 'Filled automatically from Organisation.',
     'Role': 'Optional role or relationship context.', 'Relationship source': 'How you found or know them; this does not create outreach by itself.',
-    'Relationship status': 'Identified, outreach, reply, conversation, keep-warm, or closed.',
+    'Relationship step': 'Current step in the outreach/conversation flow.',
     'Next follow-up date': 'Next relationship follow-up; tasks handle the actual work.',
     'Reply received': 'Yes when they replied.', 'Follow-up sent?': 'Filled automatically.', 'Outreach date': 'Date outreach was sent.', 'Conversation date': 'Scheduled or completed conversation date.',
     'Context / notes': 'Relationship context, angle, and repair flags.', 'Follow-ups sent count': 'Filled automatically.',
@@ -11435,7 +11437,7 @@ function dropdownIntegrityRules() {
     { sheet: 'Sectors', headerKey: 'Sectors', col: COLS.SECTORS.STATUS, notesCol: COLS.SECTORS.NOTES, label: 'Status', values: DROPDOWNS.SECTOR_STATUS },
     { sheet: 'Organisations', headerKey: 'Organisations', col: COLS.ORGS.TIER, notesCol: COLS.ORGS.NOTES, label: 'Tier', values: DROPDOWNS.ORG_TIER },
     { sheet: 'Organisations', headerKey: 'Organisations', col: COLS.ORGS.STATUS, notesCol: COLS.ORGS.NOTES, label: 'Status', values: DROPDOWNS.ORG_STATUS },
-    { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.STAGE, notesCol: COLS.PEOPLE.NOTES, label: 'Relationship status', values: DROPDOWNS.PERSON_STAGE },
+    { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.STAGE, notesCol: COLS.PEOPLE.NOTES, label: 'Relationship step', values: DROPDOWNS.PERSON_STAGE },
     { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.REPLY_RECEIVED, notesCol: COLS.PEOPLE.NOTES, label: 'Reply received', values: DROPDOWNS.YES_NO },
     { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.FOLLOW_UP_SENT, notesCol: COLS.PEOPLE.NOTES, label: 'Follow-up sent?', values: DROPDOWNS.YES_NO },
     { sheet: 'Jobs', headerKey: 'Jobs', col: COLS.JOBS.STATUS, notesCol: COLS.JOBS.NOTES, label: 'Application status', values: DROPDOWNS.JOB_STATUS },
@@ -12468,8 +12470,9 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'How Today decides');
   r = writeKV(sheet, r, 'Fixed order, not a mystery score', 'It works down a fixed order: things you pinned or pulled in, work already in progress, hard deadlines, work blocking other work, follow-ups that are due, active pursuit matching your focus, pipeline-building work, then anything else that fits.');
+  r = writeKV(sheet, r, 'Today focus', 'Focus is a preference, not a hard filter. Changing it rebuilds Today immediately: matching active-pursuit work is preferred first, then spare capacity can still pull other ready work.');
   r = writeKV(sheet, r, 'Capacity matters', 'Today keeps a time buffer on normal days and says when the plan is realistic, tight, or over capacity. The headline separates the Minimum day from the recommended plan. Near-misses appear as Options.');
-  r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Low energy pushes deep work lower, but does not delete it.');
+  r = writeKV(sheet, r, 'Tier and energy', 'Organisation Tier breaks ties. Energy is also a preference: Low pushes deep work lower, but does not delete it.');
   r = writeKV(sheet, r, 'Why a task appears', 'Today shows compact tags like [Fixed], [Focus], [Pipeline], [Spare], or [Pulled]. Hover the notes cell for the full reason.');
   r = writeKV(sheet, r, 'Multi-day work', 'Multi-day tasks stay out of Today until you make them multi-step from Tasks > Row actions > Make selected Task multi-step.');
   r = writeKV(sheet, r, 'Source-led scans', 'Opportunity scan and People source scan are flexible pipeline-building tasks. When completed, they ask what you found; people found this way are saved as Identified, not automatic outreach.');
@@ -12478,7 +12481,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'The status labels');
   r = writeKV(sheet, r, 'Jobs', 'Application status: Not started > In progress > Submitted > Closed. Result is Waiting, Interview invite, or Rejected.');
-  r = writeKV(sheet, r, 'People', 'Relationship status runs from Identified to outreach, reply, conversation, keep-warm, or closed. Conversations are logged on the Conversations tab.');
+  r = writeKV(sheet, r, 'People', 'Relationship step runs from Identified to outreach, reply, conversation, keep-warm, or closed. Conversations are logged on the Conversations tab.');
   r = writeKV(sheet, r, 'Tasks', 'Not started / In progress / Blocked / Done / Skipped / Cancelled. Today shows selected Not started work as Planned.');
   r = writeKV(sheet, r, 'Interviews', 'To schedule / Scheduled / Completed / Reschedule / Cancelled. Official outcome is Waiting / Next round / Declined / Offer / Parked.');
   r = writeKV(sheet, r, 'Interview outcomes', 'Waiting creates follow-up work. Next round creates the next round. Declined and Parked close the job; Offer creates offer-decision work.');

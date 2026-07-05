@@ -216,6 +216,30 @@ If it stays, is the label written in user outcome language?
 
 If the action is not needed directly, remove it from the user surface or fold it into Repair/automation. If it is needed, keep it and rename it until a first-time user can infer what will happen.
 
+## 1.8 Product-control semantics rule
+
+Every visible control must be reviewed as a contract with the user, not merely as a working code path.
+
+For every dropdown, checkbox, button-like checkbox, menu item, link, row action, popup field, and visible helper action, answer:
+
+```text
+What does the user think this control does?
+What does it actually do in Code.gs?
+Is it a hard filter, soft preference, trigger, status, data-entry field, navigation link, repair action, or destructive action?
+Does changing it run immediately, wait for a refresh, or only save data?
+Does it write back to Tasks, Decisions, source tabs, Home, Today, or only the current cell?
+Could the result surprise a reasonable user?
+Does the label and helper note explain the side effect without jargon?
+```
+
+Required output:
+
+| Control | Surface | User likely expects | Actual behaviour | Classification | Fix |
+|---|---|---|---|---|---|
+| Example: Today focus | Today | Filter today's work | Soft priority preference that rebuilds Today immediately | Soft preference + trigger | Label/note must say preference, not hard filter |
+
+If label and behaviour disagree, fix the label, helper note, or behaviour before marking the stage complete. Do not treat a control as reviewed merely because its dropdown values, validation, or handler exist.
+
 ---
 
 # 2. Required end-to-end workflow
