@@ -7684,7 +7684,7 @@ function applyTodayRowStatusDropdowns(sheet) {
       continue;
     }
     var values = slot.indexOf('O') === 0 ? DROPDOWNS.TODAY_STATUS_OPTION : DROPDOWNS.TODAY_STATUS;
-    setDropdown(sheet.getRange(r, COLS.TODAY.STATUS), values);
+    setDropdown(sheet.getRange(r, COLS.TODAY.STATUS), values, { allowInvalid: false });
   }
 }
 
@@ -11057,12 +11057,12 @@ function applySheetDropdowns(canonicalName) {
       normalizeExistingPeopleStages(sheet);
       setDropdown(sheet.getRange(2, COLS.PEOPLE.STAGE, maxRow, 1), DROPDOWNS.PERSON_STAGE, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.PEOPLE.REL_TYPE, maxRow, 1), DROPDOWNS.PERSON_REL_TYPE);
-      setDropdown(sheet.getRange(2, COLS.PEOPLE.REPLY_RECEIVED, maxRow, 1), DROPDOWNS.YES_NO);
-      setDropdown(sheet.getRange(2, COLS.PEOPLE.FOLLOW_UP_SENT, maxRow, 1), DROPDOWNS.YES_NO);
+      setDropdown(sheet.getRange(2, COLS.PEOPLE.REPLY_RECEIVED, maxRow, 1), DROPDOWNS.YES_NO, { allowInvalid: false });
+      setDropdown(sheet.getRange(2, COLS.PEOPLE.FOLLOW_UP_SENT, maxRow, 1), DROPDOWNS.YES_NO, { allowInvalid: false });
       break;
     case 'Jobs':
       setDropdown(sheet.getRange(2, COLS.JOBS.STATUS, maxRow, 1), DROPDOWNS.JOB_STATUS, { allowInvalid: false });
-      setDropdown(sheet.getRange(2, COLS.JOBS.RESPONSE, maxRow, 1), DROPDOWNS.YES_NO);
+      setDropdown(sheet.getRange(2, COLS.JOBS.RESPONSE, maxRow, 1), DROPDOWNS.YES_NO, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.JOBS.OUTCOME, maxRow, 1), DROPDOWNS.JOB_OUTCOME, { allowInvalid: false });
       break;
     case 'Conversations':

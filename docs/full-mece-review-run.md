@@ -563,6 +563,56 @@ Stage 4 lineage summary from current code:
 | Interviews | Round ID and Job ID hidden | Round, type, date, status, readiness, official outcome, response/follow-up date, notes | Job/org display | Round date/status/outcome/follow-up | No new Stage 4 edit in this slice |
 | Conversations | Interaction ID and Person ID hidden | Date, Person, Type, Interaction status, Notes, Outcome | Organisation display | Person, date/status/outcome | No new Stage 4 edit in this slice |
 
+## Stage 5 - State Machines And Dropdown Semantics
+
+Required dropdown output:
+
+| Dropdown | Used in | Values | Strict? | Drives code? | Missing values | Legacy values | Fix |
+|---|---|---|---:|---:|---|---|---|
+
+Stage 5 initial dropdown scan:
+
+| State field | Values | Drives code? | Current issue |
+|---|---|---:|---|
+| Today Status | Planned, In progress, Blocked, Done, Deferred, Skipped; Option rows use Deferred, Done, Pull in | Yes | Dropdown allowed invalid values before this pass |
+| Jobs Response received | Yes, No | Yes | Dropdown allowed invalid values before this pass |
+| People Reply received | Yes, No | Yes | Dropdown allowed invalid values before this pass |
+| People Follow-up sent? | Yes, No | Yes, for follow-up materialisation | Dropdown allowed invalid values before this pass |
+| Jobs Application status / result | Status: Not started, In progress, Submitted, Closed; Result: Waiting, Interview invite, Rejected | Yes | Strict already |
+| People Relationship status | Identified, To outreach, Outreach drafted, Outreach sent, Replied, Conversation scheduled, Conversation completed, Keep warm, Closed | Yes | Strict already |
+| Conversations Interaction status / Outcome | Scheduled, Completed, Cancelled; outcomes include Useful/Neutral/Dead end/Referral/Opportunity/Follow-up/System log | Yes | Strict already |
+| Interviews Status / Official outcome | To schedule, Scheduled, Completed, Cancelled, Reschedule; Waiting, Next round, Declined, Offer, Parked | Yes | Strict already; earlier Stage 5 work added To schedule/Scheduled handling |
+
+## Issue: Workflow-driving dropdowns allowed invalid values
+
+Severity: P2
+
+Stage: 5
+Area: State machines and dropdown semantics
+Tab/surface: Today / Jobs / People
+Column/function: `applyTodayRowStatusDropdowns`, `applySheetDropdowns`, `setDropdown`
+
+Evidence:
+- Code evidence: `setDropdown` defaults to `allowInvalid: true`.
+- Code evidence: Today status, Jobs response received, People reply received, and People follow-up sent route workflow logic but were using default validation.
+
+Current behaviour:
+Users could type invalid state values into workflow-driving dropdown cells. Repair could flag them later, but the bad state was not blocked at entry.
+
+Expected behaviour:
+State fields that drive code should reject invalid values at the cell validation layer.
+
+Fix implemented:
+- Today status dropdowns now use `{ allowInvalid: false }` for both Commit and Option rows.
+- Jobs `Response received` now uses strict Yes/No.
+- People `Reply received` and `Follow-up sent?` now use strict Yes/No.
+
+Acceptance tests:
+1. Today commit rows reject values outside `TODAY_STATUS`.
+2. Today option rows reject values outside `TODAY_STATUS_OPTION`.
+3. Jobs response and People reply/follow-up fields reject values outside Yes/No.
+4. Existing scanInvalidDropdownValues remains as repair/backstop for legacy values.
+
 ## Issue: Today visible editable cells were not in manual-column ownership config
 
 Severity: P2/P3
