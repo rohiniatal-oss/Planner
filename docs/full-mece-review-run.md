@@ -532,6 +532,50 @@ Stage 3 re-check from `a0d8017`:
 | Legacy tabs | `hideLegacyUtilityTabs` deletes obsolete `Dashboard` and empty spacer tabs, hides non-empty spacer tabs | Covered; Dashboard is not a Planner data surface |
 | Migration | `migrateWorkbookSchema` and migration helpers are schema-preserving by intent | Defer performance/large workbook proof to Stage 15 |
 
+## Stage 4 - Column Ownership And Field Lineage
+
+Required output:
+
+| Tab | Column | Role | Owner | Editable? | Source of value | Read by | Triggers logic? | Flows to | Failure mode | Fix |
+|---|---|---|---|---:|---|---|---:|---|---|---|
+
+Stage 4 schema/config scan:
+
+| Check | Current evidence | Result |
+|---|---|---|
+| Controlled workbook columns | Current `HEADERS` list contains 119 columns across Today, Decisions, Tasks, Sectors, Organisations, Jobs, People, Interviews, Conversations | Baseline mapped from current `Code.gs` |
+| Hidden/system columns | `hiddenColumnsFor` hides IDs and helper link columns on source/work tabs | Mostly aligned; Today `Actual min` remains hidden by design |
+| Manual/editable columns | `MANUAL_COLUMNS` drives cream/manual styling | Confirmed gap: Today was omitted even though visible Today `Status` and `Why / notes` are user-editable |
+| Dropdown-driven columns | `applySheetDropdowns` and `dropdownIntegrityRules` define strict/value-list fields | Deeper dropdown semantics continue in Stage 5 |
+| Column bounds | HEADERS/COLS and config-bounds checks pass in verification | Clean |
+
+## Issue: Today visible editable cells were not in manual-column ownership config
+
+Severity: P2/P3
+
+Stage: 4
+Area: Column ownership and field lineage
+Tab/surface: Today
+Column/function: `MANUAL_COLUMNS`, `colorCodeManualFields`, `onEditToday`, `splitTodayNotes`
+
+Evidence:
+- Code evidence: `onEditToday` treats Today `Status` as an interactive execution control; `splitTodayNotes` / `collectPreviousTodayState` preserve user-authored Today notes across refreshes.
+- Code evidence: `MANUAL_COLUMNS` did not include `"Today's plan"`, so Today table body cells were not classified with the same manual/system ownership model as other tabs.
+
+Current behaviour:
+Today rows contain visible user-editable fields, but the ownership config treated the entire Today table as outside manual-column styling.
+
+Expected behaviour:
+Visible editable Today fields should be explicit in `MANUAL_COLUMNS`, while generated helper fields stay system-owned.
+
+Fix implemented:
+Added `"Today's plan": [COLS.TODAY.STATUS, COLS.TODAY.NOTES]` to `MANUAL_COLUMNS`.
+
+Acceptance tests:
+1. Today `Status` and `Why / notes` are recognized as manual/user-editable columns by `colorCodeManualFields`.
+2. Hidden Today helper columns remain auto/system-owned.
+3. No Today selection, status sync, or refresh logic changes.
+
 ## Issue: Repair all tabs rewrote existing Guide before Guide-last
 
 Severity: P2
