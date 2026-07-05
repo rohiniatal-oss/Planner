@@ -241,10 +241,82 @@ Already verified after restart:
 |---|---|---|
 | Today row movement menu labels were too context-dependent | `buildMenu` now uses `Move selected Today row up` and `Move selected Today row down`, calling the same `moveTodayRowUp` / `moveTodayRowDown` functions | Fixed in `e3c9dc3`; no further action unless live menu differs |
 
+## Stage 2 - Data Integrity, Identity, And Trust
+
+Required output:
+
+| Risk | Affected tabs | Detection | Current protection | Gap | Fix | Test |
+|---|---|---|---|---|---|---|
+| IDs generated once | Source tabs, Tasks, Decisions | `nextId`, onEdit/capture row creation, schema IDs | ID columns exist and most mutating paths create IDs when anchor fields appear | Needs deeper lock/path audit later; no new confirmed Stage 2 bug in this slice | Defer broad concurrency to reliability stage unless a live failure appears | Duplicate function/schema checks plus mutating-path review |
+| IDs accidentally reassigned | Sectors, Orgs, Jobs, People | Sector branch helpers, onEdit guards, hidden ID columns | Sector rename/link logic preserves IDs; Org blank-name guard prevents losing linked org names | Sector-only duplicate `SEC-*` IDs are not currently detected | Add sector-only duplicate `SEC-*` detection to `scanDuplicateIdValues` | Two sector-only rows with same SEC are flagged; child rows sharing parent SEC are not |
+| Visible labels match hidden IDs | Orgs, Jobs, People, Interviews, Tasks, Decisions | rename propagation, helper sync, `writeLinkedTo`, linked display helpers | Multiple sync helpers exist: `propagateOrganisationRename`, `syncSectorLinkedLabels`, `refreshLinkedContactsDisplay`, `syncPeopleHelperColumns` | Full column-by-column proof belongs to Stage 4 | Defer to Stage 4 lineage tables | Rename scenario tests by tab |
+| Deleted sources create orphan flags | Jobs, People, Tasks, Decisions, Orgs, Sectors, Interviews, Conversations | `checkOrgOrphans`, `detectSectorOrphans`, `syncJobsPeopleHealthFlags`, interview/conversation health flags | Orphan notes are appended and Home can count broken/source-repair needs | Need live repair run proof; no scoped code gap confirmed here | Verify in Stage 2/13 with scenarios after code sync | Delete/clear source rows and run repair/daily maintenance |
+| Duplicate IDs detected | Core tabs | `scanDuplicateIdValues`, `syncJobsPeopleHealthFlags`, interview health flags | Generic scanner covers Org/Job/Person/Interaction/Round/Task/Decision and Sub-sector IDs | Sector-only parent `SEC-*` duplicates are missed because Sector ID is intentionally shared with child rows | Add custom sector-only duplicate detection | Repair/daily maintenance flags duplicate sector-only IDs |
+| Duplicate open tasks detected | Tasks | `appendTodoOnceForWorkflow`, `openTodoExistsForTargetWorkflow` | Creation paths dedupe by object/workflow for generated work | No full scanner for pre-existing duplicate manual tasks in this slice | Defer to Tasks/Today Stage 7 unless evidence shows live duplicates | Generated cascade creates/reuses one open task |
+| Duplicate pending decisions detected | Decisions | `findDecisionByKey`, `pendingDecisionExistsForTargetWorkflow`, `appendPendingDecision` | Decision keys prevent many duplicate pending decisions | Need Stage 9 proof for every decision route | Defer to Decisions stage | Re-trigger each decision route and verify one pending item |
+| Formulas match script logic | Orgs, Tasks, Home summaries | Formula repair helpers and script-side count maps | `repairOrganisationsFormulas`, script count maps, helper backfills exist | Full formula parity needs Stage 4 table | Defer to column lineage | Compare formula outputs with script maps |
+| Dropdown validations are current | All strict dropdown tabs | `dropdownIntegrityRules`, `scanInvalidDropdownValues`, `refreshAllDropdowns` | Repair/daily maintenance flag invalid values in row Notes; Home counts invalid dropdowns | Needs live repair proof; no scoped code gap confirmed here | Verify later; no code change now | Invalid legacy value gets `[invalid-value]` |
+| Helper columns are in sync | Tasks, People, Jobs, Decisions, Home | `backfillTaskHelperColumns`, `syncPeopleHelperColumns`, `backfillDecisionHelperColumns`, `refreshHome` | Repair/daily maintenance refresh helpers | Needs current scenario proof; no scoped code gap confirmed here | Defer to Stage 4/7/9 scenario tests | Link/update rows and verify helper cells refresh |
+| Home/Today states are truthful | Home, Today | `todayPlanCounts`, `getTodayPlanBuiltDate`, Today headline note fallback | Home can treat visible Today rows as built-but-unverified instead of falsely Not built | Requires rendered Stage 8 proof | Defer code changes until scenario reproduces a mismatch | Home no-plan/zero-commit/commit/unverified cases |
+| Closed/cancelled source states do not keep active downstream work | Tasks, Decisions, source tabs | `taskLinkedSourceIsTerminal`, `deriveReadyForTodayFromRow`, source terminal cleanup paths | Terminal linked source makes task `Needs planning` and Home can flag source repair | Needs workflow-specific cleanup tests later | Defer to Stage 6/7 | Close/archive source and verify linked work leaves Today |
+
+Stage 2 findings:
+
+## Issue: Duplicate broad Sector IDs on sector-only rows are not detected
+
+Severity: P1
+
+Stage: 2
+Area: Data integrity, identity, and trust
+Tab/surface: Sectors / Organisations / Tasks / Decisions
+Column/function: `scanDuplicateIdValues`, `duplicateIdIntegrityRules`, `buildSectorBranchIndexes`
+
+Evidence:
+- Sheet evidence: Not live-tested in this pass.
+- Code evidence: `duplicateIdIntegrityRules()` scans `Sectors` only by `COLS.SECTORS.SUBSECTOR_ID`. `buildSectorBranchIndexes()` stores `branch.id` in `byId`, so duplicate sector-only `SEC-*` IDs can overwrite each other in the index.
+- User experience evidence: Sector links can appear to point at the wrong broad sector if two broad sector rows share the same `SEC-*` ID.
+
+Current behaviour:
+Duplicate `SUB-*` IDs are flagged, but duplicate broad-sector `SEC-*` IDs across two sector-only parent rows are not. The code cannot simply scan all Sector IDs because valid sub-sector child rows intentionally reuse the parent `SEC-*` in the Sector ID column.
+
+Expected behaviour:
+Repair/daily maintenance should flag duplicate `SEC-*` IDs only when the duplicate appears on multiple sector-only rows. Child rows sharing the parent Sector ID should remain valid.
+
+User impact:
+Sector taxonomy can become untrustworthy: Organisations, Tasks, and Decisions linked through a Sector ID may resolve to the wrong broad sector.
+
+Workflow impact:
+Market mapping and organisation classification can drift under duplicate broad-sector IDs.
+
+Data/integrity impact:
+High. This is an identity collision in a source-of-truth tab.
+
+Automation boundary:
+L2 repair flag. Do not auto-merge or reassign Sector IDs without a separate migration design.
+
+Recommended fix:
+- Code change: Extend `scanDuplicateIdValues(writeFlags)` with a custom Sectors pass that flags duplicate `SEC-*` IDs only for sector-only rows.
+- Sheet/layout change: None.
+- Dropdown/header/copy change: None.
+- Repair/backfill: Existing repair/daily maintenance will call the scanner and write flags.
+- Guide update: Guide-last; maybe later explain Sector/Sub-sector IDs.
+
+Acceptance tests:
+1. Two sector-only rows with the same `SEC-*` ID both get `[duplicate-sector-id]`.
+2. A sector-only row and its child sub-sector rows sharing the same `SEC-*` ID are not flagged.
+3. Existing duplicate `SUB-*` detection still works.
+4. Home Needs attention still counts duplicate-ID rows through `scanDuplicateIdValues(false)`.
+
+Do not do:
+- Do not auto-reassign duplicate Sector IDs.
+- Do not flag valid child rows that share the parent Sector ID.
+- Do not change the Sector/Sub-sector schema.
+
 ## Initial Implementation Backlog
 
 | Issue | Severity | Stage | User impact | Dependency | Batch | Acceptance tests | Status |
 |---|---|---|---|---|---|---|---|
+| Duplicate broad Sector IDs on sector-only rows are not detected | P1 | 2 | Sector links can resolve to the wrong broad sector | None | Batch 1 data safety and trust | Duplicate sector-only SEC rows flagged; child rows not falsely flagged | Fixed in current batch |
 | Home/Today navigation still needs rendered consistency proof | P1/P2 | 1/8/13 | Trust depends on rendered Home matching Today | Live sheet or Apps Script sync | Batch 2 | Home ready/not-built/stale states verified | Open |
 | Missed-days restart lacks a named recovery mode | P2 | 0/8/11 | Returning user may not know next safe action | Home cockpit + observability review | Batch 2 or 5, depending on finding | Home stale-state scenario has one clear next action | Open |
 | Guide can be regenerated before the Guide-last phase | P2/P3 | 1/3/14 | Guide may look authoritative before behaviour settles | Repair inventory and Guide-last stage | Batch 6 or Stage 3 repair decision | Repair/Guide behaviour reviewed before content change | Open |
@@ -281,6 +353,45 @@ Non-goals:
 
 Result:
 Implemented in `e3c9dc3`. Current `buildMenu` labels are `Move selected Today row up` and `Move selected Today row down`; function targets are unchanged.
+
+## Selected Implementation Batch - Batch 1 Data Safety And Trust
+
+Implementation item: Duplicate broad Sector IDs on sector-only rows are not detected.
+
+User story:
+As a user maintaining sectors and sub-sectors, when two broad sector rows accidentally share the same Sector ID, I need the Planner to flag that identity collision without flagging valid child sub-sector rows, so that linked organisations/tasks/decisions do not silently resolve to the wrong broad sector.
+
+Current pain:
+The duplicate-ID scanner checks Sub-sector IDs on the Sectors tab, but not duplicate broad-sector IDs between two sector-only parent rows. A broad-sector duplicate can overwrite the ID index used by sector lookups.
+
+Target experience:
+Repair/daily maintenance/Home attention detect duplicate broad-sector `SEC-*` IDs only when they appear on multiple sector-only rows. Valid child rows sharing their parent `SEC-*` stay clean.
+
+Automation level:
+L2 repair flag. The Planner warns and routes to repair; it does not auto-merge or reassign sector IDs.
+
+Implementation scope:
+Extend `scanDuplicateIdValues(writeFlags)` with a Sectors-specific sector-only duplicate pass.
+
+Acceptance test:
+1. Two sector-only rows with the same `SEC-*` ID both get `[duplicate-sector-id]`.
+2. A sector-only row and child sub-sector rows sharing that `SEC-*` ID are not flagged.
+3. Existing duplicate `SUB-*` detection still works.
+4. Home duplicate-ID count includes the new sector-only duplicate rows.
+
+Non-goals:
+- Do not change the Sectors schema.
+- Do not auto-reassign IDs.
+- Do not flag valid parent-child Sector ID sharing.
+
+Result:
+Implemented in current batch. `scanDuplicateIdValues(writeFlags)` now includes a Sectors-specific sector-only duplicate pass, using `[duplicate-sector-id]` on duplicate broad `SEC-*` rows while leaving valid child sub-sector rows unflagged.
+
+Verification:
+- `git diff --check`
+- Apps Script syntax check with bundled Node
+- Duplicate top-level function check: 579 functions, 579 unique, 0 duplicates
+- HEADERS/COLS schema check clean
 
 Next required stage before broader code:
 Stage 2 data integrity, identity, and trust. Do not implement broader fixes until Stage 2 review outputs exist.

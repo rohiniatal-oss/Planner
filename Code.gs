@@ -11100,6 +11100,45 @@ function duplicateIdIntegrityRules() {
   ];
 }
 
+function scanDuplicateSectorOnlyIds(writeFlags) {
+  var sheet = getSheet('Sectors');
+  var result = { count: 0, bySheet: {} };
+  if (!sheet || sheet.getLastRow() < 2) return result;
+
+  var width = HEADERS.Sectors.length;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  var rowsById = {};
+
+  values.forEach(function (row, idx) {
+    var branch = sectorBranchFromRow(idx + 2, row);
+    var id = String(branch.sectorId || '').trim();
+    if (!branch.isSectorOnly || id.indexOf('SEC-') !== 0) return;
+    if (!rowsById[id]) rowsById[id] = [];
+    rowsById[id].push(idx + 2);
+  });
+
+  values.forEach(function (row, idx) {
+    var branch = sectorBranchFromRow(idx + 2, row);
+    var id = String(branch.sectorId || '').trim();
+    var sheetRow = idx + 2;
+    if (!branch.isSectorOnly || id.indexOf('SEC-') !== 0) {
+      if (writeFlags) clearNoteFlag(sheet, sheetRow, COLS.SECTORS.NOTES, '[duplicate-sector-id]');
+      return;
+    }
+
+    var duplicateRows = (rowsById[id] || []).filter(function (r) { return r !== sheetRow; });
+    if (duplicateRows.length) {
+      result.count++;
+      result.bySheet.Sectors = (result.bySheet.Sectors || 0) + 1;
+      if (writeFlags) appendNoteFlag(sheet, sheetRow, COLS.SECTORS.NOTES, '[duplicate-sector-id] Sector ID also used on sector-only row(s): ' + duplicateRows.join(', '));
+    } else if (writeFlags) {
+      clearNoteFlag(sheet, sheetRow, COLS.SECTORS.NOTES, '[duplicate-sector-id]');
+    }
+  });
+
+  return result;
+}
+
 function scanDuplicateIdValues(writeFlags) {
   var count = 0;
   var bySheet = {};
@@ -11127,6 +11166,11 @@ function scanDuplicateIdValues(writeFlags) {
         clearNoteFlag(sheet, sheetRow, rule.notesCol, rule.flag);
       }
     });
+  });
+  var sectorOnlyDuplicates = scanDuplicateSectorOnlyIds(writeFlags);
+  count += sectorOnlyDuplicates.count;
+  Object.keys(sectorOnlyDuplicates.bySheet).forEach(function (sheetName) {
+    bySheet[sheetName] = (bySheet[sheetName] || 0) + sectorOnlyDuplicates.bySheet[sheetName];
   });
   return { count: count, bySheet: bySheet };
 }
