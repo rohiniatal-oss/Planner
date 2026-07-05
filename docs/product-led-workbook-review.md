@@ -10,7 +10,7 @@ Implemented after this review began:
 - Source-led scan completion opens a capture popup, and now has a direct "Nothing useful found" completion path.
 - Weekly review summaries are written before Home refresh and surfaced in the Home utility area; stale weekly review also appears in Needs attention.
 - First-run sector onboarding is already corrected in code: setup is marked complete after seed sectors, while sub-sector exploration is routed as Tasks.
-- Home Upcoming now includes only due/overdue People follow-ups for Outreach sent and Keep warm relationships.
+- Product decision: People follow-up tasks stay in Today/Tasks; Home Upcoming stays focused on scheduled conversations, interviews, and application checks.
 
 ## Pass 1 - User Journey Review
 
@@ -25,7 +25,7 @@ Implemented after this review began:
 | Job capture and triage | Store opportunity and decide intent | Home popup or Jobs row -> Decision/app status | Low/medium | Direct Jobs edit vs popup parity remains cognitively heavy | Which columns are required | Popup-first for normal capture; direct row repair only | P2 |
 | Application planning | Break application into executable work | In progress -> Home Decision -> popup -> Tasks | Low | Strong current model | What completion updates | Keep | Keep |
 | Submission/response | Submit then track waiting/rejection/invite | Submit task popup -> response check -> result popup | Low | Waiting is understandable now | None major | Keep | Keep |
-| Networking | Store person, decide outreach, track follow-up | People/Conversations/Tasks | Low/medium | Relationship status and conversation history split is logical but still dense | Next action meaning belongs in Guide later | People helper fields + Home follow-up surfacing | Done |
+| Networking | Store person, decide outreach, track follow-up | People/Conversations/Tasks | Medium | Relationship status and conversation history split is logical but still dense | Next action meaning | Keep follow-up execution in Today/Tasks; Home shows scheduled conversations only | P2 |
 | Interview prep | Schedule, plan prep, debrief, outcome | Interviews -> Plan prep task -> popup -> prep tasks | Low/medium | Stronger after prep model; legacy prep workflows still visible | Legacy vs current prep | Mark legacy workflows in docs/headers later | P3 |
 | Blocked-work recovery | Recover blocked/stale tasks | Tasks row actions + Today needs planning | Medium | Recovery exists but not visible on Home as a critical warning | What to do first | Home warning strip; Today needs-planning remains detailed | P1 |
 | Repair/data-health | Fix broken links/invalid rows | Maintenance/Repair menu + notes flags | Medium/high | Repair states are in notes and Home summary count, not top-level warnings | Which repair to run | Home "Needs attention" line with action | P1 |
@@ -42,7 +42,7 @@ Implemented after this review began:
 | Sectors | Strategic universe | Define sector/sub-sector rows | Track work execution | Parent/child clear, retired safe | Needs visual examples, mostly docs | Guide later |
 | Organisations | Target universe | Classify, set tier/status | Manually manage every cascade | Status controls suggestions, counts automatic | Active/Dormant review output not prominent | Home review summary later |
 | Jobs | Opportunity/application record | Track opportunity/status/deadline/result | Store interview prep detail | Application status/result clean | Looks good structurally | Keep scanning |
-| People | Relationship pipeline | Track person/source/status/next action | Store full history | Identified does not imply outreach | Due follow-up dates now surface through Home Upcoming; helper labels still need Guide context later | Keep |
+| People | Relationship pipeline | Track person/source/status/next action | Store full history | Identified does not imply outreach | Helper outputs useful; relationship follow-up work belongs in Today/Tasks, not Home Upcoming | Keep |
 | Interviews | Round tracker/prep router | Track date/status/outcome | Execute prep in sheet columns | Plan prep -> tasks; debrief/outcome | Legacy workflows still visible in dropdown | Docs/header later |
 | Conversations | Interaction history | Log interactions/outcomes | Replace People status | Feeds helper fields/follow-ups | Orphaned person links are flagged, not surfaced | Later Home/repair visibility |
 | Guide | Manual | Learn routine/recovery | Carry live state | Column/dropdown/tag dictionary | Deferred by user | Do last |
@@ -58,7 +58,7 @@ Implemented after this review began:
 | Sectors | 3 | 3 | 3 | 3 | 3 | 3 | n/a | 3 | Examples/docs |
 | Organisations | 3 | 3 | 3 | 3 | 3 | 3 | n/a | 3 | Review-state visibility |
 | Jobs | 4 | 3 | 3 | 4 | 3 | 4 | n/a | 4 | Continue column scan |
-| People | 3 | 3 | 3 | 3 | 3 | 4 | n/a | 4 | Guide context later |
+| People | 3 | 3 | 3 | 3 | 3 | 3 | n/a | 3 | Next-action surfacing |
 | Interviews | 4 | 3 | 3 | 4 | 3 | 4 | n/a | 4 | Mark legacy prep later |
 | Conversations | 3 | 3 | 3 | 3 | 3 | 3 | n/a | 3 | Orphan visibility |
 
@@ -83,7 +83,7 @@ Representative risks from current schema:
 |---|---|---|---:|---:|---:|---|---|
 | Jobs.Application status | Jobs | Not started/In progress/Submitted/Closed | Yes | Yes | Yes | None | Keep |
 | Jobs.Application result | Jobs | Waiting/Interview invite/Rejected | Yes | Yes | Yes for application responses | Offer/Parked moved to Interviews/Offer flow | Keep |
-| People.Relationship status | People | Identified -> Closed | Yes | Yes | Mostly | Due follow-up dates now surface on Home Upcoming | Keep |
+| People.Relationship status | People | Identified -> Closed | Yes | Yes | Mostly | Scheduled conversations show on Home; follow-up tasks stay in Today/Tasks | Keep |
 | Interviews.Status | Interviews | To schedule/Scheduled/Completed/Cancelled/Reschedule | Yes | Yes | Yes | Reschedule is temp | Keep, ensure cleanup |
 | Interviews.Official outcome | Interviews | Waiting/Next round/Declined/Offer/Parked | Yes | Yes | Yes | None | Keep |
 | Tasks.Ready for Today | Tasks helper | Ready/Waiting/Blocked/Parent/Needs planning/Done | Script | Yes | Yes | Terminal source/missing source handling needed for decisions too | Fix decisions |

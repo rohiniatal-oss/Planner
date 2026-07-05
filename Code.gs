@@ -8495,16 +8495,6 @@ function collectUpcomingItems(limit) {
       if (stage === 'Conversation scheduled' && d) {
         items.push({ type: 'Conversation', date: new Date(d), label: p[COLS.PEOPLE.NAME - 1] || '' });
       }
-      var followUpDate = p[COLS.PEOPLE.FOLLOW_UP_DATE - 1];
-      var replyReceived = String(p[COLS.PEOPLE.REPLY_RECEIVED - 1] || '');
-      var followUpSent = String(p[COLS.PEOPLE.FOLLOW_UP_SENT - 1] || '');
-      var needsOutreachFollowUp = stage === 'Outreach sent' && replyReceived !== 'Yes' && followUpSent !== 'Yes';
-      var followUpIsDue = followUpDate && new Date(followUpDate) <= today();
-      if (followUpIsDue && (needsOutreachFollowUp || stage === 'Keep warm')) {
-        var personLabel = String(p[COLS.PEOPLE.NAME - 1] || '');
-        var orgLabel = String(p[COLS.PEOPLE.ORG - 1] || '');
-        items.push({ type: 'Follow-up', date: new Date(followUpDate), label: personLabel + (orgLabel ? ' at ' + orgLabel : '') });
-      }
     });
   }
 
