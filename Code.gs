@@ -295,7 +295,8 @@ var DROPDOWNS = {
     'Reschedule conversation', 'Conversation debrief', 'Referral search',
     'Application preparation', 'Application blocker', 'Submit application',
     'Check application response', 'Offer decision',
-    'Interview scheduling', 'Interview prep (Domain scoping)',
+    'Interview scheduling', 'Plan interview prep', 'Interview prep',
+    'Interview prep (Domain scoping)',
     'Interview prep (Study)', 'Interview prep (Fit case)',
     'Day-before review', 'Thank-you and debrief',
     'Interview follow-up', 'Task unblocker', 'Admin'
@@ -1792,6 +1793,7 @@ function defaultTimeForWorkflow(workflow) {
     case 'Conversation prep': return '30 min';
     case 'Offer decision': return '30 min';
     case 'Task unblocker': return '15 min';
+    case 'Plan interview prep': return '15 min';
     case 'Contact follow-up':
     case 'Reply and arrange conversation':
     case 'Submit application':
@@ -2105,7 +2107,7 @@ function resolveDaysToLinkedDate(workflow, objId, objType, dueDate) {
 // used by runQueueHygiene to flag a task that has no usable date at all
 // (neither its own Due date nor a linked Job deadline/Interview date).
 var DATE_CONDITIONAL_WORKFLOWS = [
-  'Interview scheduling', 'Submit application',
+  'Interview scheduling', 'Plan interview prep', 'Interview prep', 'Submit application',
   'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)',
   'Application preparation'
 ];
@@ -2119,7 +2121,9 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
   switch (workflow) {
     case 'Day-before review': return 'Fixed';
     case 'Interview scheduling': return (daysToLinked !== null && daysToLinked <= 2) ? 'Fixed' : 'Active pursuit';
+    case 'Plan interview prep': return (daysToLinked !== null && daysToLinked <= 7) ? 'Blocking' : 'Active pursuit';
     case 'Submit application': return (daysToLinked !== null && daysToLinked <= 3) ? 'Fixed' : 'Blocking';
+    case 'Interview prep':
     case 'Interview prep (Domain scoping)':
     case 'Interview prep (Study)':
     case 'Interview prep (Fit case)':
@@ -2156,9 +2160,9 @@ function assignCommitmentClass(workflow, dueDate, objId, objType) {
 }
 
 function deriveEffortType(workflow) {
-  var deep = ['Application preparation', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
+  var deep = ['Application preparation', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Market mapping', 'Sector selection', 'Org research'];
   var medium = ['People sourcing', 'Org job scan', 'Job board scan', 'Referral search', 'Day-before review', 'Conversation prep'];
-  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Task unblocker', 'Interview scheduling', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
+  var shallow = [ORG_CLASSIFICATION_WORKFLOW, 'Contact follow-up', 'Reply and arrange conversation', 'Reschedule conversation', 'Thank-you and debrief', 'Send outreach', 'Submit application', 'Application blocker', 'Task unblocker', 'Interview scheduling', 'Plan interview prep', 'Interview follow-up', 'Conversation debrief', 'Outreach', 'Check application response', 'Offer decision'];
   if (deep.indexOf(workflow) !== -1) return 'Deep';
   if (medium.indexOf(workflow) !== -1) return 'Medium';
   if (shallow.indexOf(workflow) !== -1) return 'Shallow';
@@ -3013,6 +3017,8 @@ function handleInterviewTodoCompletion(todo, options) {
   var sheet = getSheet('Interviews');
   if (todo.workflow === 'Interview scheduling') {
     appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[schedule-action] Scheduling task completed on ' + formatDateHuman(today()) + '. Add Interview date if it is now known.');
+  } else if (todo.workflow === 'Plan interview prep') {
+    appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-planning] Prep planning task completed');
   } else if (/Interview prep|Day-before review/.test(todo.workflow)) {
     appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-completed] ' + todo.workflow + ' on ' + formatDateHuman(today()));
   } else if (todo.workflow === 'Interview follow-up') {
@@ -3390,8 +3396,6 @@ function createInterviewRoundForJob(jobId, opts) {
     appendTodoOnceForWorkflow('Schedule interview: ' + job.title + ' at ' + job.org, 'Interview round', id, job.org, 'Interview scheduling', 'Not started', '', '15 min', 'Set Interview date on the Interviews row when known.', 'Auto-triggered');
   } else {
     scheduleInterviewRound(id, date);
-    if (domain) createInterviewPrepTasks(id);
-    else appendTodoOnceForWorkflow('Set domain readiness for: ' + job.title + ' at ' + job.org, 'Interview round', id, job.org, 'Interview prep (Domain scoping)', 'Not started', date, '15 min', 'Set Domain readiness on Interviews to unlock prep tasks.', 'Auto-triggered');
   }
   appendInteraction('', '', job.org, today(), 'Auto-log', 'Interview round created: ' + job.title + ' (Round ' + roundNum + ')', 'System log');
   return { id: id, row: newRow, created: true, roundNum: roundNum };
@@ -5095,6 +5099,90 @@ function nextRoundKnownDetailsTemplate() {
     'What they said to prepare:';
 }
 
+function interviewPrepAreaDefinitions() {
+  return [
+    { key: 'company_role', label: 'Company / role research' },
+    { key: 'domain', label: 'Domain knowledge' },
+    { key: 'experience_stories', label: 'Experience stories' },
+    { key: 'fit_behavioural', label: 'Fit / behavioural answers' },
+    { key: 'case_technical', label: 'Case / technical practice' },
+    { key: 'questions', label: 'Questions to ask them' },
+    { key: 'interviewer_panel', label: 'Interviewer / panel research' },
+    { key: 'logistics', label: 'Logistics / materials' },
+    { key: 'other', label: 'Other custom prep' }
+  ];
+}
+
+function interviewPrepAreaLabel(areaKey) {
+  var defs = interviewPrepAreaDefinitions();
+  for (var i = 0; i < defs.length; i++) if (defs[i].key === areaKey) return defs[i].label;
+  return areaKey || 'Interview prep';
+}
+
+function interviewPrepTaskLibrary() {
+  return {
+    company_role: {
+      Light: [[1, 'Review the job description and role requirements', '30 min'], [1, 'Review the organisation website, strategy, and recent context', '30 min'], [2, 'Capture five role-specific talking points', '30 min'], [3, 'Add key company and role points to interview prep notes', '15 min']],
+      Moderate: [[1, 'Map role requirements and likely evaluation criteria', '30 min'], [1, 'Research organisation strategy, priorities, and current context', '60 min'], [1, 'Research the team, function, and likely role expectations', '60 min'], [2, 'Identify what success in the role likely requires', '45 min'], [3, 'Tailor your experience narrative to the role', '45 min'], [4, 'Build a one-page company and role cheat sheet', '30 min']],
+      Heavy: [[1, 'Build a role success profile', '45 min'], [1, 'Do deep organisation research', '120 min'], [1, 'Research function, team, stakeholders, and operating context', '90 min'], [2, 'Map role requirements to your strongest evidence', '90 min'], [3, 'Prepare a role-specific narrative and critical insights', '90 min'], [4, 'Build detailed interview research pack', '90 min'], [5, 'Practise role and organisation walkthrough', '45 min']],
+      Extensive: [[1, 'Build research plan and key hypotheses', '45 min'], [2, 'Research organisation strategy, history, priorities, and recent developments', '120 min'], [2, 'Research team, function, and stakeholder landscape', '120 min'], [2, 'Research sector and competitor context', '120 min'], [3, 'Build role success profile and fit-gap map', '90 min'], [4, 'Build tailored narrative, risks, and opportunity map', '90 min'], [5, 'Practise role, organisation, and context walkthroughs', '90 min'], [6, 'Produce final executive interview pack', '60 min']]
+    },
+    domain: {
+      Light: [[1, 'Identify likely domain themes for the interview', '30 min'], [2, 'Refresh key concepts, terms, and recent context', '45 min'], [3, 'Prepare three concise explanations or examples', '30 min'], [4, 'Do final recall check', '15 min']],
+      Moderate: [[1, 'Define likely topic list', '30 min'], [1, 'Map gaps between likely topics and current knowledge', '30 min'], [2, 'Study highest-priority gaps', '90 min'], [3, 'Build concise domain notes with examples', '60 min'], [4, 'Practise explaining three to five topics aloud', '45 min']],
+      Heavy: [[1, 'Build topic map and prioritise domain gaps', '45 min'], [1, 'Gather reliable sources and study materials', '45 min'], [2, 'Study core concepts and current context', '120 min'], [3, 'Build examples, use cases, and points of view', '90 min'], [4, 'Practise explanations and likely follow-up questions', '90 min'], [5, 'Build final domain cheat sheet', '60 min']],
+      Extensive: [[1, 'Build multi-day domain study plan', '45 min'], [2, 'Complete domain study block on core concepts', '120 min'], [3, 'Complete domain study block on current context', '120 min'], [4, 'Complete domain study block on examples and cases', '120 min'], [5, 'Create structured domain notes', '90 min'], [6, 'Practise Q&A explanations', '120 min'], [7, 'Run mock deep-dive or timed verbal walkthrough', '120 min'], [8, 'Close weak spots and finalise notes', '90 min']]
+    },
+    experience_stories: {
+      Light: [[1, 'Select three relevant experience examples', '30 min'], [2, 'Map each example to role requirements', '30 min'], [3, 'Refresh structure and key result for each story', '30 min'], [4, 'Practise each story aloud once', '30 min']],
+      Moderate: [[1, 'Select five to six relevant examples', '30 min'], [2, 'Map examples to likely interview themes', '45 min'], [3, 'Structure each story with context, action, result, and learning', '60 min'], [4, 'Prepare variants for likely follow-up questions', '60 min'], [5, 'Practise concise delivery', '45 min']],
+      Heavy: [[1, 'Build competency grid for the interview', '45 min'], [2, 'Select eight to ten examples across themes', '60 min'], [3, 'Structure and quantify each story', '120 min'], [4, 'Prepare variants for leadership, conflict, judgement, failure, and influence', '90 min'], [5, 'Practise aloud and tighten weak stories', '90 min'], [6, 'Build final story bank', '45 min']],
+      Extensive: [[1, 'Build full story bank grid', '60 min'], [2, 'Draft ten to twelve stories', '120 min'], [3, 'Continue drafting and refining story bank', '120 min'], [4, 'Tailor stories to role, organisation, and likely evaluation criteria', '120 min'], [5, 'Stress-test stories against follow-up questions', '120 min'], [6, 'Run mock behavioural practice', '90 min'], [7, 'Revise weak stories', '90 min'], [8, 'Build final quick-reference story bank', '60 min']]
+    },
+    fit_behavioural: {
+      Light: [[1, 'Draft or refresh why this role', '30 min'], [1, 'Draft or refresh why this organisation', '30 min'], [2, 'Prepare working-style or values examples', '30 min'], [3, 'Practise key answers aloud', '30 min']],
+      Moderate: [[1, 'Build motivation narrative', '45 min'], [1, 'Prepare why role, why organisation, and why now answers', '45 min'], [2, 'Prepare leadership, conflict, failure, and judgement answers', '90 min'], [3, 'Align answers to organisation values and operating style', '45 min'], [4, 'Practise and refine answers', '45 min']],
+      Heavy: [[1, 'Diagnose likely behavioural themes', '45 min'], [2, 'Build personal narrative arc', '90 min'], [3, 'Prepare answer bank for eight to ten behavioural questions', '120 min'], [4, 'Tailor answers to role and organisation', '90 min'], [5, 'Practise with probing follow-up questions', '90 min'], [6, 'Build final fit answer anchors', '45 min']],
+      Extensive: [[1, 'Build full behavioural prep map', '60 min'], [2, 'Draft comprehensive behavioural answer bank part 1', '120 min'], [3, 'Draft comprehensive behavioural answer bank part 2', '120 min'], [4, 'Tailor each answer to role and organisation', '120 min'], [5, 'Run mock behavioural interview', '120 min'], [6, 'Revise weak answers', '90 min'], [7, 'Practise concise and long-form versions', '90 min'], [8, 'Build final fit narrative pack', '60 min']]
+    },
+    case_technical: {
+      Light: [[1, 'Confirm likely case or technical format', '30 min'], [2, 'Refresh key framework, concepts, or method', '45 min'], [3, 'Complete one focused drill', '45 min'], [4, 'Review mistakes and capture fixes', '30 min']],
+      Moderate: [[1, 'Define likely case or technical topics', '30 min'], [2, 'Refresh methods, frameworks, or technical concepts', '60 min'], [3, 'Complete practice drill 1', '60 min'], [4, 'Complete practice drill 2', '60 min'], [5, 'Review mistakes and patterns', '45 min'], [6, 'Complete final timed mini-run', '30 min']],
+      Heavy: [[1, 'Map expected format and skills tested', '45 min'], [2, 'Study or refresh technique', '90 min'], [3, 'Complete practice drill 1', '90 min'], [4, 'Complete practice drill 2', '90 min'], [5, 'Complete practice drill 3', '90 min'], [6, 'Review mistakes and build correction notes', '60 min'], [7, 'Run timed mock or verbal walkthrough', '60 min'], [8, 'Build final method checklist', '45 min']],
+      Extensive: [[1, 'Build practice plan and format checklist', '45 min'], [2, 'Complete technique study block', '90 min'], [3, 'Complete practice set 1', '120 min'], [4, 'Review and correct practice set 1', '60 min'], [5, 'Complete practice set 2', '120 min'], [6, 'Complete practice set 3 or targeted drill', '120 min'], [7, 'Run mock interview or timed simulation', '120 min'], [8, 'Review and close targeted gaps', '120 min'], [9, 'Complete final run-through', '60 min']]
+    },
+    questions: {
+      Light: [[1, 'Draft five questions to ask', '30 min'], [2, 'Prioritise top three questions', '15 min'], [3, 'Tailor one question to role or interviewer', '15 min']],
+      Moderate: [[1, 'Draft question bank by theme', '45 min'], [1, 'Research enough context to avoid obvious questions', '30 min'], [2, 'Tailor questions to role, organisation, and interview purpose', '45 min'], [3, 'Prioritise questions by what you need to learn', '30 min'], [4, 'Practise asking questions naturally', '30 min']],
+      Heavy: [[1, 'Define what you need to learn from the interview', '45 min'], [2, 'Build question bank across role, team, organisation, and culture', '90 min'], [3, 'Tailor questions to interviewer or panel', '60 min'], [4, 'Build follow-up questions', '60 min'], [5, 'Practise conversational flow', '45 min'], [6, 'Finalise question shortlist', '30 min']],
+      Extensive: [[1, 'Define decision criteria for the opportunity', '60 min'], [2, 'Build detailed question bank across role, team, strategy, culture, and progression', '120 min'], [2, 'Research context to tailor stronger questions', '90 min'], [3, 'Design interviewer-specific question variants', '90 min'], [4, 'Prepare follow-up probes', '90 min'], [5, 'Practise and refine natural delivery', '60 min'], [6, 'Finalise prioritised question list', '60 min']]
+    },
+    interviewer_panel: {
+      Light: [[1, 'Identify interviewer or panel names', '15 min'], [2, 'Scan LinkedIn, bio, or public profile', '30 min'], [3, 'Note likely interests and one tailored question', '30 min']],
+      Moderate: [[1, 'Identify panel members and roles', '30 min'], [2, 'Research each person background', '60 min'], [3, 'Map likely perspective or concerns for each interviewer', '45 min'], [4, 'Prepare tailored talking points and questions', '60 min'], [5, 'Add panel notes to interview pack', '30 min']],
+      Heavy: [[1, 'Build panel map', '45 min'], [2, 'Research interviewer backgrounds and public work', '90 min'], [3, 'Infer likely evaluation lens for each person', '90 min'], [4, 'Tailor stories and questions by interviewer', '90 min'], [5, 'Prepare panel strategy and answer allocation', '60 min'], [6, 'Final panel review', '30 min']],
+      Extensive: [[1, 'Build full stakeholder and panel map', '60 min'], [2, 'Deep research each interviewer', '120 min'], [3, 'Continue interviewer research and source review', '120 min'], [4, 'Map influence, interests, and evaluation lens', '120 min'], [5, 'Tailor evidence, examples, and questions to each person', '120 min'], [6, 'Practise panel-style answer rotation', '90 min'], [7, 'Prepare final panel cheat sheet', '60 min'], [8, 'Complete final panel review', '30 min']]
+    },
+    logistics: {
+      Light: [[1, 'Confirm time, date, timezone, link, or location', '15 min'], [1, 'Check format and required materials', '15 min'], [2, 'Set reminders and prepare environment', '15 min']],
+      Moderate: [[1, 'Confirm logistics and interview format', '30 min'], [2, 'Check tech, environment, travel, or access requirements', '45 min'], [2, 'Prepare documents, portfolio, notes, or materials', '45 min'], [3, 'Run short setup rehearsal', '30 min'], [4, 'Set reminder and backup plan', '15 min']],
+      Heavy: [[1, 'Confirm all logistics and stakeholders', '30 min'], [2, 'Resolve travel, access, technical, or materials requirements', '90 min'], [3, 'Prepare backup plan', '60 min'], [4, 'Run full environment or travel test', '60 min'], [4, 'Prepare printed or digital materials', '60 min'], [5, 'Complete final logistics check', '30 min']],
+      Extensive: [[1, 'Build logistics plan', '45 min'], [2, 'Confirm full schedule, travel, access, and required materials', '90 min'], [3, 'Prepare required documents, equipment, and backups', '90 min'], [3, 'Build environment and contingency plan', '90 min'], [4, 'Rehearse setup, arrival, or timing', '60 min'], [5, 'Prepare final logistics pack', '60 min'], [6, 'Complete day-before logistics check', '30 min']]
+    },
+    other: {
+      Light: [[1, 'Clarify the custom prep requirement', '15 min'], [2, 'Complete the custom prep item', '60 min'], [3, 'Review and add it to interview pack', '15 min']],
+      Moderate: [[1, 'Define expected output and quality standard', '30 min'], [2, 'Gather inputs or materials', '45 min'], [3, 'Prepare first version', '90 min'], [4, 'Review and tighten', '45 min'], [5, 'Finalise custom prep item', '30 min']],
+      Heavy: [[1, 'Scope requirement and success criteria', '45 min'], [2, 'Gather inputs, examples, and materials', '60 min'], [3, 'Build or prepare main output', '120 min'], [4, 'Continue building or preparing main output', '90 min'], [5, 'Review, test, or practise', '90 min'], [6, 'Revise and finalise', '60 min'], [7, 'Add to day-before interview pack', '30 min']],
+      Extensive: [[1, 'Scope multi-day custom requirement', '45 min'], [2, 'Build workplan', '45 min'], [3, 'Complete work block 1', '120 min'], [4, 'Complete work block 2', '120 min'], [5, 'Complete work block 3 or targeted improvement', '120 min'], [6, 'Review, test, or practise', '120 min'], [7, 'Revise weak areas', '90 min'], [8, 'Finalise and rehearse', '90 min'], [9, 'Add to final interview pack', '30 min']]
+    }
+  };
+}
+
+function interviewPrepRowsFor(areaKey, band) {
+  var lib = interviewPrepTaskLibrary();
+  return (lib[areaKey] && lib[areaKey][band]) ? lib[areaKey][band] : [];
+}
+
 function conversationPrepNotes() {
   return '[conversation-prep]\n' +
     'Why am I speaking to them?\n' +
@@ -5197,7 +5285,7 @@ function scheduleInterviewRound(roundId, dateValue) {
   if (!sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
     sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(interviewDate, REPLY_DAYS_BY_ROUND_TYPE[roundType] || 7));
   }
-  if (sheet.getRange(round.row, COLS.ROUNDS.DOMAIN_READINESS).getValue()) createInterviewPrepTasks(roundId);
+  createInterviewPrepPlanningTask(roundId);
   return true;
 }
 
@@ -5257,6 +5345,263 @@ function createInterviewPrepTasks(roundId) {
   return created;
 }
 
+function isInterviewPrepPlanningTask(todo) {
+  return !!todo && todo.workflow === 'Plan interview prep' && todo.objType === 'Interview round';
+}
+
+function createInterviewPrepPlanningTask(roundId) {
+  var round = getRoundById(roundId);
+  if (!round) return '';
+  return appendTodoOnceForWorkflow('Plan interview prep: ' + round.job + (round.org ? ' at ' + round.org : ''),
+    'Interview round', roundId, round.org, 'Plan interview prep', 'Not started', today(), '15 min',
+    'Choose prep areas and effort bands. This generates the actual interview prep tasks.', 'Auto-triggered');
+}
+
+function interviewPrepKey(roundId, areaKey, band, seq) {
+  return String(roundId || '') + '|' + String(areaKey || '') + '|' + String(band || '').toLowerCase() + '|' + ('0' + seq).slice(-2);
+}
+
+function interviewPrepParentKey(roundId, areaKey) {
+  return String(roundId || '') + '|' + String(areaKey || '');
+}
+
+function clampDateNotPast(d) {
+  if (!d) return '';
+  var parsed = parseDateOr(d, '');
+  if (!parsed) return '';
+  return parsed < today() ? today() : parsed;
+}
+
+function interviewPrepDueDate(interviewDate, step) {
+  if (!interviewDate) return '';
+  var n = parseInt(step, 10) || 1;
+  var daysBefore = Math.max(1, 5 - Math.min(n, 4));
+  return clampDateNotPast(addDays(new Date(interviewDate), -daysBefore));
+}
+
+function interviewPrepNotesFor(areaKey, band, seq, dependency, customDescription) {
+  return '[interview-prep]\n' +
+    '[prep-area:' + interviewPrepAreaLabel(areaKey) + ']\n' +
+    '[prep-band:' + band + ']\n' +
+    '[seq:' + seq + ']\n' +
+    '[dependency:' + (dependency || 'Step-based') + ']' +
+    (customDescription ? '\n[custom-prep:' + customDescription + ']' : '');
+}
+
+function findOpenTodoByNoteToken(objType, objId, workflow, token) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || sheet.getLastRow() < 2 || !token) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== String(objType)) continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(objId)) continue;
+    if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== String(workflow)) continue;
+    if (!isOpenTodoStatus(String(data[i][COLS.TODO.STATUS - 1]))) continue;
+    if (String(data[i][COLS.TODO.NOTES - 1] || '').indexOf(token) === -1) continue;
+    return { row: i + 2, id: String(data[i][COLS.TODO.ID - 1] || ''), data: data[i] };
+  }
+  return null;
+}
+
+function upsertInterviewPrepParentTask(round, areaKey, band) {
+  var parentKey = interviewPrepParentKey(round.id, areaKey);
+  var token = '[prep-parent-key:' + parentKey + ']';
+  var sheet = getSheet('Tasks');
+  var title = 'Interview prep - ' + interviewPrepAreaLabel(areaKey) + ': ' + round.job + (round.org ? ' at ' + round.org : '');
+  var notes = token + '\n[prep-area:' + interviewPrepAreaLabel(areaKey) + ']\n[prep-band:' + band + ']';
+  if (areaKey === 'other' && round.customPrepDescription) notes += '\n[custom-prep:' + round.customPrepDescription + ']';
+  var existing = findOpenTodoByNoteToken('Interview round', round.id, 'Interview prep', token);
+  var id = existing ? existing.id : appendTodoWithSource(title, 'Interview round', round.id, round.org, 'Interview prep',
+    'Not started', '', 'Multi-day', notes, 'Interview prep plan', { skipDuplicateCheck: true });
+  var todo = getTodoById(id);
+  if (!todo || !sheet) return '';
+  sheet.getRange(todo.row, COLS.TODO.TASK).setValue(title);
+  sheet.getRange(todo.row, COLS.TODO.TIME_EST).setValue('Multi-day');
+  sheet.getRange(todo.row, COLS.TODO.NOTES).setValue(notes);
+  sheet.getRange(todo.row, COLS.TODO.PLAN_CATEGORY).setValue(interviewPrepAreaLabel(areaKey));
+  sheet.getRange(todo.row, COLS.TODO.PLAN_PATTERN).setValue('Step-based');
+  sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+  return id;
+}
+
+function upsertInterviewPrepChildTask(round, parentId, areaKey, band, spec, seq) {
+  var key = interviewPrepKey(round.id, areaKey, band, seq);
+  var token = '[prep-key:' + key + ']';
+  var sheet = getSheet('Tasks');
+  var title = spec[1] + ': ' + round.job + (round.org ? ' at ' + round.org : '');
+  var step = parseInt(spec[0], 10) || seq;
+  var timeEst = spec[2] || '30 min';
+  var due = interviewPrepDueDate(round.interviewDate, step);
+  var notes = token + '\n' + interviewPrepNotesFor(areaKey, band, seq, 'Step-based', areaKey === 'other' ? round.customPrepDescription || '' : '');
+  var existing = findOpenTodoByNoteToken('Interview round', round.id, 'Interview prep', token);
+  var id = existing ? existing.id : appendTodoWithSource(title, 'Interview round', round.id, round.org, 'Interview prep',
+    'Not started', due, timeEst, notes, 'Interview prep plan', { skipDuplicateCheck: true });
+  var todo = getTodoById(id);
+  if (!todo || !sheet) return '';
+  sheet.getRange(todo.row, COLS.TODO.TASK).setValue(title);
+  sheet.getRange(todo.row, COLS.TODO.DUE_DATE).setValue(due);
+  sheet.getRange(todo.row, COLS.TODO.TIME_EST).setValue(timeEst);
+  sheet.getRange(todo.row, COLS.TODO.NOTES).setValue(notes);
+  sheet.getRange(todo.row, COLS.TODO.PARENT_ID).setValue(parentId);
+  sheet.getRange(todo.row, COLS.TODO.PLAN_CATEGORY).setValue(interviewPrepAreaLabel(areaKey));
+  sheet.getRange(todo.row, COLS.TODO.STEP).setValue(step);
+  sheet.getRange(todo.row, COLS.TODO.COMMITMENT_CLASS).setValue(assignCommitmentClass('Interview prep', due, round.id, 'Interview round'));
+  sheet.getRange(todo.row, COLS.TODO.CLASS_CALC_AT).setValue(today());
+  sheet.getRange(todo.row, COLS.TODO.EFFORT_TYPE).setValue(deriveEffortType('Interview prep'));
+  sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+  applyTaskHelperColumns(sheet, todo.row);
+  return id;
+}
+
+function retireObsoleteInterviewPrepPlanTasks(roundId, activeTokens) {
+  var sheet = getSheet('Tasks');
+  if (!sheet || !roundId || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS['To-do'].length).getValues();
+  var retired = 0;
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][COLS.TODO.OBJ_TYPE - 1]) !== 'Interview round') continue;
+    if (String(data[i][COLS.TODO.OBJ_ID - 1]) !== String(roundId)) continue;
+    if (String(data[i][COLS.TODO.WORKFLOW - 1]) !== 'Interview prep') continue;
+    if (!isOpenTodoStatus(String(data[i][COLS.TODO.STATUS - 1]))) continue;
+    var notes = String(data[i][COLS.TODO.NOTES - 1] || '');
+    var match = notes.match(/\[(prep-key|prep-parent-key):([^\]]+)\]/);
+    if (!match) continue;
+    var token = '[' + match[1] + ':' + match[2] + ']';
+    if (activeTokens[token]) continue;
+    var r = i + 2;
+    sheet.getRange(r, COLS.TODO.STATUS).setValue('Skipped');
+    sheet.getRange(r, COLS.TODO.COMPLETED).setValue(today());
+    sheet.getRange(r, COLS.TODO.LAST_EDITED).setValue(today());
+    appendNoteFlag(sheet, r, COLS.TODO.NOTES, '[skipped] Prep plan changed; task no longer needed.');
+    retired++;
+  }
+  return retired;
+}
+
+function upsertInterviewPrepPlanBlock(round, areas, blockers, interviewerNames, notes, otherDescription) {
+  var sheet = getSheet('Interviews');
+  if (!sheet || !round) return;
+  var current = String(sheet.getRange(round.row, COLS.ROUNDS.NOTES).getValue() || '');
+  var lines = ['[interview-prep-plan]', 'created: ' + Utilities.formatDate(today(), plannerTimeZone(), 'yyyy-MM-dd'), 'areas:'];
+  Object.keys(areas || {}).sort().forEach(function (areaKey) {
+    lines.push('- ' + areaKey + ': ' + areas[areaKey]);
+  });
+  if (blockers) lines.push('blockers: ' + blockers);
+  if (interviewerNames) lines.push('interviewers: ' + interviewerNames);
+  if (otherDescription) lines.push('other: ' + otherDescription);
+  if (notes) lines.push('notes: ' + notes);
+  lines.push('[/interview-prep-plan]');
+  var block = lines.join('\n');
+  current = current.replace(/\[interview-prep-plan\][\s\S]*?\[\/interview-prep-plan\]\s*/g, '').trim();
+  sheet.getRange(round.row, COLS.ROUNDS.NOTES).setValue((current ? current + '\n\n' : '') + block);
+  appendNoteFlag(sheet, round.row, COLS.ROUNDS.NOTES, '[prep-planned] Prep plan generated');
+}
+
+function createInterviewPrepTasksFromPlan(roundId, payload) {
+  var round = getRoundById(roundId);
+  if (!round) return { created: 0, updated: 0, retired: 0, total: 0 };
+  round.customPrepDescription = String((payload && payload.otherDescription) || '');
+  var areas = (payload && payload.areas) || {};
+  var activeTokens = {};
+  var createdOrUpdated = 0, totalMinutes = 0;
+  Object.keys(areas).forEach(function (areaKey) {
+    var band = areas[areaKey];
+    var rows = interviewPrepRowsFor(areaKey, band);
+    if (!rows.length) return;
+    var parentId = upsertInterviewPrepParentTask(round, areaKey, band);
+    if (!parentId) return;
+    activeTokens['[prep-parent-key:' + interviewPrepParentKey(round.id, areaKey) + ']'] = true;
+    rows.forEach(function (spec, idx) {
+      var seq = idx + 1;
+      var id = upsertInterviewPrepChildTask(round, parentId, areaKey, band, spec, seq);
+      if (id) {
+        activeTokens['[prep-key:' + interviewPrepKey(round.id, areaKey, band, seq) + ']'] = true;
+        createdOrUpdated++;
+        totalMinutes += parseTimeEst(spec[2]) || 0;
+      }
+    });
+  });
+  var retired = retireObsoleteInterviewPrepPlanTasks(round.id, activeTokens);
+  retired += retireObsoleteInterviewPrepTasks(round.id, { 'Day-before review': true });
+  var dayBeforeTime = totalMinutes > 360 ? '90 min' : (totalMinutes >= 180 ? '60 min' : '30 min');
+  if (round.interviewDate) {
+    upsertInterviewPrepTask(round.id, 'Day-before review', {
+      task: 'Day-before review: ' + round.job + (round.org ? ' at ' + round.org : ''),
+      org: round.org,
+      dueDate: clampDateNotPast(addDays(new Date(round.interviewDate), -1)),
+      timeEst: dayBeforeTime,
+      notes: 'Review logistics, final notes, top stories, likely questions, interviewer notes, and follow-up plan.'
+    });
+  }
+  upsertInterviewPrepPlanBlock(round, areas, payload && payload.blockers, payload && payload.interviewerNames, payload && payload.notes, payload && payload.otherDescription);
+  syncTaskPlanningHelpers();
+  return { created: createdOrUpdated, updated: createdOrUpdated, retired: retired, total: totalMinutes };
+}
+
+function buildInterviewPrepPlanHtml(roundId, todoId) {
+  var round = getRoundById(roundId);
+  if (!round) return '<p>Interview round not found.</p>';
+  var data = {
+    roundId: round.id,
+    todoId: todoId || '',
+    title: round.job + (round.org ? ' at ' + round.org : ''),
+    interviewDate: round.interviewDate ? formatDateHuman(round.interviewDate) : '',
+    areas: interviewPrepAreaDefinitions(),
+    bands: ['Light', 'Moderate', 'Heavy', 'Extensive']
+  };
+  var json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}' +
+    'h2{margin:0 0 6px;color:#1B474D;font-size:20px;}p{color:#5F625E;font-size:13px;margin:6px 0 14px;}' +
+    '.area{display:grid;grid-template-columns:24px 1fr 145px;gap:8px;align-items:center;border-bottom:1px solid #E8E5DD;padding:9px 0;}' +
+    '.area label{font-size:13px;font-weight:bold;color:#1B474D;}select,input,textarea{box-sizing:border-box;width:100%;padding:8px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;background:#FFF;}' +
+    '.small{font-size:12px;color:#5F625E;}textarea{min-height:70px;margin-top:6px;} .field{margin-top:12px;}' +
+    '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
+    '.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FFF;color:#1B474D;font-weight:bold;cursor:pointer;}' +
+    '#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
+    '<h2>Plan interview prep</h2><p id="meta"></p><div id="areas"></div>' +
+    '<div class="field"><label class="small">Other prep description, if Other is selected</label><input id="otherDesc"></div>' +
+    '<div class="field"><label class="small">Known blockers or unclear items</label><textarea id="blockers"></textarea></div>' +
+    '<div class="field"><label class="small">Interviewer names, if known</label><input id="interviewers"></div>' +
+    '<div class="field"><label class="small">Notes</label><textarea id="notes"></textarea></div>' +
+    '<button class="primary" type="button" onclick="save()">Create prep plan</button><button class="secondary" type="button" onclick="google.script.host.close()">Cancel</button><div id="status"></div>' +
+    '<script>var data=' + json + ';document.getElementById("meta").textContent=data.title+(data.interviewDate?" - "+data.interviewDate:"");' +
+    'var wrap=document.getElementById("areas");data.areas.forEach(function(a){var row=document.createElement("div");row.className="area";var cb=document.createElement("input");cb.type="checkbox";cb.id="need_"+a.key;var lab=document.createElement("label");lab.htmlFor=cb.id;lab.textContent=a.label;var sel=document.createElement("select");sel.id="band_"+a.key;data.bands.forEach(function(b){var o=document.createElement("option");o.value=b;o.textContent=b;sel.appendChild(o);});row.appendChild(cb);row.appendChild(lab);row.appendChild(sel);wrap.appendChild(row);});' +
+    'function save(){var areas={};data.areas.forEach(function(a){if(document.getElementById("need_"+a.key).checked)areas[a.key]=document.getElementById("band_"+a.key).value;});var status=document.getElementById("status");if(!Object.keys(areas).length){status.textContent="Choose at least one prep area.";return;}if(areas.other&&!String(document.getElementById("otherDesc").value||"").trim()){status.textContent="Describe the Other prep area.";return;}status.textContent="Creating prep tasks...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not create prep plan.";return;}status.textContent=res.message||"Prep plan created.";setTimeout(function(){google.script.host.close();},900);}).withFailureHandler(function(){status.textContent="Could not create prep plan. Try again from Tasks.";}).completeInterviewPrepPlanFromPopup({roundId:data.roundId,todoId:data.todoId,areas:areas,otherDescription:document.getElementById("otherDesc").value,blockers:document.getElementById("blockers").value,interviewerNames:document.getElementById("interviewers").value,notes:document.getElementById("notes").value});}</script>';
+}
+
+function runInterviewPrepPlanPopup(roundId, todoId) {
+  var html = HtmlService.createHtmlOutput(buildInterviewPrepPlanHtml(roundId, todoId)).setWidth(700).setHeight(760).setTitle('Plan interview prep');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Plan interview prep');
+}
+
+function completeInterviewPrepPlanFromPopup(payload) {
+  return withDocumentLock(function () {
+    try {
+      payload = payload || {};
+      var round = getRoundById(payload.roundId);
+      if (!round) return failResult('I could not find that interview round.', 'roundId', 'ROUND_NOT_FOUND');
+      var result = createInterviewPrepTasksFromPlan(round.id, payload);
+      if (payload.todoId) {
+        var todo = getTodoById(payload.todoId);
+        if (todo && todo.workflow === 'Plan interview prep') {
+          todo.sheet.getRange(todo.row, COLS.TODO.STATUS).setValue('Done');
+          todo.sheet.getRange(todo.row, COLS.TODO.COMPLETED).setValue(today());
+          todo.sheet.getRange(todo.row, COLS.TODO.LAST_EDITED).setValue(today());
+          appendNoteFlag(todo.sheet, todo.row, COLS.TODO.NOTES, '[planned] Interview prep plan created');
+          syncTodayRowForTodo(todo.row, 'Done');
+        }
+      }
+      populateToday();
+      refreshHome();
+      return okResult('Interview prep plan created: ' + result.created + ' prep task(s), ' + result.retired + ' old task(s) retired.');
+    } catch (err) {
+      return popupExceptionResult('completeInterviewPrepPlanFromPopup', err);
+    }
+  }, { label: 'completeInterviewPrepPlanFromPopup', timeoutMs: 30000 });
+}
+
 function createInterviewDebriefTask(roundId) {
   var round = getRoundById(roundId);
   if (!round) return '';
@@ -5283,12 +5628,11 @@ function onEditRounds(sheet, row, col, newVal) {
     if (interviewDateForType && !sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
       sheet.getRange(row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(interviewDateForType), REPLY_DAYS_BY_ROUND_TYPE[String(newVal)] || 7));
     }
-    if (sheet.getRange(row, COLS.ROUNDS.DOMAIN_READINESS).getValue()) createInterviewPrepTasks(roundId);
     refreshDerivedPlanningSurfaces();
     return;
   }
   if (col === COLS.ROUNDS.DOMAIN_READINESS && String(sheet.getRange(row, COLS.ROUNDS.STATUS).getValue()) === 'Scheduled') {
-    createInterviewPrepTasks(roundId);
+    createInterviewPrepPlanningTask(roundId);
     refreshDerivedPlanningSurfaces();
     return;
   }
@@ -5314,6 +5658,8 @@ function onEditRounds(sheet, row, col, newVal) {
   if (col === COLS.ROUNDS.STATUS) {
     if (String(newVal) === 'Completed') {
       if (!sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+      setOpenTodosForTarget('Interview round', roundId, 'Skipped', 'Interview completed',
+        ['Interview scheduling', 'Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review']);
       createInterviewDebriefTask(roundId);
       appendInteraction('', '', orgDisplay, today(), 'Auto-log', 'Interview completed: round ' + (roundNum || '?') + ' - ' + jobDisplay, 'System log');
     }
@@ -5324,7 +5670,7 @@ function onEditRounds(sheet, row, col, newVal) {
     }
     if (String(newVal) === 'Cancelled') {
       setOpenTodosForTarget('Interview round', roundId, 'Cancelled', 'Interview round cancelled',
-        ['Interview scheduling', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review', 'Thank-you and debrief', 'Interview follow-up']);
+        ['Interview scheduling', 'Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review', 'Thank-you and debrief', 'Interview follow-up']);
       // v7.7.4: a round can be cancelled after its 'Completed' cascade
       // already raised an INTERVIEW_OUTCOME decision — without this, that
       // decision stays open forever asking for an outcome on a round the
@@ -5343,9 +5689,10 @@ function findRoundsNeedingPrep() {
   var todayDate = today(), out = [];
   for (var i = 0; i < data.length; i++) {
     var status = String(data[i][COLS.ROUNDS.STATUS - 1]);
-    var domain = String(data[i][COLS.ROUNDS.DOMAIN_READINESS - 1]);
     var interviewDate = data[i][COLS.ROUNDS.INTERVIEW_DATE - 1];
-    if (status !== 'Scheduled' || domain || !interviewDate) continue;
+    var notes = String(data[i][COLS.ROUNDS.NOTES - 1] || '');
+    var hasPrepPlan = notes.indexOf('[prep-planned]') !== -1 || notes.indexOf('[interview-prep-plan]') !== -1;
+    if (status !== 'Scheduled' || hasPrepPlan || !interviewDate) continue;
     var d = new Date(interviewDate);
     if (isNaN(d.getTime())) continue;
     var daysUntil = daysBetween(todayDate, d);
@@ -5360,7 +5707,7 @@ function checkDomainReadinessFlags() {
   var results = findRoundsNeedingPrep();
   var sheet = getSheet('Interviews');
   if (!sheet) return;
-  results.forEach(function (r) { appendNoteFlag(sheet, r.row, COLS.ROUNDS.NOTES, '[flags] \u26a0 Domain readiness not set — prep may be missing'); });
+  results.forEach(function (r) { appendNoteFlag(sheet, r.row, COLS.ROUNDS.NOTES, '[flags] Prep plan not set - interview prep may be missing'); });
 }
 
 function checkInterviewRoundHealthFlags() {
@@ -5376,7 +5723,6 @@ function checkInterviewRoundHealthFlags() {
     var jobId = String(data[i][COLS.ROUNDS.JOB_ID - 1] || '');
     var status = String(data[i][COLS.ROUNDS.STATUS - 1] || '');
     var outcome = String(data[i][COLS.ROUNDS.OFFICIAL_OUTCOME - 1] || '');
-    var domain = String(data[i][COLS.ROUNDS.DOMAIN_READINESS - 1] || '');
     var interviewDate = data[i][COLS.ROUNDS.INTERVIEW_DATE - 1];
     var expected = data[i][COLS.ROUNDS.EXPECTED_RESPONSE - 1];
     var notes = String(data[i][COLS.ROUNDS.NOTES - 1] || '');
@@ -5397,10 +5743,12 @@ function checkInterviewRoundHealthFlags() {
     // clear left it stuck in exactly that case.
     var isScheduledWithDate = status === 'Scheduled' && !!interviewDate;
     var daysUntil = isScheduledWithDate ? daysBetween(todayDate, new Date(interviewDate)) : null;
-    if (isScheduledWithDate && !domain && daysUntil >= 0 && daysUntil <= 5) {
-      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep] Domain readiness not set - prep may be missing');
+    var hasPrepPlan = notes.indexOf('[prep-planned]') !== -1 || notes.indexOf('[interview-prep-plan]') !== -1;
+    if (isScheduledWithDate && !hasPrepPlan && daysUntil >= 0 && daysUntil <= 5) {
+      appendNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep-plan] Prep plan not set - interview prep may be missing');
       flagged++;
     } else {
+      clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep-plan]');
       clearNoteFlag(sheet, row, COLS.ROUNDS.NOTES, '[missing-prep]');
     }
     if (isScheduledWithDate && daysUntil < 0) {
@@ -5794,6 +6142,13 @@ function onEditTasks(sheet, row, col, newVal, e) {
       sheet.getRange(row, COLS.TODO.STATUS).setValue(priorReferralStatus);
       sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
       runReferralSearchResultPopup(editedTodo.id);
+      return;
+    }
+    if (isInterviewPrepPlanningTask(editedTodo)) {
+      var priorPrepStatus = e && e.oldValue && DROPDOWNS.TODO_STATUS.indexOf(String(e.oldValue)) !== -1 ? String(e.oldValue) : 'Not started';
+      sheet.getRange(row, COLS.TODO.STATUS).setValue(priorPrepStatus);
+      sheet.getRange(row, COLS.TODO.COMPLETED).clearContent();
+      runInterviewPrepPlanPopup(editedTodo.objId, editedTodo.id);
       return;
     }
   }
@@ -6697,6 +7052,11 @@ function onEditToday(sheet, row, col, newVal) {
       runReferralSearchResultPopup(String(todoId));
       return;
     }
+    if (isInterviewPrepPlanningTask(todo)) {
+      sheet.getRange(row, COLS.TODAY.STATUS).setValue(todayStatusFromTodoStatus(todo.status || 'Not started'));
+      runInterviewPrepPlanPopup(todo.objId, String(todoId));
+      return;
+    }
   }
   if (status === 'Deferred') {
     deferTodoById(String(todoId), 3, 'today');
@@ -7588,8 +7948,38 @@ function processInterviewOnboarding(fields) {
   var round = findRoundByJobRound(jobId, roundNum);
   if (round && (fields.status || fields.officialOutcome)) {
     var sheet = getSheet('Interviews');
-    if (fields.status && DROPDOWNS.ROUND_STATUS.indexOf(fields.status) !== -1) sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue(fields.status);
-    if (fields.officialOutcome && DROPDOWNS.OFFICIAL_OUTCOME.indexOf(fields.officialOutcome) !== -1) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(fields.officialOutcome);
+    if (fields.status && DROPDOWNS.ROUND_STATUS.indexOf(fields.status) !== -1) {
+      sheet.getRange(round.row, COLS.ROUNDS.STATUS).setValue(fields.status);
+      if (fields.status === 'Completed') {
+        if (!sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).getValue()) sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue('Waiting');
+        setOpenTodosForTarget('Interview round', round.id, 'Skipped', 'Interview completed',
+          ['Interview scheduling', 'Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review']);
+        createInterviewDebriefTask(round.id);
+        appendInteraction('', '', org.name, today(), 'Auto-log', 'Interview completed: round ' + (roundNum || '?') + ' - ' + fields.jobTitle, 'System log');
+      }
+      if (fields.status === 'Reschedule') {
+        sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).setValue('');
+        sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue('');
+        appendTodoOnceForWorkflow('Reschedule interview: ' + fields.jobTitle + ' at ' + org.name, 'Interview round', round.id, org.name, 'Interview scheduling', 'Not started', '', '15 min', 'Find a new time, then update Interview date.', 'Auto-triggered');
+      }
+      if (fields.status === 'Cancelled') {
+        setOpenTodosForTarget('Interview round', round.id, 'Cancelled', 'Interview round cancelled',
+          ['Interview scheduling', 'Plan interview prep', 'Interview prep', 'Interview prep (Domain scoping)', 'Interview prep (Study)', 'Interview prep (Fit case)', 'Day-before review', 'Thank-you and debrief', 'Interview follow-up']);
+        autoDismissPendingForTarget('Interview round', round.id, 'Interview round cancelled');
+      }
+    }
+    if (fields.officialOutcome && DROPDOWNS.OFFICIAL_OUTCOME.indexOf(fields.officialOutcome) !== -1) {
+      sheet.getRange(round.row, COLS.ROUNDS.OFFICIAL_OUTCOME).setValue(fields.officialOutcome);
+      if (fields.officialOutcome === 'Waiting' && !sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).getValue()) {
+        var waitingDate = sheet.getRange(round.row, COLS.ROUNDS.INTERVIEW_DATE).getValue() || today();
+        var waitingType = String(sheet.getRange(round.row, COLS.ROUNDS.ROUND_TYPE).getValue() || 'Other');
+        sheet.getRange(round.row, COLS.ROUNDS.EXPECTED_RESPONSE).setValue(addDays(new Date(waitingDate), REPLY_DAYS_BY_ROUND_TYPE[waitingType] || 7));
+      }
+      if (fields.officialOutcome === 'Declined') routeInterviewOfficialOutcome(jobId, 'Declined', { source: 'interview-onboarding' });
+      if (fields.officialOutcome === 'Offer') routeInterviewOfficialOutcome(jobId, 'Offer', { source: 'interview-onboarding' });
+      if (fields.officialOutcome === 'Parked') routeInterviewOfficialOutcome(jobId, 'Parked', { source: 'interview-onboarding' });
+      if (fields.officialOutcome === 'Next round') createInterviewRoundForJob(jobId, { roundDetails: { roundNum: (parseInt(roundNum, 10) || 1) + 1, notes: nextRoundKnownDetailsTemplate() } });
+    }
   }
   return okResult('Captured the interview and created the prep path.');
 }
@@ -9303,7 +9693,7 @@ function materializeDueTasks() {
       var rExpResp = rData[rr][COLS.ROUNDS.EXPECTED_RESPONSE - 1];
       if (!rId) continue;
       if (rStatus === 'Completed' && (!rOutcome || rOutcome === 'Waiting') && rExpResp && new Date(rExpResp) < todayDate) {
-        if (appendTodoOnceForWorkflow('Check response from ' + rOrgDisp + ' Round ' + rRound, 'Interview round', rId, rOrgDisp, 'Interview follow-up', 'Not started', '', '15 min', '', 'Auto-triggered')) created++;
+        if (appendTodoOnceForWorkflow('Check response from ' + rOrgDisp + ' Round ' + rRound, 'Interview round', rId, rOrgDisp, 'Interview follow-up', 'Not started', rExpResp, '15 min', '', 'Auto-triggered')) created++;
       }
     }
   }
@@ -9702,6 +10092,20 @@ function rowActionAddInterviewRound() {
     refreshDerivedPlanningSurfaces();
     requestHomeRefresh();
   }, { label: 'rowActionAddInterviewRound' });
+}
+
+function rowActionPlanPrepForSelectedInterview() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (sheet.getName() !== 'Interviews') { SpreadsheetApp.getUi().alert('Select an Interview row first.'); return; }
+  var row = sheet.getActiveRange().getRow(); if (row <= 1) return;
+  var roundId = String(sheet.getRange(row, COLS.ROUNDS.ID).getValue() || '');
+  if (!roundId) { SpreadsheetApp.getUi().alert('That row does not have a Round ID. Add the interview from Jobs or Home first.'); return; }
+  withDocumentLock(function () {
+    createInterviewPrepPlanningTask(roundId);
+    refreshDerivedPlanningSurfaces();
+    requestHomeRefresh();
+  }, { label: 'rowActionPlanPrepForSelectedInterview' });
+  runInterviewPrepPlanPopup(roundId, '');
 }
 
 // v7.4 §4.2 — Multi-day Phase 2: break a Multi-day Task into real
@@ -10439,6 +10843,7 @@ function buildMenu() {
       .addItem('Queue market-map decision for selected sub-sector', 'rowActionSearchOrgsForSubsector')
       .addItem('Queue sub-sector task for selected sector', 'rowActionBreakDownSelectedSector')
       .addItem('Add interview round for selected job', 'rowActionAddInterviewRound')
+      .addItem('Plan prep for selected interview', 'rowActionPlanPrepForSelectedInterview')
       .addItem('Make selected Task multi-step', 'rowActionBreakDownSelectedTask')
       .addItem('Mark selected Task blocked', 'rowActionMarkTaskBlocked')
       .addItem('Unblock selected Task', 'rowActionUnblockSelectedTask')
