@@ -9193,6 +9193,7 @@ function processPeopleOnboarding(fields) {
   if (!fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
   var org = fields.org ? createNameOnlyOrg(fields.org, { status: 'Mapped', stub: true }) : null;
   var existingPerson = findPersonByNameOrg(fields.name, org ? org.name : '');
+  if (!existingPerson && org) existingPerson = findSingleBlankOrgPersonByExactName(fields.name).person;
   var reached = String(fields.reachedOut || 'No') === 'Yes';
   var replied = String(fields.replied || 'No') === 'Yes';
   var stage = reached ? 'Outreach sent' : 'Identified';
@@ -9275,6 +9276,14 @@ function writePersonRow(name, org, role) {
   if (existing) {
     if (role && !existing.data[COLS.PEOPLE.ROLE - 1]) sheet.getRange(existing.row, COLS.PEOPLE.ROLE).setValue(role);
     return existing.data[COLS.PEOPLE.ID - 1];
+  }
+  if (org && org.name) {
+    var blankOrgMatch = findSingleBlankOrgPersonByExactName(name);
+    if (blankOrgMatch.person && !blankOrgMatch.ambiguous) {
+      var attached = attachOrgToPersonRow(blankOrgMatch.person, org);
+      if (attached && role && !attached.data[COLS.PEOPLE.ROLE - 1]) sheet.getRange(attached.row, COLS.PEOPLE.ROLE).setValue(role);
+      return attached ? attached.data[COLS.PEOPLE.ID - 1] : blankOrgMatch.person.data[COLS.PEOPLE.ID - 1];
+    }
   }
   var id = nextId(sheet, COLS.PEOPLE.ID, 'PER');
   var row = new Array(HEADERS.People.length).fill('');
@@ -9845,6 +9854,7 @@ function processSourceLedPeopleCapture(fields) {
   var created = 0, reused = 0;
   names.forEach(function (name) {
     var existing = findPersonByNameOrg(name, org ? org.name : '');
+    if (!existing && org) existing = findSingleBlankOrgPersonByExactName(name).person;
     var personId = writePersonRow(name, org, '');
     var person = getPersonRowById(personId);
     if (!person) return;

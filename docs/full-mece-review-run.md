@@ -671,3 +671,73 @@ Verification:
 - Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
 - HEADERS/COLS schema check clean
 - Stage 5 column config bounds check clean
+
+## Stage 6 - Cross-Tab Workflows
+
+Required output:
+
+| Workflow | Trigger | Source update | Decision? | Task? | Popup? | Today eligible? | Completion effect | Cleanup | Gap | Fix |
+|---|---|---|---:|---:|---:|---:|---|---|---|---|
+| Add/update person / People source scan | Home capture, onboarding, source-led scan result, referral/person capture | Writes or updates People row and optional Organisation link | No for identified people; outreach is later | No automatic outreach task for Identified people | Capture popup / source scan popup | Only later Tasks become eligible | Person can later flow to outreach/conversation workflows | Person ID must remain stable when org is added later | No-org person could fork into a second Person row when later captured with an org | Reuse and attach a single blank-org person in `writePersonRow` |
+
+Stage 6 findings:
+
+## Issue: Later organisation capture could fork an existing no-org Person into a second Person ID
+
+Severity: P1
+
+Stage: 6
+Area: Cross-tab workflows
+Workflow: Add/update person / People source scan / referral contact capture
+Tab/surface: People / Conversations / Jobs / Tasks
+Column/function: `writePersonRow`, `processPeopleOnboarding`, `processSourceLedPeopleCapture`, `findSingleBlankOrgPersonByExactName`, `attachOrgToPersonRow`
+
+Evidence:
+- Code evidence: `writePersonRow(name, org, role)` deduped only against a person with the same name and same organisation. If the same person was first captured without an organisation, then later captured with one, the function created a new Person row and new Person ID.
+- Code evidence: `processConversationCapture` already had a special path to attach a blank-org person to an organisation, proving this was the intended workflow for at least one capture route.
+- Product evidence: People can start as broad network leads with no org, then later become relevant to an Organisation or Job. That should update the same person record, not split the graph.
+
+Current behaviour:
+Some capture paths could preserve the no-org person, while the shared writer used by onboarding/source-led/referral paths could create a duplicate Person row.
+
+Expected behaviour:
+If exactly one no-org person with the same name exists, adding that person with an organisation should attach the existing row to the organisation and preserve the Person ID.
+
+User impact:
+The People tab remains one record per person instead of splitting contact history.
+
+Workflow impact:
+Conversations, linked Jobs contacts, People helper columns, and open Tasks continue pointing to the same Person ID.
+
+Data/integrity impact:
+High. Duplicate Person IDs fragment downstream links and make relationship history hard to trust.
+
+Automation boundary:
+L2 identity repair during capture. Do not merge ambiguous duplicate people automatically.
+
+Recommended fix:
+- Code change: Teach `writePersonRow` to reuse a single blank-org exact-name person when an organisation is supplied.
+- Code change: Count/message that reuse correctly in onboarding and source-led people capture.
+- Guide update: Guide-last.
+
+Acceptance tests:
+1. Existing no-org Person `Alex Lee` keeps the same Person ID when later captured as `Alex Lee` at an Organisation.
+2. The People row gets Organisation and Org ID filled.
+3. Existing Conversations/Tasks linked to that Person ID remain linked.
+4. Source-led people capture counts that case as reused, not new.
+5. Ambiguous multiple no-org people are not auto-merged.
+
+Do not do:
+- Do not fuzzy-merge people automatically.
+- Do not create outreach tasks for source-led identified people.
+- Do not change People/Conversations schema.
+
+Result:
+Implemented in current batch. `writePersonRow` now attaches a single blank-org exact-name person to the supplied Organisation and preserves the Person ID.
+
+Verification:
+- `git diff --check`
+- Apps Script syntax check with bundled Node
+- Duplicate top-level function check: 581 functions, 581 unique, 0 duplicates
+- HEADERS/COLS schema check clean
+- Stage 6 column config bounds check clean
