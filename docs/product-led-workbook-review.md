@@ -123,6 +123,7 @@ Category 0 issue queue:
 | Maintenance menu says Full refresh | P1/P2 | Users cannot tell whether refresh is safe or reset-like | 0 + 6 | Fixed: menu says Refresh derived data (safe), and success toast says source rows were not cleared |
 | Menu says Capture update popups | P2 | Exposes implementation instead of the user action | 0 + 5 | Fixed: menu now says Capture update |
 | Row action says Soft-close selected row | P2 | Internal wording does not tell the user what will happen to the Person/Job | 0 + 5 | Fixed: menu says Close selected Person/Job row and confirms cancelled linked work |
+| Menu/Guide says Populate Today | P2 | Backend wording makes the daily action less obvious | 0 + 2 + 5 | Fixed: menu and Guide now say Build / refresh Today's plan |
 | Home/Today live visual retest still pending | P1/P2 | Current code may be correct but user trust depends on visible state | 0 + 4 | Pending |
 | Legacy/intermediate labels still visible | P3 | Users may see old workflow language after behavior changed | 0 + 5 | Guide/header pass later |
 
@@ -142,6 +143,7 @@ Implemented after this review began:
 - Maintenance now exposes the non-destructive refresh as "Refresh derived data (safe)" and confirms that source rows were not cleared.
 - The menu now uses "Capture update" instead of "Capture update popups" so it describes the user action, not the implementation.
 - Row actions now say "Close selected Person/Job row" instead of "Soft-close selected row" and confirm which linked work was cancelled.
+- Today build actions now say "Build / refresh Today's plan" instead of "Populate Today" in the menu and Guide.
 
 ## Pass 1 - User Journey Review
 

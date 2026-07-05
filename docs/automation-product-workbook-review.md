@@ -68,6 +68,7 @@ Category 0 first implementation slice:
 | Maintenance menu says Refresh derived data (safe) | The old Full refresh label blurred safe refresh with destructive reset/rebuild concepts | L2 trust copy | Open The Planner > Maintenance; the non-destructive rebuild action is labelled Refresh derived data (safe) and confirms source rows were not cleared |
 | Menu says Capture update | The old Capture update popups label exposed implementation rather than intent | L5 popup entry copy | Open The Planner menu; the capture submenu is labelled Capture update |
 | Row action says Close selected Person/Job row | Soft-close was internal wording for a terminal state change | L4/L6-ish explicit row action | Select a People or Jobs row; menu label and toast say the row was closed and linked work was cancelled |
+| Menu says Build / refresh Today's plan | Populate Today was backend wording for the main daily planning action | L1/L4 execution-surface copy | Open The Planner menu and Today submenu; the action reads Build / refresh Today's plan |
 
 Product architecture to preserve:
 

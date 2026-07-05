@@ -7523,7 +7523,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
 }
 
 function populateToday() {
-  // v7.3: guarded so the direct menu path ("Open / populate Today") is
+  // v7.3: guarded so the direct menu path ("Build / refresh Today's plan") is
   // serialised too. When called from an already-locked context (edits,
   // dailyMaintenance) the re-entrancy guard runs the body directly.
   return withDocumentLock(populateTodayImpl, { label: 'populateToday' });
@@ -11875,7 +11875,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Your daily 10 minutes');
   r = writeKV(sheet, r, '1. Open Home', 'Resolve any Pending Decisions. Yes creates the suggested task, opens the relevant popup, or routes the capture/update shown on the card. No dismisses it.');
   r = writeKV(sheet, r, '2. Capture what changed', 'Use Capture update on Home for new jobs, people, conversations, interviews, organisations, or sectors.');
-  r = writeKV(sheet, r, '3. Refresh Today', 'Use Today > Populate Today if the plan has not already refreshed.');
+  r = writeKV(sheet, r, '3. Refresh Today', "Use Today > Build / refresh Today's plan if the plan has not already refreshed.");
   r = writeKV(sheet, r, '4. Do the work on Today', 'Mark work In progress, Blocked, Done, Deferred, Skipped, or Pull in an option directly from Today.');
   r = writeKV(sheet, r, '5. End the day', 'Use the End of day checkbox on Today when you want to carry, defer, block, or skip unfinished work.');
   r++;
@@ -11930,7 +11930,7 @@ function rewriteGuide() {
   r = writeKV(sheet, r, 'Menu missing', 'Extensions > Apps Script > run onOpen. Reload the sheet.');
   r = writeKV(sheet, r, 'Popups not opening', 'Run The Planner > Triggers & setup > Set up / verify triggers (one-time, grants full authorization for modal dialogs).');
   r = writeKV(sheet, r, 'Home not refreshing', 'Use The Planner > Refresh Home, or tick the refresh checkbox on Home.');
-  r = writeKV(sheet, r, 'Today looks stale', 'Use The Planner > Today > Populate Today.');
+  r = writeKV(sheet, r, 'Today looks stale', "Use The Planner > Today > Build / refresh Today's plan.");
   r = writeKV(sheet, r, 'Formatting looks off', 'Use The Planner > Maintenance > Repair all tabs.');
   r = writeKV(sheet, r, 'Broken source link', 'Tasks with [no-link], [orphaned-link], [orphaned-sector], or [orphaned-org] stay out of Today until the linked source row is repaired.');
   r = writeKV(sheet, r, 'A row is not routing', 'Check whether required fields are missing, especially Organisation on Jobs and People. Notes may show a [pending-org] or review flag.');
@@ -12319,12 +12319,12 @@ function buildMenu() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('The Planner')
     .addItem('Set up / redo onboarding', 'runSetupInterview')
-    .addItem('Open / populate Today', 'populateToday')
+    .addItem("Build / refresh Today's plan", 'populateToday')
     .addItem('Refresh Home', 'refreshHome')
     .addItem('Add ad-hoc task', 'addAdHocTodo')
     .addSeparator()
     .addSubMenu(ui.createMenu('Today')
-      .addItem('Populate Today', 'populateToday')
+      .addItem("Build / refresh Today's plan", 'populateToday')
       .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
       .addItem('Top up Today', 'topUpToday')
       .addItem('Lock selected Today row', 'lockTodayRow')
