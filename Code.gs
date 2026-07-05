@@ -1928,6 +1928,21 @@ function defaultTimeForWorkflow(workflow) {
   }
 }
 
+function scanWorkflowDefaultTimes(writeFlags) {
+  var missing = DROPDOWNS.TODO_WORKFLOW.filter(function (workflow) {
+    return !defaultTimeForWorkflow(workflow);
+  });
+  if (writeFlags) {
+    var props = PropertiesService.getDocumentProperties();
+    if (missing.length) {
+      props.setProperty('workflowDefaultTimeGaps', missing.join(', '));
+    } else {
+      props.deleteProperty('workflowDefaultTimeGaps');
+    }
+  }
+  return { count: missing.length, bySheet: missing.length ? { Tasks: missing.length } : {}, missing: missing };
+}
+
 function resolveOrgForTarget(targetType, targetId) {
   if (targetType === 'Organisation') { var o = getOrgById(targetId); return o ? o.name : ''; }
   if (targetType === 'Job') { var j = getJobRowById(targetId); return j ? j.org : ''; }
@@ -8826,6 +8841,8 @@ function collectHomeAttentionItems() {
   if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
   var invalidDropdowns = scanInvalidDropdownValues(false);
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
+  var missingWorkflowTimes = scanWorkflowDefaultTimes(false);
+  if (missingWorkflowTimes.count) items.push(missingWorkflowTimes.count + ' workflow default time' + (missingWorkflowTimes.count === 1 ? '' : 's') + ' missing');
   var duplicateIds = scanDuplicateIdValues(false);
   if (duplicateIds.count) items.push(duplicateIds.count + ' duplicate ID row' + (duplicateIds.count === 1 ? '' : 's') + ' need repair');
   var duplicateTasks = scanDuplicateOpenTasks(false);
@@ -8843,7 +8860,7 @@ function homeAttentionActionHint(items) {
   items.forEach(function (item) {
     var text = String(item || '');
     if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
-    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
+    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('workflow default time') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
     if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
   });
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
@@ -10867,11 +10884,13 @@ function routineTimeOptions() {
 }
 
 function normalizeTaskTimeEstimate(value) {
+  // Tasks may intentionally have no estimate; that keeps them in Needs planning.
   var raw = String(value || '').trim();
   return DROPDOWNS.TODO_TIME.indexOf(raw) !== -1 ? raw : '';
 }
 
 function normalizeRoutineTimeEstimate(value) {
+  // Routines need a cadence-sized default so each due run can materialize.
   var raw = String(value || '').trim();
   return routineTimeOptions().indexOf(raw) !== -1 ? raw : '30 min';
 }
@@ -13322,6 +13341,7 @@ function rewriteGuide() {
   r = writeH2(sheet, r, 'Automation and safety');
   r = writeKV(sheet, r, 'Daily and weekly refresh', 'Setup & automation installs time triggers. They catch due tasks, health checks, and weekly organisation review even if the sheet is not open.');
   r = writeKV(sheet, r, 'Repair', 'Data safety & repair > Repair sheet layout rebuilds headers, dropdowns, formulas, helper links, and generated tabs without clearing planner data.');
+  r = writeKV(sheet, r, 'After code updates', 'Run Repair sheet layout once. It refreshes helper columns, dropdowns, and workflow timing checks.');
   r = writeKV(sheet, r, 'Snapshot', 'Data safety & repair > Save backup copy creates a timestamped full spreadsheet copy in Google Drive.');
   r = writeKV(sheet, r, 'Start fresh', 'Data safety & repair > Start fresh creates a backup, then fully clears planner data bodies and rebuilds the tabs. It is separate from setup.');
   r = writeKV(sheet, r, 'Hidden columns', 'IDs and helper dates are hidden by default. Use Show hidden columns for troubleshooting when you need to inspect links.');
@@ -13620,6 +13640,7 @@ function repairAllTabsImpl() {
   repairInteractionPersonLinks();
   syncPeopleHelperColumns();
   scanInvalidDropdownValues(true);
+  scanWorkflowDefaultTimes(true);
   scanDuplicateIdValues(true);
   scanDuplicateOpenTasks(true);
   scanDuplicatePendingDecisions(true);
@@ -13685,6 +13706,7 @@ function dailyMaintenance() {
     repairInteractionPersonLinks();
     syncPeopleHelperColumns();
     scanInvalidDropdownValues(true);
+    scanWorkflowDefaultTimes(true);
     scanDuplicateIdValues(true);
     scanDuplicateOpenTasks(true);
     scanDuplicatePendingDecisions(true);
@@ -13778,7 +13800,6 @@ function buildMenu() {
     .addSubMenu(ui.createMenu('Today')
       .addItem("Build today's plan", 'populateToday')
       .addItem('Add time to Today', 'topUpToday')
-      .addItem('Change selected task timing', 'runTimingPopupForSelectedRow')
       .addSeparator()
       .addItem('Pull selected Task into Today', 'pullSelectedTaskIntoToday')
       .addItem('Keep selected Today row fixed', 'lockTodayRow')
