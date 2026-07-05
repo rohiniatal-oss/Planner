@@ -8402,6 +8402,8 @@ function collectHomeAttentionItems() {
   if (maint.error) items.push('maintenance issue logged');
   else if (maint.stale) items.push('maintenance has not run in 2 days');
   if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
+  var invalidDropdowns = scanInvalidDropdownValues(false);
+  if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
   return items;
 }
 
@@ -8740,10 +8742,17 @@ function refreshHomeStatusFromButton() {
 
 function clearSheetBody(sheet, headerKey) {
   if (!sheet || !HEADERS[headerKey]) return;
-  var rows = Math.max(sheet.getMaxRows() - 1, 1);
+  var headers = HEADERS[headerKey];
   var cols = HEADERS[headerKey].length;
-  sheet.getRange(1, 1, 1, cols).setValues([HEADERS[headerKey]]);
-  if (rows > 0) sheet.getRange(2, 1, rows, cols).clearContent().clearNote();
+  if (sheet.getMaxColumns() < cols) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols - sheet.getMaxColumns());
+  sheet.getRange(1, 1, 1, cols).setValues([headers]);
+  if (sheet.getMaxColumns() > cols) {
+    sheet.getRange(1, cols + 1, 1, sheet.getMaxColumns() - cols).clearContent().clearNote().clearDataValidations().clearFormat();
+  }
+  var rows = sheet.getMaxRows() - 1;
+  if (rows > 0) {
+    sheet.getRange(2, 1, rows, sheet.getMaxColumns()).clearContent().clearNote().clearDataValidations().clearFormat();
+  }
 }
 
 function resetPlannerDataForOnboarding() {
@@ -8760,6 +8769,13 @@ function resetPlannerDataForOnboarding() {
   var props = PropertiesService.getDocumentProperties();
   props.deleteProperty(SETUP_PROP_KEY);
   bootstrapToday();
+}
+
+function createPlannerBackupCopy() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var stamp = Utilities.formatDate(new Date(), plannerTimeZone(), 'yyyy-MM-dd HHmm');
+  var copy = ss.copy(ss.getName() + ' backup ' + stamp);
+  return { name: copy.getName(), url: copy.getUrl(), id: copy.getId() };
 }
 
 function plannerDataRowCount() {
@@ -8797,6 +8813,7 @@ function buildSetupHtml() {
     '.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}' +
     '#status{font-size:12px;color:#5F625E;margin-top:10px;}' +
     '.warn{font-size:11px;color:#964219;margin-top:4px;}' +
+    '.backup{display:block;margin-top:14px;font-size:12px;font-weight:normal;color:#5F625E;}.backup input{width:auto;margin:0 7px 0 0;vertical-align:middle;}' +
     '</style>' +
     '<h2>Set up your planner</h2>' +
     '<p>' + setupIntro + '</p>' +
@@ -8813,6 +8830,7 @@ function buildSetupHtml() {
     '<div id="q3" class="step">' +
     '  <p id="q3title"><strong>3 of 3</strong></p>' +
     '  <form id="captureForm"></form>' +
+    (existingRows ? '  <label class="backup"><input id="backupBeforeReset" type="checkbox" checked>Save a backup copy before clearing existing data</label>' : '') +
     '  <button class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
     '  <button class="back" type="button" onclick="showStep(2)">Back</button>' +
     '  <button class="skip" type="button" onclick="skipSetup()">Skip setup</button>' +
@@ -8857,10 +8875,11 @@ function buildSetupHtml() {
     'function submitSetup(){var form=document.getElementById("captureForm"),status=document.getElementById("status"),cfg=forms[entryPoint]||{fields:[]},fields=visibleFields(form,cfg);' +
     ' for(var i=0;i<cfg.fields.length;i++){var field=cfg.fields[i];if(fieldVisible(field,form)&&field.req&&!String(fields[field.k]||"").trim()){status.textContent=field.l+" is required.";if(form.elements[field.k])form.elements[field.k].focus();return;}}' +
     ' var resetConfirmed=existingRows>0&&goal!=="skipped"&&entryPoint!=="skip";if(resetConfirmed&&!confirm("Redo onboarding will clear "+existingRows+" existing planner row(s). Continue?")){status.textContent="Setup cancelled. Existing data was not changed.";return;}' +
-    ' status.textContent=existingRows>0?"Clearing existing data and saving...":"Saving setup...";' +
+    ' var backupBeforeReset=resetConfirmed&&document.getElementById("backupBeforeReset")&&document.getElementById("backupBeforeReset").checked;' +
+    ' status.textContent=resetConfirmed?(backupBeforeReset?"Creating backup copy, then clearing data...":"Clearing existing data and saving..."):"Saving setup...";' +
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){status.textContent=res.message||"Please check the form.";if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){document.getElementById("status").textContent="Could not save. Run Maintenance > Repair all tabs, then try again.";})' +
-    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetConfirmed:resetConfirmed});}' +
+    ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields,resetConfirmed:resetConfirmed,backupBeforeReset:backupBeforeReset});}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -9292,6 +9311,15 @@ function completeSetupFromPopup(payload) {
   }
   return withDocumentLock(function () {
     try {
+      var backup = null;
+      if (shouldReset && payload.backupBeforeReset === true) {
+        try {
+          backup = createPlannerBackupCopy();
+        } catch (backupErr) {
+          Logger.log('completeSetupFromPopup.backup: ' + (backupErr && backupErr.stack ? backupErr.stack : backupErr));
+          return failResult('Backup copy could not be created, so existing data was not cleared. Try again, or untick the backup option if you already saved a copy.', '', 'SETUP_BACKUP_FAILED');
+        }
+      }
       if (shouldReset) resetPlannerDataForOnboarding();
 
       var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
@@ -9299,6 +9327,9 @@ function completeSetupFromPopup(payload) {
       var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
       saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
 
+      refreshAllDropdowns();
+      applyAllRichTextHeaders();
+      setupTasksTabExtras();
       populateToday();
       refreshHome();
       colorCodeManualFields();
@@ -9309,6 +9340,7 @@ function completeSetupFromPopup(payload) {
       var todaySheet = getSheet('Today');
       if (todaySheet) SpreadsheetApp.setActiveSheet(todaySheet);
       var suffix = (goal !== 'skipped' && entryPoint !== 'skip') ? ' Existing planner data was cleared first.' : '';
+      if (backup) suffix += ' Backup copy created: ' + backup.name + '.';
       result.message = (result.message || 'Onboarding saved.') + suffix;
       return result;
     } catch (err) {
@@ -10887,6 +10919,65 @@ function refreshAllDropdowns() {
 // DAILY SWEEP — materializes due follow-ups, deadlines, etc.
 // =============================================================
 
+function dropdownIntegrityRules() {
+  return [
+    { sheet: 'Sectors', headerKey: 'Sectors', col: COLS.SECTORS.STATUS, notesCol: COLS.SECTORS.NOTES, label: 'Status', values: DROPDOWNS.SECTOR_STATUS },
+    { sheet: 'Organisations', headerKey: 'Organisations', col: COLS.ORGS.TIER, notesCol: COLS.ORGS.NOTES, label: 'Tier', values: DROPDOWNS.ORG_TIER },
+    { sheet: 'Organisations', headerKey: 'Organisations', col: COLS.ORGS.STATUS, notesCol: COLS.ORGS.NOTES, label: 'Status', values: DROPDOWNS.ORG_STATUS },
+    { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.STAGE, notesCol: COLS.PEOPLE.NOTES, label: 'Relationship status', values: DROPDOWNS.PERSON_STAGE },
+    { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.REPLY_RECEIVED, notesCol: COLS.PEOPLE.NOTES, label: 'Reply received', values: DROPDOWNS.YES_NO },
+    { sheet: 'People', headerKey: 'People', col: COLS.PEOPLE.FOLLOW_UP_SENT, notesCol: COLS.PEOPLE.NOTES, label: 'Follow-up sent?', values: DROPDOWNS.YES_NO },
+    { sheet: 'Jobs', headerKey: 'Jobs', col: COLS.JOBS.STATUS, notesCol: COLS.JOBS.NOTES, label: 'Application status', values: DROPDOWNS.JOB_STATUS },
+    { sheet: 'Jobs', headerKey: 'Jobs', col: COLS.JOBS.RESPONSE, notesCol: COLS.JOBS.NOTES, label: 'Response received', values: DROPDOWNS.YES_NO },
+    { sheet: 'Jobs', headerKey: 'Jobs', col: COLS.JOBS.OUTCOME, notesCol: COLS.JOBS.NOTES, label: 'Application result', values: DROPDOWNS.JOB_OUTCOME },
+    { sheet: 'Conversations', headerKey: 'Interactions', col: COLS.INTERACTIONS.STATUS, notesCol: COLS.INTERACTIONS.NOTES, label: 'Interaction status', values: DROPDOWNS.INTERACTION_STATUS },
+    { sheet: 'Conversations', headerKey: 'Interactions', col: COLS.INTERACTIONS.OUTCOME, notesCol: COLS.INTERACTIONS.NOTES, label: 'Outcome', values: DROPDOWNS.INTERACTION_OUTCOME },
+    { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.OBJ_TYPE, notesCol: COLS.TODO.NOTES, label: 'Linked object type', values: DROPDOWNS.TODO_OBJ_TYPE },
+    { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.WORKFLOW, notesCol: COLS.TODO.NOTES, label: 'Workflow', values: DROPDOWNS.TODO_WORKFLOW },
+    { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.STATUS, notesCol: COLS.TODO.NOTES, label: 'Status', values: DROPDOWNS.TODO_STATUS },
+    { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.COMMITMENT_CLASS, notesCol: COLS.TODO.NOTES, label: 'Commitment class', values: DROPDOWNS.TODO_COMMITMENT_CLASS },
+    { sheet: 'Tasks', headerKey: 'To-do', col: COLS.TODO.PLAN_PATTERN, notesCol: COLS.TODO.NOTES, label: 'Plan pattern', values: DROPDOWNS.TODO_PLAN_PATTERN },
+    { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.ROUND_TYPE, notesCol: COLS.ROUNDS.NOTES, label: 'Round type', values: DROPDOWNS.ROUND_TYPE },
+    { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.STATUS, notesCol: COLS.ROUNDS.NOTES, label: 'Round status', values: DROPDOWNS.ROUND_STATUS },
+    { sheet: 'Interviews', headerKey: 'Interview rounds', col: COLS.ROUNDS.OFFICIAL_OUTCOME, notesCol: COLS.ROUNDS.NOTES, label: 'Official outcome', values: DROPDOWNS.OFFICIAL_OUTCOME },
+    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.DECISION, notesCol: COLS.DECISIONS.NOTES, label: 'Decision', values: DROPDOWNS.DECISION },
+    { sheet: 'Decisions', headerKey: 'Pending decisions', col: COLS.DECISIONS.ACTION_TYPE, notesCol: COLS.DECISIONS.NOTES, label: 'Decision action type', values: DROPDOWNS.DECISION_ACTION_TYPE }
+  ];
+}
+
+function scanInvalidDropdownValues(writeFlags) {
+  var count = 0;
+  var bySheet = {};
+  var rulesBySheet = {};
+  dropdownIntegrityRules().forEach(function (rule) {
+    if (!rulesBySheet[rule.sheet]) rulesBySheet[rule.sheet] = [];
+    rulesBySheet[rule.sheet].push(rule);
+  });
+  Object.keys(rulesBySheet).forEach(function (sheetName) {
+    var rules = rulesBySheet[sheetName];
+    var sheet = getSheet(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    var width = HEADERS[rules[0].headerKey].length;
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var row = i + 2;
+      var messages = [];
+      for (var j = 0; j < rules.length; j++) {
+        var rule = rules[j];
+        var raw = String(values[i][rule.col - 1] || '').trim();
+        if (!raw || rule.values.indexOf(raw) !== -1) continue;
+        count++;
+        bySheet[sheetName] = (bySheet[sheetName] || 0) + 1;
+        messages.push(rule.label + ' "' + raw + '"');
+      }
+      if (!writeFlags) continue;
+      if (messages.length) appendNoteFlag(sheet, row, rules[0].notesCol, '[invalid-value] ' + messages.join('; ') + ' not in current dropdowns');
+      else clearNoteFlag(sheet, row, rules[0].notesCol, '[invalid-value]');
+    }
+  });
+  return { count: count, bySheet: bySheet };
+}
+
 function materializeDueTasks() {
   var created = 0, todayDate = today();
 
@@ -11990,6 +12081,7 @@ function repairAllTabsImpl() {
   refreshLinkedContactsDisplay();
   repairInteractionPersonLinks();
   syncPeopleHelperColumns();
+  scanInvalidDropdownValues(true);
   recalculateCommitmentClasses();
   backfillTaskHelperColumns();
   backfillDecisionHelperColumns();
@@ -12050,6 +12142,7 @@ function dailyMaintenance() {
     refreshInteractionPersonDropdown();
     repairInteractionPersonLinks();
     syncPeopleHelperColumns();
+    scanInvalidDropdownValues(true);
     populateToday();
     refreshHome();
     checkTriggerHealth();

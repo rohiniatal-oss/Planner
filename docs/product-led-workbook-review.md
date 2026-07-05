@@ -1,6 +1,6 @@
 # Product-led workbook review
 
-Current implementation pass through: `0efe9a0` (`Surface weekly review status on Home`).
+Current implementation pass through: current workbook-wide product-led batch after `62b685e` (`Keep people follow-ups out of Home Upcoming`).
 
 Scope: full workbook review using the product-led, exhaustive, and cohesive manuals. Guide changes are intentionally deferred until workbook behavior settles.
 
@@ -11,12 +11,14 @@ Implemented after this review began:
 - Weekly review summaries are written before Home refresh and surfaced in the Home utility area; stale weekly review also appears in Needs attention.
 - First-run sector onboarding is already corrected in code: setup is marked complete after seed sectors, while sub-sector exploration is routed as Tasks.
 - Product decision: People follow-up tasks stay in Today/Tasks; Home Upcoming stays focused on scheduled conversations, interviews, and application checks.
+- Repair and daily maintenance now scan strict dropdown columns, flag invalid values in row Notes, and Home counts invalid dropdown values as repair-needed.
+- Redo onboarding now offers a checked backup-copy option before clearing existing data, and the reset clears full data bodies plus retired header cells instead of only current schema columns.
 
 ## Pass 1 - User Journey Review
 
 | Journey | User goal | Current path | Friction | Confusion | Missing guidance | Better target path | Priority |
 |---|---|---|---|---|---|---|---|
-| First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Low | Seed setup completes; next exploration is task work | Guide should explain setup vs generated tasks later | Keep | Keep |
+| First day / onboarding | Create initial search universe | Home setup card -> setup popup -> source rows/tasks | Low | Seed setup completes; next exploration is task work; redo setup can back up before clearing | Guide should explain setup vs generated tasks later | Keep | Keep |
 | Daily use | Know what to do now | Home -> Today -> mark work | Low/medium | Home has plan, decisions, apps, upcoming, but critical warnings are not clearly first-class | Why something needs repair | Home warning strip + Today needs-planning details | P1 |
 | Weekly review | Keep stale search alive | time trigger -> org review decisions/tasks -> Home summary | Low | Review output is now visible in Home utility area | Details remain in Tasks/Decisions/source tabs | Keep | Keep |
 | Source-led opportunity discovery | Run flexible scans and capture findings | Task -> Done -> result popup | Low | Completion is now direct, with no-results path | None major | Keep | Keep |
@@ -125,7 +127,8 @@ Representative risks from current schema:
 | Terminal source with pending decision | terminal filter + backfill | Hidden/auto-dismissed | Good after latest | backfill decisions | Not shown on Home | P1 fixed/retest |
 | Missing source with pending decision | health flags notes | Hidden from Home and auto-dismissed by helper backfill | Good | decision helper backfill | Home excludes it | Done |
 | Maintenance stale/error | properties | Home attention strip + utility note | Good | none | Home attention strip | Done |
-| Invalid dropdown values | strict dropdowns/repair | mostly strict | Need full invalid scan later | repair tabs | notes | P2 |
+| Invalid dropdown values | strict dropdowns/repair | scan flags invalid values during repair/maintenance | Good | repair tabs/daily maintenance | Home attention + row notes | Done |
+| Destructive onboarding reset | setup popup | optional backup copy + full body clear | Good | setup reset | popup confirmation and backup checkbox | Done |
 | Duplicate IDs | health flags | notes only | not top-level | repair/manual | notes | P2 |
 
 ## Pass 9 - Home and Today Cockpit Review
