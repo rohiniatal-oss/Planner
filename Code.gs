@@ -84,8 +84,8 @@
  *   action with an explicit backup-first destructive confirmation. Sector
  *   onboarding is 3 explicit stages:
  *     1. Sector-only row      -> direct Task: "Identify 2-4 sub-sectors within ..."
- *     2. Sub-sector row       → Decision: "Build an org list here?"
- *     3. Yes on that Decision → Task: "Market map: <sub-sector>"
+ *     2. Sub-sector row       → Decision: "Market-map this sub-sector?"
+ *     3. Yes on that Decision → Task: "Market map by org type: <sub-sector>"
  *                                (No → no market-map Task is created)
  *   This same 3-stage model applies identically whether the sub-sector
  *   was typed directly on the Sectors tab or captured via a popup.
@@ -109,9 +109,9 @@ var COLS = {
 
   ORGS: {
     ID: 1, NAME: 2, SECTOR_ID: 3, SECTOR: 4, SUBSECTOR_ID: 5, SUBSECTOR: 6,
-    TIER: 7, STATUS: 8,
-    KNOWN_PEOPLE: 9, OPEN_OPPS: 10,
-    LAST_CHECKED: 11, NEXT_CHECK: 12, NOTES: 13
+    ORG_TYPE: 7, TIER: 8, STATUS: 9,
+    KNOWN_PEOPLE: 10, OPEN_OPPS: 11,
+    LAST_CHECKED: 12, NEXT_CHECK: 13, NOTES: 14
   },
 
   PEOPLE: {
@@ -179,7 +179,7 @@ var HEADERS = {
   Sectors: ['Sector ID', 'Sector', 'Sub-sector ID', 'Sub-sector', 'Status', 'Notes'],
   Organisations: [
     'Org ID', 'Organisation', 'Sector ID', 'Sector', 'Sub-sector ID', 'Sub-sector',
-    'Tier', 'Status', 'Known people (count)', 'Open opportunities (count)',
+    'Org type', 'Tier', 'Status', 'Known people (count)', 'Open opportunities (count)',
     'Last checked', 'Next check date', 'Notes'
   ],
   People: [
@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.2';
+var SCRIPT_VERSION = 'v7.9.3';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -291,6 +291,7 @@ var DROPDOWNS = {
   SECTOR_STATUS: ['Open', 'Retired'],
 
   ORG_TIER: ['A', 'B', 'C'],
+  ORG_TYPE: ['Government', 'Regulators', 'International Organizations', 'Think Tanks', 'Universities & Research Institutes', 'Non-profits & Foundations', 'Consulting & Professional Services', 'Startups & Scaleups', 'Large Corporates', 'Investors & Innovation Ecosystem', 'Other'],
   ORG_STATUS: ['Mapped', 'Active', 'Dormant', 'Archived'],
 
   PERSON_STAGE: ['Identified', 'To outreach', 'Outreach drafted', 'Outreach sent', 'Replied', 'Conversation scheduled', 'Conversation completed', 'Keep warm', 'Closed'],
@@ -661,6 +662,19 @@ function normalizeTier(value) {
   return (DROPDOWNS.ORG_TIER.indexOf(v) !== -1) ? v : 'B';
 }
 
+function normalizeOrgType(value) {
+  var v = String(value || '').trim();
+  return v;
+}
+
+function orgTypeFromFields(fields) {
+  fields = fields || {};
+  var selected = String(fields.orgType || '').trim();
+  var custom = String(fields.orgTypeOther || '').trim();
+  if (selected === 'Other' && custom) return custom;
+  return normalizeOrgType(selected);
+}
+
 function normalizeOrgStatus(value) {
   var v = String(value || '').trim();
   return DROPDOWNS.ORG_STATUS.indexOf(v) !== -1 ? v : 'Mapped';
@@ -860,6 +874,7 @@ function getOrgById(orgId) {
         sector: row[COLS.ORGS.SECTOR - 1],
         subsectorId: row[COLS.ORGS.SUBSECTOR_ID - 1],
         subsector: row[COLS.ORGS.SUBSECTOR - 1],
+        orgType: row[COLS.ORGS.ORG_TYPE - 1],
         tier: row[COLS.ORGS.TIER - 1],
         status: row[COLS.ORGS.STATUS - 1]
       };
@@ -1009,6 +1024,7 @@ function createNameOnlyOrg(orgName, opts) {
   var row = new Array(HEADERS.Organisations.length).fill('');
   row[COLS.ORGS.ID - 1] = id;
   row[COLS.ORGS.NAME - 1] = orgName;
+  row[COLS.ORGS.ORG_TYPE - 1] = normalizeOrgType(opts.orgType || '');
   row[COLS.ORGS.TIER - 1] = normalizeTier(opts.tier || 'B');
   row[COLS.ORGS.STATUS - 1] = status;
   row[COLS.ORGS.LAST_CHECKED - 1] = today();
@@ -2165,6 +2181,8 @@ function captureDefaultsForDecision(ctx, captureType) {
         defaults.orgNames = org.name || '';
         defaults.sector = isNeedsClassificationLabel(org.sector) ? '' : (org.sector || '');
         defaults.subsector = org.subsector || '';
+        if (org.orgType && DROPDOWNS.ORG_TYPE.indexOf(org.orgType) !== -1) defaults.orgType = org.orgType;
+        else if (org.orgType) { defaults.orgType = 'Other'; defaults.orgTypeOther = org.orgType; }
         defaults.tier = org.tier || 'B';
         defaults.status = org.status || 'Mapped';
       }
@@ -3704,7 +3722,7 @@ function handleOrganisationTodoCompletion(todo, options) {
 function handleSectorTodoCompletion(todo, options) {
   if (todo.workflow === 'Market mapping' && todo.objType === 'Sector' && todo.objId) {
     appendPendingDecision('MARKET_MAP_DONE:' + todo.id, 'Market mapping completed',
-      'Add or update organisations found from market map', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
+      'Add organisations found by org type', 'Sector', todo.objId, 'Market mapping', todo.notes || '');
   }
 }
 
@@ -4278,9 +4296,9 @@ function closePerson(personId, reason) {
 //   1. Sector-only row (Sub-sector blank)
 //        -> direct Task: "Identify 2-4 sub-sectors within ..."
 //   2. Sub-sector row added
-//        -> Decision: "Build an organisation list in this sub-sector?"
+//        -> Decision: "Market-map this sub-sector by org type?"
 //   3. Yes on that Decision
-//        -> Task: "Market map: <sector> — <sub-sector>"
+//        -> Task: "Market map by org type: <sector> — <sub-sector>"
 //   4. No on that Decision
 //        -> no market-map Task is created. Nothing further happens.
 //
@@ -4653,6 +4671,10 @@ function onEditOrganisations(sheet, row, col, newVal, e) {
     requestHomeRefresh();
     return;
   }
+  if (col === COLS.ORGS.ORG_TYPE) {
+    sheet.getRange(row, COLS.ORGS.ORG_TYPE).setValue(normalizeOrgType(newVal));
+    return;
+  }
   if (col === COLS.ORGS.STATUS) {
     var orgId = sheet.getRange(row, COLS.ORGS.ID).getValue();
     var orgName = sheet.getRange(row, COLS.ORGS.NAME).getValue();
@@ -4716,6 +4738,10 @@ function fireSectorOnlyTask(sector) {
     'Go to the Sectors tab. Add one row per sub-sector: set Sector = ' + branch.sector + ', then fill Sub-sector with the specific area. Leave IDs blank; the planner fills them. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
 }
 
+function marketMapOrgTypeInstruction(label) {
+  return 'Before adding organisations, map this sub-sector by org type: Government; Regulators; International Organizations; Think Tanks; Universities & Research Institutes; Non-profits & Foundations; Consulting & Professional Services; Startups & Scaleups; Large Corporates; Investors & Innovation Ecosystem; Other. Then add the organisations you found with their Org type.';
+}
+
 // Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row.
 // Organisations.Sector ID points to the SEC-* parent, and
 // Organisations.Sub-sector ID points to the SUB-* child. This raises the "build an org list here?" Decision. Yes
@@ -4728,8 +4754,8 @@ function fireSubsectorAddedDecision(sector, subsector, subsectorId, opts) {
   var expansionKey = 'EXPAND_SUBSECTOR:' + subsectorId;
   if (!opts.allowAfterResolved && findDecisionByKey(expansionKey)) return '';
   return appendPendingDecision(expansionKey, 'Sub-sector added: ' + expansionLabel,
-    'Market map: ' + expansionLabel, 'Sector', subsectorId, 'Market mapping',
-    'Build a list of target organisations in this sub-sector?');
+    'Market map by org type: ' + expansionLabel, 'Sector', subsectorId, 'Market mapping',
+    marketMapOrgTypeInstruction(expansionLabel));
 }
 
 // onEdit handler for direct typing on the Sectors tab. Uses the exact
@@ -4935,7 +4961,11 @@ function syncSingleSectorLinkedLabel(branch) {
         desiredTask = 'Identify 2-4 sub-sectors within ' + branch.sector;
         desiredNote = 'Go to the Sectors tab. Add one row per sub-sector: set Sector = ' + branch.sector + ', then fill Sub-sector with the specific area. Leave IDs blank; the planner fills them. Each sub-sector can then become a market-map decision.';
       }
-      if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) desiredTask = 'Market map: ' + branch.sector + ' - ' + branch.subsector;
+      if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) {
+        var marketMapLabel = branch.sector + ' - ' + branch.subsector;
+        desiredTask = 'Market map by org type: ' + marketMapLabel;
+        desiredNote = marketMapOrgTypeInstruction(marketMapLabel);
+      }
       if (desiredTask && String(taskData[t][COLS.TODO.TASK - 1]) !== desiredTask) {
         taskSheet.getRange(t + 2, COLS.TODO.TASK).setValue(desiredTask);
         count++;
@@ -4957,7 +4987,8 @@ function syncSingleSectorLinkedLabel(branch) {
       if (String(decisionData[d][COLS.DECISIONS.WORKFLOW - 1]) !== 'Market mapping') continue;
       var row = d + 2;
       decisionSheet.getRange(row, COLS.DECISIONS.TRIGGER).setValue('Sub-sector added: ' + label);
-      decisionSheet.getRange(row, COLS.DECISIONS.TASK).setValue('Market map: ' + label);
+      decisionSheet.getRange(row, COLS.DECISIONS.TASK).setValue('Market map by org type: ' + label);
+      decisionSheet.getRange(row, COLS.DECISIONS.NOTES).setValue(marketMapOrgTypeInstruction(label));
       count++;
     }
   }
@@ -5017,6 +5048,7 @@ function repairSectorTaskLinks() {
     // (rowActionSearchOrgsForSubsector) as separator depending on which
     // code path created it — match both, not just the hyphen.
     var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:—|-)\s*(.+)$/);
+    marketMapMatch = taskText.match(/^Market map by org type:\s*(.+?)\s*(?:â€”|-)\s*(.+)$/) || marketMapMatch;
     if (marketMapMatch) branch = upsertSectorBranch({ sector: marketMapMatch[1], subsector: marketMapMatch[2], source: 'repair_backfill', createExpansionDecision: false });
     else branch = upsertSectorBranch({ sector: objId, source: 'repair_backfill', createExpansionDecision: false });
     if (!branch || !branch.id) continue;
@@ -9612,7 +9644,7 @@ function cancelSetupFromPopup() {
 }
 
 function buildSetupHtml() {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, relTypes = DROPDOWNS.PERSON_REL_TYPE, routineTypes = DROPDOWNS.SEARCH_ROUTINE_TYPE, frequencies = DROPDOWNS.SEARCH_FREQUENCY, timeOptions = routineTimeOptions();
+  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, orgTypes = DROPDOWNS.ORG_TYPE, relTypes = DROPDOWNS.PERSON_REL_TYPE, routineTypes = DROPDOWNS.SEARCH_ROUTINE_TYPE, frequencies = DROPDOWNS.SEARCH_FREQUENCY, timeOptions = routineTimeOptions();
   var existingRows = plannerDataRowCount();
   var setupIntro = existingRows ? 'Add or revise starting facts. Existing planner data will be kept.' : 'This captures your starting facts and writes them to the right tabs.';
   var setupButton = 'Save setup';
@@ -9664,13 +9696,13 @@ function buildSetupHtml() {
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
     'var forms={' +
     ' exploration:{title:"Set up exploration",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"},{k:"oppSources",l:"Where should opportunity search look?",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Which networks should network search review?",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
-    ' active_search:{title:"Add what is already underway - fill only what applies",fields:[{k:"jobOrg",l:"Job to apply to - Organisation",t:"text"},{k:"jobTitle",l:"Job to apply to - Role / opportunity",t:"text"},{k:"jobDeadline",l:"Job to apply to - Deadline, if any",t:"date"},{k:"jobNotes",l:"Job to apply to - URL / notes",t:"textarea"},{k:"appOrg",l:"Submitted application - Organisation",t:"text"},{k:"appJobTitle",l:"Submitted application - Role / opportunity",t:"text"},{k:"appSubmittedDate",l:"Submitted application - Submitted date",t:"date"},{k:"appNotes",l:"Submitted application - URL / notes",t:"textarea"},{k:"interviewOrg",l:"Interview - Organisation",t:"text"},{k:"interviewJobTitle",l:"Interview - Role / opportunity",t:"text"},{k:"interviewDate",l:"Interview - Date",t:"date"},{k:"interviewRoundType",l:"Interview - Round type",t:"select",o:roundTypes,blank:true},{k:"interviewRoundNumber",l:"Interview - Round number",t:"text",p:"1"},{k:"personName",l:"Person - Name",t:"text"},{k:"personOrg",l:"Person - Organisation, if relevant",t:"text"},{k:"personRole",l:"Person - Role/title, if known",t:"text"},{k:"personRelType",l:"Person - Source / relationship",t:"select",o:relTypes,blank:true},{k:"personNotes",l:"Person - Notes/source",t:"textarea"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
+    ' active_search:{title:"Add what is already underway - fill only what applies",fields:[{k:"jobOrg",l:"Job to apply to - Organisation",t:"text"},{k:"jobTitle",l:"Job to apply to - Role / opportunity",t:"text"},{k:"jobDeadline",l:"Job to apply to - Deadline, if any",t:"date"},{k:"jobNotes",l:"Job to apply to - URL / notes",t:"textarea"},{k:"appOrg",l:"Submitted application - Organisation",t:"text"},{k:"appJobTitle",l:"Submitted application - Role / opportunity",t:"text"},{k:"appSubmittedDate",l:"Submitted application - Submitted date",t:"date"},{k:"appNotes",l:"Submitted application - URL / notes",t:"textarea"},{k:"interviewOrg",l:"Interview - Organisation",t:"text"},{k:"interviewJobTitle",l:"Interview - Role / opportunity",t:"text"},{k:"interviewDate",l:"Interview - Date",t:"date"},{k:"interviewRoundType",l:"Interview - Round type",t:"select",o:roundTypes,blank:true},{k:"interviewRoundNumber",l:"Interview - Round number",t:"text",p:"1"},{k:"personName",l:"Person - Name",t:"text"},{k:"personOrg",l:"Person - Organisation, if relevant",t:"text"},{k:"personRole",l:"Person - Role/title, if known",t:"text"},{k:"personRelType",l:"Person - Source / relationship",t:"select",o:relTypes,blank:true},{k:"personNotes",l:"Person - Notes/source",t:"textarea"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"orgType",l:"Org type for these organisations",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",showIf:{k:"orgType",v:"Other"}},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
     ' sectors:{title:"Add sectors to explore",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation, if relevant",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
-    ' orgs:{title:"Add organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
+    ' orgs:{title:"Add organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"orgType",l:"Org type",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",showIf:{k:"orgType",v:"Other"}},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' routines:{title:"Create recurring search routines",fields:[{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -9933,7 +9965,7 @@ function processActiveSearchOnboarding(fields) {
     else warnings.push('Skipped person: ' + structuredPerson.message);
   }
   if (splitInputList(fields.orgNames).length) {
-    var orgRes = processOrgOnboarding({ orgNames: fields.orgNames, status: 'Mapped', tier: 'B' });
+    var orgRes = processOrgOnboarding({ orgNames: fields.orgNames, orgType: fields.orgType || '', orgTypeOther: fields.orgTypeOther || '', status: 'Mapped', tier: 'B' });
     if (orgRes.ok) counts.orgs = splitInputList(fields.orgNames).length;
     else warnings.push('Skipped organisations: ' + orgRes.message);
   }
@@ -10097,11 +10129,13 @@ function processOrgOnboarding(fields) {
   if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
+  var orgType = orgTypeFromFields(fields);
   var created = 0, reused = 0, activeRoutes = 0;
   names.forEach(function (name) {
     var hasTaxonomyInput = !!(fields.sector || fields.subsector);
-    var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B', deferClassification: hasTaxonomyInput });
+    var org = createNameOnlyOrg(name, { status: status, tier: fields.tier || 'B', orgType: orgType, deferClassification: hasTaxonomyInput });
     if (org && org.existing) reused++; else if (org) created++;
+    if (org && orgType) getSheet('Organisations').getRange(org.row, COLS.ORGS.ORG_TYPE).setValue(orgType);
     if (applyOrganisationStatusFromCapture(org, status, fields.tier || 'B') || (org && !org.existing && status === 'Active')) activeRoutes++;
     if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
     else if (org) ensureOrgClassificationState(org.row);
@@ -10396,18 +10430,22 @@ function todayUpdateTypeToCapture(updateType) {
 }
 
 function captureConfig(captureType) {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME;
+  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME, orgTypes = DROPDOWNS.ORG_TYPE;
   var config = {
     'Explore sectors': { title: 'Add sectors to explore', fields: [{ k: 'sectorNames', l: 'Sectors you want to explore', t: 'textarea', p: 'Climate\nAI governance' }] },
     'Find organisations': {
       title: 'Add organisations found from exploration',
       fields: [{ k: 'sector', l: 'Sector', t: 'text' }, { k: 'subsector', l: 'Sub-sector', t: 'text' },
+      { k: 'orgType', l: 'Org type for this batch', t: 'select', o: orgTypes, blank: true },
+      { k: 'orgTypeOther', l: 'Add org type', t: 'text', showIf: { k: 'orgType', v: 'Other' } },
       { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated', req: true }]
     },
     'Add/update organisation': {
       title: 'Add or update organisation',
       fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
       { k: 'sector', l: 'Sector (leave blank to classify later)', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
+      { k: 'orgType', l: 'Org type', t: 'select', o: orgTypes, blank: true },
+      { k: 'orgTypeOther', l: 'Add org type', t: 'text', showIf: { k: 'orgType', v: 'Other' } },
       { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
@@ -10686,16 +10724,16 @@ function buildSourceScanResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
   if (!todo || !isSourceLedScanTask(todo)) return '<p>Search task not found.</p>';
   var isPeople = isNetworkSearchWorkflow(todo.workflow);
-  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE, jobStatuses: DROPDOWNS.JOB_STATUS };
+  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE, jobStatuses: DROPDOWNS.JOB_STATUS, orgTypes: DROPDOWNS.ORG_TYPE };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FBFBF9;color:#1B474D;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
     '<h2>Capture search results</h2><p id="intro"></p>' +
     '<div id="peopleBlock" class="hidden"><label>People found<textarea id="personNames" placeholder="One per line, or comma-separated"></textarea></label><label>Relationship source<select id="relType"></select></label><label>Organisation, if relevant<input id="personOrg"></label><label>Notes/source<textarea id="peopleNotes"></textarea></label><div class="hint">People are saved as Identified. Outreach is not created automatically.</div></div>' +
-    '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>Application status<select id="jobStatus"></select></label><label>Submitted date, if already submitted<input id="appliedDate" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
+    '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Org type for these organisations<select id="orgType"></select></label><label id="orgTypeOtherWrap" class="hidden">Add org type<input id="orgTypeOther"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>Application status<select id="jobStatus"></select></label><label>Submitted date, if already submitted<input id="appliedDate" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
     '<button class="primary" type="button" onclick="save(false,false)">Save results</button><button class="secondary" type="button" onclick="save(true,false)">Nothing useful found</button><button class="secondary" type="button" onclick="save(false,true)">Need more time</button><div id="status"></div>' +
-    '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType"),jobStatus=document.getElementById("jobStatus");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});data.jobStatuses.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;jobStatus.appendChild(opt);});jobStatus.value="Not started";' +
-    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,jobStatus:jobStatus.value,appliedDate:document.getElementById("appliedDate").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType"),jobStatus=document.getElementById("jobStatus"),orgType=document.getElementById("orgType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});data.jobStatuses.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;jobStatus.appendChild(opt);});var blankOrgType=document.createElement("option");blankOrgType.value="";blankOrgType.textContent="Select...";orgType.appendChild(blankOrgType);data.orgTypes.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;orgType.appendChild(opt);});jobStatus.value="Not started";function updateOrgTypeOther(){document.getElementById("orgTypeOtherWrap").className=orgType.value==="Other"?"":"hidden";}orgType.onchange=updateOrgTypeOther;updateOrgTypeOther();' +
+    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,orgType:orgType.value,orgTypeOther:document.getElementById("orgTypeOther").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,jobStatus:jobStatus.value,appliedDate:document.getElementById("appliedDate").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
 function runSourceScanResultPopup(todoId, decisionId) {
@@ -10749,7 +10787,7 @@ function completeSourceScanResultFromPopup(payload) {
       } else {
         var captured = [];
         if (String(payload.orgNames || '').trim()) {
-          var orgResult = processCapturePayload('Find organisations', { orgNames: payload.orgNames, sector: payload.sector, subsector: payload.subsector });
+          var orgResult = processCapturePayload('Find organisations', { orgNames: payload.orgNames, sector: payload.sector, subsector: payload.subsector, orgType: payload.orgType, orgTypeOther: payload.orgTypeOther });
           if (!orgResult.ok) return orgResult;
           captured.push('organisations');
         }
@@ -11052,10 +11090,12 @@ function processCapturePayload(captureType, fields) {
     }
     if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
     var createdFound = 0, reusedFound = 0;
+    var orgTypeFound = orgTypeFromFields(fields);
     namesNew.forEach(function (name) {
       var hasTaxonomyInput = !!(fields.sector || fields.subsector);
-      var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B', deferClassification: hasTaxonomyInput });
+      var org = createNameOnlyOrg(name, { status: 'Mapped', tier: 'B', orgType: orgTypeFound, deferClassification: hasTaxonomyInput });
       if (org && org.existing) reusedFound++; else if (org) createdFound++;
+      if (org && orgTypeFound) getSheet('Organisations').getRange(org.row, COLS.ORGS.ORG_TYPE).setValue(orgTypeFound);
       if (org && (fields.sector || fields.subsector)) applyOrgTaxonomyLink(org.row, fields.sector || '', fields.subsector || '');
       else if (org) ensureOrgClassificationState(org.row);
     });
@@ -11578,6 +11618,7 @@ var HEADER_GUIDANCE = {
     'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Add or update for normal entry.',
     'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the sector, or leave blank if it still needs classification.',
     'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional sub-sector within the selected Sector.',
+    'Org type': 'Market-map bucket: government, regulator, think tank, university, startup, corporate, investor, or other.',
     'Tier': 'A/B/C priority for tie-breaks; defaults to B.', 'Status': 'Mapped = known; Active = suggest next moves; Dormant = pause org-level suggestions; Archived = retired.',
     'Known people (count)': 'Updates from linked People rows.', 'Open opportunities (count)': 'Updates from linked open Jobs.', 'Last checked': 'Last org-level review date.', 'Next check date': 'Next planned org review date.', 'Notes': 'Your context plus repair flags.'
   },
@@ -11736,7 +11777,7 @@ function applyAllRichTextHeaders() {
 var MANUAL_COLUMNS = {
   "Today's plan": [COLS.TODAY.STATUS, COLS.TODAY.NOTES],
   'Sectors': [COLS.SECTORS.SECTOR, COLS.SECTORS.SUBSECTOR, COLS.SECTORS.STATUS, COLS.SECTORS.NOTES],
-  'Organisations': [COLS.ORGS.NAME, COLS.ORGS.SECTOR, COLS.ORGS.SUBSECTOR, COLS.ORGS.TIER, COLS.ORGS.STATUS, COLS.ORGS.NOTES],
+  'Organisations': [COLS.ORGS.NAME, COLS.ORGS.SECTOR, COLS.ORGS.SUBSECTOR, COLS.ORGS.ORG_TYPE, COLS.ORGS.TIER, COLS.ORGS.STATUS, COLS.ORGS.NOTES],
   'People': [COLS.PEOPLE.NAME, COLS.PEOPLE.ORG, COLS.PEOPLE.ROLE, COLS.PEOPLE.REL_TYPE, COLS.PEOPLE.STAGE, COLS.PEOPLE.FOLLOW_UP_DATE, COLS.PEOPLE.REPLY_RECEIVED, COLS.PEOPLE.OUTREACH_DATE, COLS.PEOPLE.CONVERSATION_DATE, COLS.PEOPLE.NOTES],
   'Jobs': [COLS.JOBS.OPPORTUNITY, COLS.JOBS.ORG, COLS.JOBS.STATUS, COLS.JOBS.DEADLINE, COLS.JOBS.APPLIED_DATE, COLS.JOBS.RESPONSE, COLS.JOBS.OUTCOME, COLS.JOBS.NOTES],
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
@@ -11748,7 +11789,7 @@ var MANUAL_COLUMNS = {
 
 var COLUMN_WIDTHS = {
   'Sectors': { 2: 190, 4: 260, 5: 100, 6: 300 },
-  'Organisations': { 2: 220, 4: 170, 6: 220, 7: 70, 8: 120, 9: 135, 10: 165, 13: 300 },
+  'Organisations': { 2: 220, 4: 170, 6: 220, 7: 210, 8: 70, 9: 120, 10: 135, 11: 165, 14: 300 },
   'People': { 2: 190, 3: 200, 5: 170, 6: 175, 7: 185, 8: 125, 9: 120, 11: 125, 12: 135, 13: 300, 15: 125, 16: 260, 17: 260 },
   'Jobs': { 2: 260, 3: 200, 5: 120, 6: 145, 7: 125, 9: 220, 11: 130, 12: 170, 13: 320 },
   'Interactions': { 2: 120, 4: 190, 5: 200, 6: 150, 7: 135, 8: 320, 9: 160 },
@@ -12227,11 +12268,33 @@ function migrateOrganisationSectorIdSchema() {
       }
     }
     return [
-      row[0], row[1], sectorId, sector, subId, sub,
+      row[0], row[1], sectorId, sector, subId, sub, '',
       row[5], row[6], row[7], row[8], row[9], row[10], row[11]
     ];
   });
 
+  var rowsToClear = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(1, 1, 1, HEADERS.Organisations.length).setValues([HEADERS.Organisations]);
+  sheet.getRange(2, 1, rowsToClear, HEADERS.Organisations.length).clearContent().clearNote().clearDataValidations();
+  if (newRows.length) sheet.getRange(2, 1, newRows.length, HEADERS.Organisations.length).setValues(newRows);
+  return true;
+}
+
+function migrateOrganisationOrgTypeSchema() {
+  var sheet = getSheet('Organisations');
+  if (!sheet || sheet.getLastRow() < 1) return false;
+  var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), HEADERS.Organisations.length)).getValues()[0].map(String);
+  if (headers[COLS.ORGS.ORG_TYPE - 1] === 'Org type') return false;
+  if (!(headers[2] === 'Sector ID' && headers[4] === 'Sub-sector ID' && headers[6] === 'Tier' && headers[7] === 'Status')) return false;
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  var oldWidth = 13;
+  var oldRows = rowCount ? sheet.getRange(2, 1, rowCount, oldWidth).getValues() : [];
+  var newRows = oldRows.map(function (row) {
+    return [
+      row[0], row[1], row[2], row[3], row[4], row[5], '',
+      row[6], row[7], row[8], row[9], row[10], row[11], row[12]
+    ];
+  });
   var rowsToClear = Math.max(sheet.getMaxRows() - 1, 1);
   sheet.getRange(1, 1, 1, HEADERS.Organisations.length).setValues([HEADERS.Organisations]);
   sheet.getRange(2, 1, rowsToClear, HEADERS.Organisations.length).clearContent().clearNote().clearDataValidations();
@@ -12389,7 +12452,8 @@ function migrateInterviewTopicFamiliarityLabels() {
 function migrateSectorIdSchema() {
   var migratedSectors = migrateSectorsTwoIdSchema();
   var migratedOrgs = migrateOrganisationSectorIdSchema();
-  return migratedSectors || migratedOrgs;
+  var migratedOrgType = migrateOrganisationOrgTypeSchema();
+  return migratedSectors || migratedOrgs || migratedOrgType;
 }
 
 function migrateWorkbookSchema() {
@@ -12449,6 +12513,7 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
+      setDropdown(sheet.getRange(2, COLS.ORGS.ORG_TYPE, maxRow, 1), DROPDOWNS.ORG_TYPE);
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
@@ -13697,8 +13762,9 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Source tabs');
-  r = writeKV(sheet, r, 'Sectors', 'A Sector row names a sector you want to explore. A Sub-sector row names a specific part of that Sector. Renaming a Sector updates linked rows.');
-  r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector if known, optionally choose Sub-sector after Sector, set Tier and Status. Active organisations can suggest people-search or job-scan work.');
+  r = writeKV(sheet, r, 'Sectors', 'A Sector row names a broad area. A Sub-sector row names a specific part of that Sector. When you add a Sub-sector, the planner asks whether to market-map it.');
+  r = writeKV(sheet, r, 'Market mapping', 'Market-map tasks ask you to cover the sub-sector by Org type first: government, regulators, international organisations, think tanks, universities, nonprofits/foundations, consulting, startups, corporates, investors/ecosystem, or other. After the task is done, capture the organisations found.');
+  r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector/Sub-sector if known, choose Org type, then set Tier and Status. Active organisations can suggest people-search or job-scan work.');
   r = writeKV(sheet, r, 'Search Routines', 'Set Opportunity search and Network search habits separately. Each routine has its own frequency, next due date, and time estimate.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
   r = writeKV(sheet, r, 'People', 'Relationship source is how you found or know the person. Relationship step is the outreach/conversation state: Identified, outreach, reply, conversation, keep warm, or Closed.');
@@ -14045,10 +14111,12 @@ function dailyMaintenance() {
   // interleave with a user edit mid-cascade.
   return withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
+    var migratedWorkbook = migrateWorkbookSchema();
     var migratedJobs = migrateJobsDeadlineStatusSchema();
     var migratedInteractions = migrateInteractionsStatusSchema();
     var migratedInterviewLabels = migrateInterviewTopicFamiliarityLabels();
-    if (migratedJobs || migratedInteractions || migratedInterviewLabels) {
+    if (migratedWorkbook || migratedJobs || migratedInteractions || migratedInterviewLabels) {
+      applySheetDropdowns('Organisations');
       applySheetDropdowns('Jobs');
       applySheetDropdowns('Conversations');
       applySheetDropdowns('Interviews');
@@ -14190,7 +14258,7 @@ function buildMenu() {
       .addItem('Find people at this organisation', 'rowActionFindPeopleAtSelectedOrg')
       .addItem('Check this organisation for jobs', 'rowActionScanJobsAtSelectedOrg')
       .addSeparator()
-      .addItem('Ask whether to market-map this sub-sector', 'rowActionSearchOrgsForSubsector')
+      .addItem('Ask whether to market-map this sub-sector by org type', 'rowActionSearchOrgsForSubsector')
       .addItem('Add task to identify sub-sectors', 'rowActionBreakDownSelectedSector')
       .addSeparator()
       .addItem('Plan this job application', 'rowActionPrepSelectedJob')
