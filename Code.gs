@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.1';
+var SCRIPT_VERSION = 'v7.9.2';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -4713,7 +4713,7 @@ function fireSectorOnlyTask(sector) {
   if (!branch) return '';
   var linkedTaskText = 'Identify 2-4 sub-sectors within ' + branch.sector;
   return appendTodoOnceForWorkflow(linkedTaskText, 'Sector', branch.id, '', 'Sector selection', 'Not started', '', '20 min',
-    'Open Sectors from this task. Add one row per sub-sector: keep Sector = ' + branch.sector + ', fill Sub-sector with the specific sub-sector. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
+    'Go to the Sectors tab. Add one row per sub-sector: set Sector = ' + branch.sector + ', then fill Sub-sector with the specific area. Leave IDs blank; the planner fills them. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
 }
 
 // Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row.
@@ -4930,10 +4930,18 @@ function syncSingleSectorLinkedLabel(branch) {
       writeLinkedTo(taskSheet, t + 2, 'Sector', branch.id);
       var workflow = String(taskData[t][COLS.TODO.WORKFLOW - 1] || '');
       var desiredTask = '';
-      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'Identify 2-4 sub-sectors within ' + branch.sector;
+      var desiredNote = '';
+      if (branch.isSectorOnly && workflow === 'Sector selection') {
+        desiredTask = 'Identify 2-4 sub-sectors within ' + branch.sector;
+        desiredNote = 'Go to the Sectors tab. Add one row per sub-sector: set Sector = ' + branch.sector + ', then fill Sub-sector with the specific area. Leave IDs blank; the planner fills them. Each sub-sector can then become a market-map decision.';
+      }
       if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) desiredTask = 'Market map: ' + branch.sector + ' - ' + branch.subsector;
       if (desiredTask && String(taskData[t][COLS.TODO.TASK - 1]) !== desiredTask) {
         taskSheet.getRange(t + 2, COLS.TODO.TASK).setValue(desiredTask);
+        count++;
+      }
+      if (desiredNote && String(taskData[t][COLS.TODO.NOTES - 1]) !== desiredNote) {
+        taskSheet.getRange(t + 2, COLS.TODO.NOTES).setValue(desiredNote);
         count++;
       }
     }
@@ -7431,13 +7439,19 @@ function splitTodayNotes(notes) {
   var rest = tagMatch ? raw.slice(tagMatch[1].length) : raw;
   rest = rest.trim();
   var userNote = '';
+  var taskNote = '';
   if (/^Why:/i.test(rest)) {
     var pipeIdx = rest.indexOf(' | ');
     if (pipeIdx !== -1) userNote = rest.slice(pipeIdx + 3).trim();
+  } else if (/^Task note:/i.test(rest)) {
+    var taskNotePipeIdx = rest.indexOf(' | ');
+    var taskNotePart = taskNotePipeIdx === -1 ? rest : rest.slice(0, taskNotePipeIdx);
+    taskNote = taskNotePart.replace(/^Task note:\s*/i, '').trim();
+    if (taskNotePipeIdx !== -1) userNote = rest.slice(taskNotePipeIdx + 3).trim();
   } else if (rest) {
     userNote = rest; // no system "Why:" prefix at all — this is entirely user content
   }
-  return { tags: tags, userNote: userNote };
+  return { tags: tags, userNote: userNote, taskNote: taskNote };
 }
 
 // v7.4: no longer embeds the system "Why: <reason>" explanation — that
@@ -7445,10 +7459,25 @@ function splitTodayNotes(notes) {
 // is just tags + the user's own text. splitTodayNotes still strips a
 // leading "Why: ..." if one is found (old rows self-heal to the new
 // format on their first refresh after deploy — no migration needed).
-function composeTodayNotes(tags, userNote) {
+function composeTodayNotes(tags, userNote, taskNote) {
   var out = tags ? tags + ' ' : '';
-  out += userNote || '';
+  var visibleTaskNote = shortTodayTaskNote(taskNote);
+  if (visibleTaskNote) out += 'Task note: ' + visibleTaskNote;
+  if (userNote) out += (out ? ' | ' : '') + userNote;
   return out.trim();
+}
+
+function shortTodayTaskNote(taskNote) {
+  var note = String(taskNote || '').replace(/\s+/g, ' ').trim();
+  if (!note) return '';
+  return note.length > 140 ? note.slice(0, 137).replace(/\s+\S*$/, '') + '...' : note;
+}
+
+function composeTodayCellNote(item) {
+  var lines = ['Why: ' + (item.reason || 'selected for today')];
+  var taskNote = String(item.taskNote || '').trim();
+  if (taskNote) lines.push('Task note: ' + taskNote);
+  return lines.join('\n');
 }
 
 function appendTodayTag(tags, tag) {
@@ -7478,7 +7507,7 @@ function todayVisibleReasonTag(reason, treatment, status) {
 function addTodayRowTag(sheet, row, tag) {
   var cell = sheet.getRange(row, COLS.TODAY.NOTES);
   var split = splitTodayNotes(String(cell.getValue() || ''));
-  cell.setValue(composeTodayNotes(appendTodayTag(split.tags, tag), split.userNote));
+  cell.setValue(composeTodayNotes(appendTodayTag(split.tags, tag), split.userNote, split.taskNote));
 }
 
 function collectPreviousTodayState(sheet) {
@@ -7592,6 +7621,7 @@ function collectTaskPool(focus, tierLookup) {
       workflow: workflow, objType: objType,
       cls: cls, dueDate: dueDate, estMin: estMin,
       effort: String(data[i][COLS.TODO.EFFORT_TYPE - 1] || ''),
+      taskNote: String(data[i][COLS.TODO.NOTES - 1] || ''),
       source: String(data[i][COLS.TODO.SOURCE - 1] || ''),
       created: data[i][COLS.TODO.CREATED - 1],
       focusMatch: taskMatchesFocus(workflow, objType, focus),
@@ -7666,6 +7696,7 @@ function buildCurrentTaskStateForToday() {
       status: String(data[i][COLS.TODO.STATUS - 1] || ''),
       readyState: deriveReadyForTodayFromRow(data[i], ctx),
       task: String(data[i][COLS.TODO.TASK - 1] || ''),
+      taskNote: String(data[i][COLS.TODO.NOTES - 1] || ''),
       estMin: parseTimeEst(String(data[i][COLS.TODO.TIME_EST - 1] || '')),
       effort: String(data[i][COLS.TODO.EFFORT_TYPE - 1] || ''),
       cls: String(data[i][COLS.TODO.COMMITMENT_CLASS - 1] || '')
@@ -7710,7 +7741,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     if (usedIds[item.todoId]) return;
     usedIds[item.todoId] = true;
     var p = preserved(item.todoId);
-    commit.push({ todoId: item.todoId, task: item.task, estMin: item.estMin, effort: item.effort, reason: reason, tags: p.tags, userNote: p.userNote });
+    commit.push({ todoId: item.todoId, task: item.task, estMin: item.estMin, effort: item.effort, taskNote: item.taskNote || '', reason: reason, tags: p.tags, userNote: p.userNote });
     minutesUsed += item.estMin || 0;
     if (item.cls === 'Fixed' || item.cls === 'Blocking') requiredMin += item.estMin || 0;
     if (item.cls === 'Fixed' || item.cls === 'Blocking' || /^Keep-alive due/i.test(String(reason || ''))) {
@@ -7729,7 +7760,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     if (!rs.todoId || !(rs.locked || rs.pulled)) return;
     var current = currentStateById[rs.todoId];
     if (!preservedTodayRowStillExecutable(rs, current)) return;
-    var candidate = byId[rs.todoId] || { todoId: rs.todoId, task: current.task || rs.task, estMin: current.estMin || rs.estMin, effort: current.effort || rs.effort, cls: current.cls };
+    var candidate = byId[rs.todoId] || { todoId: rs.todoId, task: current.task || rs.task, taskNote: current.taskNote || '', estMin: current.estMin || rs.estMin, effort: current.effort || rs.effort, cls: current.cls };
     addCommit(candidate, rs.locked ? 'locked in place' : 'manually pulled into Today');
   });
 
@@ -7743,6 +7774,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     usedIds[rs.todoId] = true;
     commit.push({
       todoId: rs.todoId, task: rs.task, estMin: rs.estMin, effort: rs.effort,
+      taskNote: currentStateById[rs.todoId].taskNote || '',
       reason: rs.status === 'In progress' ? 'already in progress today' : 'already ' + rs.status.toLowerCase() + ' today',
       preserveStatus: rs.status, preserveActual: rs.actualMin,
       tags: rs.tags, userNote: rs.userNote
@@ -7772,7 +7804,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     })
     .forEach(function (p) {
       if (minutesUsed + p.estMin <= capacity) addCommit(p, reasonForStage('Keep-alive due', p));
-      else { var pv = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'keep-alive, ran out of capacity today', tags: pv.tags, userNote: pv.userNote }); }
+      else { var pv = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, taskNote: p.taskNote || '', reason: 'keep-alive, ran out of capacity today', tags: pv.tags, userNote: pv.userNote }); }
       usedIds[p.todoId] = true;
     });
 
@@ -7783,7 +7815,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     .forEach(function (p) {
       usedIds[p.todoId] = true;
       if (minutesUsed + p.estMin <= capacity) addCommit(p, reasonForStage('active pursuit' + (focus && focus !== 'Default' ? ', matches ' + focus + ' focus' : ''), p));
-      else { var pv2 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, near miss on capacity', tags: pv2.tags, userNote: pv2.userNote }); }
+      else { var pv2 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, taskNote: p.taskNote || '', reason: 'active pursuit, near miss on capacity', tags: pv2.tags, userNote: pv2.userNote }); }
     });
 
   // Stage 7 — pipeline-building work, capacity-gated like other flexible
@@ -7807,7 +7839,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     .forEach(function (p) {
       usedIds[p.todoId] = true;
       if (minutesUsed + p.estMin <= capacity) addCommit(p, 'active pursuit — outside today\'s focus, capacity available');
-      else { var pv5 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: 'active pursuit, outside focus, near miss on capacity', tags: pv5.tags, userNote: pv5.userNote }); }
+      else { var pv5 = preserved(p.todoId); options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, taskNote: p.taskNote || '', reason: 'active pursuit, outside focus, near miss on capacity', tags: pv5.tags, userNote: pv5.userNote }); }
     });
 
   // Stage 8.5 — Backlog fill: deadline-bearing and focus-relevant work
@@ -7839,7 +7871,7 @@ function stagedTodaySelection(previousState, availableMinutes, focus, energy) {
     var optionReason = p.estMin > availableMinutes
       ? 'does not fit today\'s available time'
       : 'not selected today — capacity or priority';
-    options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, reason: optionReason, tags: pv4.tags, userNote: pv4.userNote });
+    options.push({ todoId: p.todoId, task: p.task, estMin: p.estMin, effort: p.effort, taskNote: p.taskNote || '', reason: optionReason, tags: pv4.tags, userNote: pv4.userNote });
   });
   // Stage 10 — everything not in commit or options simply isn't written
   // to Today. It's still fully visible and workable from Tasks.
@@ -8037,8 +8069,8 @@ function writeTodayRow(sheet, row, slot, item, treatment) {
   sheet.getRange(row, COLS.TODAY.STATUS).setValue(status);
   if (item.preserveActual) sheet.getRange(row, COLS.TODAY.ACTUAL_MIN).setValue(item.preserveActual);
   var visibleTags = appendTodayTag(item.tags, todayVisibleReasonTag(item.reason, treatment, status));
-  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(visibleTags, item.userNote))
-    .setNote('Why: ' + (item.reason || 'selected for today'));
+  sheet.getRange(row, COLS.TODAY.NOTES).setValue(composeTodayNotes(visibleTags, item.userNote, item.taskNote))
+    .setNote(composeTodayCellNote(item));
 }
 
 // v7.4 §1.5: replaces the capacity-fit formula + done counter with a
