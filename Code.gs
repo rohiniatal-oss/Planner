@@ -11372,7 +11372,7 @@ var HEADER_GUIDANCE = {
   'Interview rounds': {
     'Round ID': 'Filled automatically.', 'Linked Job ID': 'Filled automatically.', 'Job (display)': 'Filled from linked Job.', 'Org (display)': 'Filled from linked Job.', 'Round': 'Round number.', 'Round type': 'Recruiter, case, panel, hiring manager, or other.',
     'Interview date': 'Scheduled date; creates or updates prep timing.', 'Status': 'To schedule / Scheduled / Completed / Reschedule / Cancelled.',
-    'Topic familiarity': 'Optional context; detailed prep is planned from Tasks.',
+    'Topic familiarity': 'Hidden legacy context; use Plan interview prep in Tasks.',
     'Official outcome': 'Waiting / Next round / Declined / Offer / Parked; resolves pending outcome prompts',
     'Expected response / follow-up date': 'Creates or updates interview follow-up timing.', 'Notes': 'Prep context, debrief, interviewers, and repair flags.'
   },
@@ -11437,7 +11437,7 @@ function userFacingHeaderHint(canonicalName, name, hint) {
   }
   if (canonicalName === 'Interviews') {
     if (name === 'Status') return 'To schedule / Scheduled / Completed / Reschedule / Cancelled';
-    if (name === 'Topic familiarity') return 'Optional context; detailed prep is planned from Tasks';
+    if (name === 'Topic familiarity') return 'Hidden legacy context; use Plan interview prep in Tasks';
     if (name === 'Official outcome') return 'Waiting / Next round / Declined / Offer / Parked';
     if (name === 'Expected response / follow-up date') return 'Creates or updates interview follow-up timing';
     if (name === 'Notes') return 'Prep context, debrief, interviewers, and repair flags';
@@ -11487,7 +11487,7 @@ var MANUAL_COLUMNS = {
   'Interactions': [COLS.INTERACTIONS.DATE, COLS.INTERACTIONS.PERSON, COLS.INTERACTIONS.TYPE, COLS.INTERACTIONS.STATUS, COLS.INTERACTIONS.NOTES, COLS.INTERACTIONS.OUTCOME],
   'Search Routines': [COLS.SEARCH.ROUTINE, COLS.SEARCH.SOURCES, COLS.SEARCH.FREQUENCY, COLS.SEARCH.NEXT_RUN, COLS.SEARCH.ENABLED, COLS.SEARCH.NOTES, COLS.SEARCH.TIME_EST],
   'To-do': [COLS.TODO.STATUS, COLS.TODO.DUE_DATE, COLS.TODO.TIME_EST, COLS.TODO.NOTES, COLS.TODO.PLAN_CATEGORY, COLS.TODO.PLAN_PATTERN, COLS.TODO.STEP, COLS.TODO.BLOCKER],
-  'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.DOMAIN_READINESS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
+  'Interview rounds': [COLS.ROUNDS.ROUND, COLS.ROUNDS.ROUND_TYPE, COLS.ROUNDS.INTERVIEW_DATE, COLS.ROUNDS.STATUS, COLS.ROUNDS.OFFICIAL_OUTCOME, COLS.ROUNDS.EXPECTED_RESPONSE, COLS.ROUNDS.NOTES],
   'Pending decisions': [COLS.DECISIONS.DECISION, COLS.DECISIONS.NOTES]
 };
 
@@ -11665,7 +11665,7 @@ function hiddenColumnsFor(canonicalName) {
   // formatting is already wired to it, just previously sitting unused on
   // a hidden column. The four appended helper columns stay visible too.
   if (canonicalName === 'Tasks') return [COLS.TODO.ID, COLS.TODO.OBJ_TYPE, COLS.TODO.OBJ_ID, COLS.TODO.ORG, COLS.TODO.WORKFLOW, COLS.TODO.PARENT_ID, COLS.TODO.CREATED, COLS.TODO.COMPLETED, COLS.TODO.SOURCE, COLS.TODO.LAST_EDITED, COLS.TODO.CLASS_CALC_AT, COLS.TODO.EFFORT_TYPE, COLS.TODO.PRIORITY_RANK, COLS.TODO.HAS_SUBTASKS, COLS.TODO.BLOCKED_BY_ID];
-  if (canonicalName === 'Interviews') return [COLS.ROUNDS.ID, COLS.ROUNDS.JOB_ID];
+  if (canonicalName === 'Interviews') return [COLS.ROUNDS.ID, COLS.ROUNDS.JOB_ID, COLS.ROUNDS.DOMAIN_READINESS];
   if (canonicalName === 'Sectors') return [COLS.SECTORS.ID, COLS.SECTORS.SUBSECTOR_ID];
   if (canonicalName === 'Decisions') return [COLS.DECISIONS.ID, COLS.DECISIONS.KEY, COLS.DECISIONS.TARGET_TYPE, COLS.DECISIONS.TARGET_ID, COLS.DECISIONS.WORKFLOW, COLS.DECISIONS.TODO_ID];
   return [];
@@ -12233,7 +12233,6 @@ function applySheetDropdowns(canonicalName) {
     case 'Interviews':
       setDropdown(sheet.getRange(2, COLS.ROUNDS.ROUND_TYPE, maxRow, 1), DROPDOWNS.ROUND_TYPE, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.ROUNDS.STATUS, maxRow, 1), DROPDOWNS.ROUND_STATUS, { allowInvalid: false });
-      setDropdown(sheet.getRange(2, COLS.ROUNDS.DOMAIN_READINESS, maxRow, 1), DROPDOWNS.DOMAIN_READINESS);
       setDropdown(sheet.getRange(2, COLS.ROUNDS.OFFICIAL_OUTCOME, maxRow, 1), DROPDOWNS.OFFICIAL_OUTCOME, { allowInvalid: false });
       break;
     case 'Today':
