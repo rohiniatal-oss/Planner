@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.9';
+var SCRIPT_VERSION = 'v7.9.0';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -8746,6 +8746,7 @@ var HOME_REFRESH_COL = 2;
 var HOME_LAST_REFRESHED_ROW = 39;
 
 var SETUP_PROP_KEY = 'setupProfile';
+var SETUP_DRAFT_PROP_KEY = 'setupDraftStartedAt';
 
 function getSetupProfile() {
   var raw = PropertiesService.getDocumentProperties().getProperty(SETUP_PROP_KEY);
@@ -8757,10 +8758,22 @@ function saveSetupProfile(profile) {
   PropertiesService.getDocumentProperties().setProperty(SETUP_PROP_KEY, JSON.stringify(profile));
 }
 
+function markSetupDraftStarted() {
+  PropertiesService.getDocumentProperties().setProperty(SETUP_DRAFT_PROP_KEY, new Date().toISOString());
+}
+
+function clearSetupDraftStarted() {
+  PropertiesService.getDocumentProperties().deleteProperty(SETUP_DRAFT_PROP_KEY);
+}
+
+function setupDraftStartedAt() {
+  return PropertiesService.getDocumentProperties().getProperty(SETUP_DRAFT_PROP_KEY) || '';
+}
+
 function setupLabel(profile) {
   if (!profile) return 'Not set up yet';
-  var goalLabels = { explore_space: 'Exploring a new space', in_process: 'Already in the process', skipped: 'Setup skipped' };
-  var entryLabels = { exploration: 'Exploration setup', sectors: 'Sectors to explore', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', routines: 'Search routines', not_sure: 'Not sure', skip: 'Skipped' };
+  var goalLabels = { explore_space: 'Exploring sectors', in_process: 'Things already underway', skipped: 'Setup skipped' };
+  var entryLabels = { exploration: 'Exploration setup', active_search: 'Current search setup', sectors: 'Sectors to explore', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', routines: 'Search routines', not_sure: 'Not sure', skip: 'Skipped' };
   return (goalLabels[profile.goal] || profile.goal || 'Setup') + (profile.entryPoint ? ' — ' + (entryLabels[profile.entryPoint] || profile.entryPoint) : '');
 }
 
@@ -9194,7 +9207,25 @@ function refreshHome() {
 
   // --- Onboarding card (§1.1) ---
   var profile = getSetupProfile();
-  if (!profile) {
+  var setupDraft = setupDraftStartedAt();
+  if (setupDraft) {
+    if (editReady) {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
+    } else {
+      sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).clearDataValidations().setValue('').setBackground('#FCE8E6');
+    }
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL + 1, 1, 4).merge()
+      .setValue(editReady ? 'Finish setup' : 'Enable popups, checkboxes & reminders to finish setup')
+      .setFontWeight('bold').setFontColor(editReady ? '#964219' : '#964219').setBackground(MANUAL_COLOR);
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
+    sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
+      .setValue('Dismiss')
+      .setNote('Clears the unsaved setup reminder. Existing planner data is not changed.')
+      .setFontSize(9).setFontColor('#7A7974');
+    sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
+      .setValue('Setup was opened but not saved. Existing planner data was not changed.')
+      .setFontWeight('bold').setFontColor('#964219').setBackground(MANUAL_COLOR).setWrap(true);
+  } else if (!profile) {
     if (editReady) {
       sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false).insertCheckboxes().setBackground(MANUAL_COLOR);
     } else {
@@ -9231,7 +9262,7 @@ function refreshHome() {
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground('#EAF4F5').setWrap(true);
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
-      .setValue('✓ Onboarding complete').setFontWeight('bold').setFontColor('#437A22');
+      .setValue('✓ Setup saved').setFontWeight('bold').setFontColor('#437A22');
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
       .setValue('Update starting facts')
@@ -9372,13 +9403,20 @@ function onEditHome(sheet, row, col, newVal) {
   if (row === HOME_ONBOARD_ROW && col === HOME_ONBOARD_CHECK_COL && newVal === true) {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL).setValue(false);
     var profile = getSetupProfile();
-    if (profile && shouldShowSetupCard(profile)) continueSetupChecklistFromHome();
+    if (setupDraftStartedAt()) runSetupInterview();
+    else if (profile && shouldShowSetupCard(profile)) continueSetupChecklistFromHome();
     else runSetupInterview();
     return;
   }
   if (row === HOME_ONBOARD_ROW && col === HOME_ONBOARD_RESET_CHECK_COL && newVal === true) {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false);
-    runSetupInterview();
+    if (setupDraftStartedAt()) {
+      clearSetupDraftStarted();
+      refreshHome();
+      SpreadsheetApp.getActiveSpreadsheet().toast('Unsaved setup reminder dismissed.', 'The Planner', 4);
+    } else {
+      runSetupInterview();
+    }
     return;
   }
   if (row === HOME_DECISIONS_ACTION_ROW && (col === 2 || col === 4 || col === 7)) {
@@ -9529,8 +9567,16 @@ function plannerDataRowCount() {
 }
 
 function runSetupInterview() {
+  markSetupDraftStarted();
+  try { refreshHome(); } catch (err) { Logger.log('runSetupInterview refreshHome: ' + err); }
   var html = HtmlService.createHtmlOutput(buildSetupHtml()).setWidth(640).setHeight(680).setTitle('Set up The Planner');
   SpreadsheetApp.getUi().showModalDialog(html, 'Set up The Planner');
+}
+
+function cancelSetupFromPopup() {
+  clearSetupDraftStarted();
+  refreshHome();
+  return true;
 }
 
 function buildSetupHtml() {
@@ -9562,19 +9608,21 @@ function buildSetupHtml() {
     '<p>' + setupIntro + '</p>' +
     '<div id="q1" class="step active">' +
     '  <p><strong>1 of 3</strong> Where are you starting from?</p>' +
-    '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Add sectors you want to explore and, if useful, regular opportunity/network searches.</small></button>' +
-    '  <button class="option" onclick="pickGoal(\'in_process\')">I am already in the process<small>You already have jobs, applications, interviews, people, or organisations.</small></button>' +
+    '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring sectors<small>Add sectors you want to understand and, if useful, regular opportunity/network searches.</small></button>' +
+    '  <button class="option" onclick="pickGoal(\'in_process\')">I already have things underway<small>Capture jobs, applications, interviews, people, organisations, and search routines together.</small></button>' +
     '</div>' +
     '<div id="q2" class="step">' +
     '  <p id="q2title"><strong>2 of 3</strong></p>' +
     '  <div id="q2_options"></div>' +
     '  <button class="back" onclick="showStep(1)">Back</button>' +
+    '  <button class="skip" type="button" onclick="cancelSetup()">Cancel</button>' +
     '</div>' +
     '<div id="q3" class="step">' +
     '  <p id="q3title"><strong>3 of 3</strong></p>' +
     '  <form id="captureForm"></form>' +
     '  <button id="submitButton" class="primary" type="button" onclick="submitSetup()">' + setupButton + '</button>' +
     '  <button id="backButton" class="back" type="button" onclick="showStep(2)">Back</button>' +
+    '  <button id="cancelButton" class="skip" type="button" onclick="cancelSetup()">Cancel</button>' +
     '  <button id="skipButton" class="skip" type="button" onclick="skipSetup()">Skip setup</button>' +
     '  <div id="status"></div>' +
     '</div>' +
@@ -9584,6 +9632,7 @@ function buildSetupHtml() {
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
     'var forms={' +
     ' exploration:{title:"Set up exploration",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"},{k:"oppSources",l:"Where should opportunity search look?",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Which networks should network search review?",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
+    ' active_search:{title:"Add what is already underway",fields:[{k:"jobsText",l:"Jobs you want to apply to",t:"textarea",p:"Organisation | Opportunity | Deadline | Notes"},{k:"applicationsText",l:"Applications already submitted",t:"textarea",p:"Organisation | Opportunity | Submitted date | Notes"},{k:"interviewsText",l:"Interviews scheduled or active",t:"textarea",p:"Organisation | Opportunity | Interview date | Round type | Round number"},{k:"peopleText",l:"People or conversations",t:"textarea",p:"Name | Organisation | Source/relationship | Notes"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
     ' sectors:{title:"Add sectors to explore",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
@@ -9594,11 +9643,12 @@ function buildSetupHtml() {
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
     'function updateSetupModeUi(){var btn=document.getElementById("submitButton");if(btn)btn.textContent="Save setup";}' +
-    'function setSetupBusy(on,msg){var status=document.getElementById("status"),btn=document.getElementById("submitButton"),back=document.getElementById("backButton"),skip=document.getElementById("skipButton");[btn,back,skip].forEach(function(b){if(b)b.disabled=!!on;});if(btn)btn.textContent=on?"Saving...":"Save setup";if(status&&msg)status.textContent=msg;}' +
+    'function setSetupBusy(on,msg){var status=document.getElementById("status"),btn=document.getElementById("submitButton"),back=document.getElementById("backButton"),cancel=document.getElementById("cancelButton"),skip=document.getElementById("skipButton");[btn,back,cancel,skip].forEach(function(b){if(b)b.disabled=!!on;});if(btn)btn.textContent=on?"Saving...":"Save setup";if(status&&msg)status.textContent=msg;}' +
     'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
     'function renderEntryOptions(title,opts){document.getElementById("q2title").innerHTML="<strong>2 of 3</strong> "+title;var c=document.getElementById("q2_options");c.innerHTML="";opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});showStep(2);}' +
     'function pickGoal(g){goal=g;' +
     ' if(g==="explore_space"){renderEntryOptions("What should we set up?",[["exploration","Set up exploration","Add sectors you want to explore and optional recurring searches."],["not_sure","I am not sure yet","Creates a light clarification task on Today."]]);return;}' +
+    ' if(g==="in_process"){renderEntryOptions("What should we capture?",[["active_search","Add current jobs, people, interviews, and routines","Add jobs, applications, interviews, people, organisations, and search routines in one save."],["not_sure","I am not sure yet","Creates a light clarification task on Today."]]);return;}' +
     ' var opts=[["interviews","I have interviews","Creates/links a Job and an Interview round."],' +
     ' ["applications","I have applications submitted","Creates a Submitted application and a response-check task from the real submitted date."],' +
     ' ["jobs","I have jobs I want to apply to","Creates a Not-started application and asks whether to start work."],' +
@@ -9624,6 +9674,7 @@ function buildSetupHtml() {
     ' google.script.run.withSuccessHandler(function(res){res=res||{};var status=document.getElementById("status");if(!res.ok){setSetupBusy(false,res.message||"Please check the form.");if(res.field&&document.getElementById("captureForm").elements[res.field])document.getElementById("captureForm").elements[res.field].focus();return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},900);})' +
     ' .withFailureHandler(function(err){setSetupBusy(false,"Could not save. Run Backup & repair > Repair Planner layout, then try again.");})' +
     ' .completeSetupFromPopup({goal:goal,entryPoint:entryPoint,fields:fields});}' +
+    'function cancelSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).cancelSetupFromPopup();}' +
     'function skipSetup(){google.script.run.withSuccessHandler(function(){google.script.host.close();}).completeSetupFromPopup({goal:"skipped",entryPoint:"skip",fields:{}});}' +
     '</script>';
 }
@@ -9632,12 +9683,33 @@ function splitInputList(value) {
   return String(value || '').split(/[,\n]/).map(function (x) { return x.trim(); }).filter(String);
 }
 
+function splitInputLines(value) {
+  return String(value || '').split(/\n/).map(function (x) { return x.trim(); }).filter(String);
+}
+
+function setupLineParts(line) {
+  return String(line || '').split('|').map(function (x) { return x.trim(); });
+}
+
+function hasActiveSearchInput(fields) {
+  return !!(splitInputLines(fields.jobsText).length ||
+    splitInputLines(fields.applicationsText).length ||
+    splitInputLines(fields.interviewsText).length ||
+    splitInputLines(fields.peopleText).length ||
+    splitInputList(fields.orgNames).length ||
+    splitInputList(fields.oppSources).length ||
+    splitInputList(fields.networkSources).length);
+}
+
 // v7.4: checklist items carry a `workflow` (matched against
 // COLS.TODO.WORKFLOW) so checkAutoCompletion can resolve them by identity
 // rather than exact display text — see checkAutoCompletion. `text` is
 // kept only as a legacy-text fallback for profiles saved before this
 // version, which never had a `workflow` field.
 function setupChecklistFor(entryPoint, fields) {
+  if (entryPoint === 'active_search') {
+    return [{ alwaysDone: true, label: 'Review Home and Today', text: 'Review Home and Today', tab: 'Home', notes: 'Setup captured the active items. Decisions and Tasks now own the next actions.' }];
+  }
   if (entryPoint === 'exploration') {
     fields = fields || {};
     var checklist = [];
@@ -9681,7 +9753,8 @@ function setupChecklistFor(entryPoint, fields) {
 }
 
 function processOnboardingCapture(goal, entryPoint, fields) {
-  if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped. You can run onboarding again from the menu any time.');
+  if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped. You can run Redo onboarding from the menu any time.');
+  if (entryPoint === 'active_search') return processActiveSearchOnboarding(fields);
   if (entryPoint === 'exploration') return processExplorationOnboarding(fields);
   if (entryPoint === 'sectors') return processSectorOnboarding(fields);
   if (entryPoint === 'interviews') return processInterviewOnboarding(fields);
@@ -9696,6 +9769,9 @@ function processOnboardingCapture(goal, entryPoint, fields) {
 function validateOnboardingPayload(goal, entryPoint, fields) {
   fields = fields || {};
   if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped.');
+  if (entryPoint === 'active_search' && !hasActiveSearchInput(fields)) {
+    return failResult('Add at least one job, application, interview, person, organisation, or search routine.', 'jobsText', 'MISSING_ACTIVE_SETUP');
+  }
   if (entryPoint === 'applications') {
     if (!fields.org) return failResult('I need the organisation name to capture an application.', 'org', 'MISSING_ORG');
     if (!fields.jobTitle) return failResult('I need at least a job title to capture an application.', 'jobTitle', 'MISSING_JOB_TITLE');
@@ -9712,7 +9788,7 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
   if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   }
-  if (entryPoint === 'routines' || entryPoint === 'exploration') {
+  if (entryPoint === 'routines' || entryPoint === 'exploration' || entryPoint === 'active_search') {
     var hasOpp = !!splitInputList(fields.oppSources).length;
     var hasNetwork = !!splitInputList(fields.networkSources).length;
     var hasLegacy = !!splitInputList(fields.sources).length;
@@ -9769,6 +9845,77 @@ function processSearchRoutineOnboarding(fields) {
 // Sector onboarding uses the exact same upsertSectorBranch/
 // fireSectorOnlyTask path as manual sheet entry — this is what keeps
 // popup capture and direct typing behaviorally identical.
+function processActiveSearchOnboarding(fields) {
+  fields = fields || {};
+  var counts = { jobs: 0, applications: 0, interviews: 0, people: 0, orgs: 0, routines: 0 };
+  var warnings = [];
+  splitInputLines(fields.jobsText).forEach(function (line, idx) {
+    var p = setupLineParts(line);
+    if (!p[0] || !p[1]) {
+      warnings.push('Skipped job line ' + (idx + 1) + ': use Organisation | Opportunity | Deadline | Notes.');
+      return;
+    }
+    var res = processJobOnboarding({ org: p[0], jobTitle: p[1], deadline: p[2] || '', urlNotes: p[3] || '' });
+    if (res.ok) counts.jobs++;
+    else warnings.push('Skipped job line ' + (idx + 1) + ': ' + res.message);
+  });
+  splitInputLines(fields.applicationsText).forEach(function (line, idx) {
+    var p = setupLineParts(line);
+    if (!p[0] || !p[1]) {
+      warnings.push('Skipped application line ' + (idx + 1) + ': use Organisation | Opportunity | Submitted date | Notes.');
+      return;
+    }
+    var res = processApplicationOnboarding({ org: p[0], jobTitle: p[1], appliedDate: p[2] || '', urlNotes: p[3] || '' });
+    if (res.ok) counts.applications++;
+    else warnings.push('Skipped application line ' + (idx + 1) + ': ' + res.message);
+  });
+  splitInputLines(fields.interviewsText).forEach(function (line, idx) {
+    var p = setupLineParts(line);
+    if (!p[0] || !p[1]) {
+      warnings.push('Skipped interview line ' + (idx + 1) + ': use Organisation | Opportunity | Interview date | Round type | Round number.');
+      return;
+    }
+    var roundType = DROPDOWNS.ROUND_TYPE.indexOf(p[3]) !== -1 ? p[3] : (p[3] ? 'Other' : '');
+    var res = processInterviewOnboarding({ org: p[0], jobTitle: p[1], interviewDate: p[2] || '', roundType: roundType, roundNumber: p[4] || '1' });
+    if (res.ok) counts.interviews++;
+    else warnings.push('Skipped interview line ' + (idx + 1) + ': ' + res.message);
+  });
+  splitInputLines(fields.peopleText).forEach(function (line, idx) {
+    var p = setupLineParts(line);
+    if (!p[0]) {
+      warnings.push('Skipped person line ' + (idx + 1) + ': use Name | Organisation | Source/relationship | Notes.');
+      return;
+    }
+    var relType = DROPDOWNS.PERSON_REL_TYPE.indexOf(p[2]) !== -1 ? p[2] : '';
+    var res = processPeopleOnboarding({ name: p[0], org: p[1] || '', relType: relType, notes: p[3] || '' });
+    if (res.ok) counts.people++;
+    else warnings.push('Skipped person line ' + (idx + 1) + ': ' + res.message);
+  });
+  if (splitInputList(fields.orgNames).length) {
+    var orgRes = processOrgOnboarding({ orgNames: fields.orgNames, status: 'Mapped', tier: 'B' });
+    if (orgRes.ok) counts.orgs = splitInputList(fields.orgNames).length;
+    else warnings.push('Skipped organisations: ' + orgRes.message);
+  }
+  if (splitInputList(fields.oppSources).length || splitInputList(fields.networkSources).length) {
+    var routineRes = processSearchRoutineOnboarding(fields);
+    if (routineRes.ok) {
+      if (splitInputList(fields.oppSources).length) counts.routines++;
+      if (splitInputList(fields.networkSources).length) counts.routines++;
+    } else {
+      warnings.push('Skipped search routines: ' + routineRes.message);
+    }
+  }
+  var parts = [];
+  if (counts.jobs) parts.push(counts.jobs + ' job' + (counts.jobs === 1 ? '' : 's'));
+  if (counts.applications) parts.push(counts.applications + ' submitted application' + (counts.applications === 1 ? '' : 's'));
+  if (counts.interviews) parts.push(counts.interviews + ' interview' + (counts.interviews === 1 ? '' : 's'));
+  if (counts.people) parts.push(counts.people + ' ' + (counts.people === 1 ? 'person' : 'people'));
+  if (counts.orgs) parts.push(counts.orgs + ' organisation' + (counts.orgs === 1 ? '' : 's'));
+  if (counts.routines) parts.push(counts.routines + ' search routine' + (counts.routines === 1 ? '' : 's'));
+  if (!parts.length) return failResult(warnings.length ? warnings.join(' ') : 'Nothing valid was found to save.', 'jobsText', 'NO_VALID_ACTIVE_SETUP');
+  return okResult('Saved current setup: ' + parts.join(', ') + '.', warnings.length ? { warnings: warnings.slice(0, 4) } : {});
+}
+
 function processExplorationOnboarding(fields) {
   fields = fields || {};
   var sectors = splitInputList(fields.sectorNames);
@@ -10155,6 +10302,7 @@ function completeSetupFromPopup(payload) {
       applyAllRichTextHeaders();
       setupTasksTabExtras();
       populateToday();
+      clearSetupDraftStarted();
       refreshHome();
       colorCodeManualFields();
       applyStatusColorCoding();
@@ -13442,10 +13590,11 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here');
   r = writeKV(sheet, r, '1. Enable actions and reminders', 'Run The Planner > Setup & automation > Enable popups, checkboxes & reminders. This is the one-time step that lets popups, dropdowns, checkboxes, and scheduled reminders respond.');
-  r = writeKV(sheet, r, '2. Redo onboarding when needed', 'Use The Planner > Redo onboarding to add or revise starting facts. Existing planner data is kept.');
+  r = writeKV(sheet, r, '2. Redo onboarding when needed', 'Use The Planner > Redo onboarding to add or revise starting facts. Existing planner data is kept. If you already have jobs, applications, interviews, people, organisations, and search routines underway, capture them together in one setup run.');
   r = writeKV(sheet, r, '3. Start from Home', 'Home is the cockpit: decide, capture what changed, check the month shape, then move into Today.');
   r = writeKV(sheet, r, '4. Work from Today', 'Today is the execution surface. It pulls ready work from Tasks and preserves same-day notes, Done/Blocked status, and locked or pulled rows.');
   r = writeKV(sheet, r, 'Starting fresh', 'Only use The Planner > Backup & repair > Start fresh when you really want to clear planner data. It creates a full backup copy first.');
+  r = writeKV(sheet, r, 'If setup is closed early', 'Home shows Finish setup until you save, cancel, or dismiss the unsaved setup reminder. Existing planner data is not changed.');
   r++;
 
   r = writeH2(sheet, r, 'Daily routine');
