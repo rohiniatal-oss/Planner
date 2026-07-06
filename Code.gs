@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.0';
+var SCRIPT_VERSION = 'v7.9.1';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -9632,7 +9632,7 @@ function buildSetupHtml() {
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
     'var forms={' +
     ' exploration:{title:"Set up exploration",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"},{k:"oppSources",l:"Where should opportunity search look?",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Which networks should network search review?",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
-    ' active_search:{title:"Add what is already underway",fields:[{k:"jobsText",l:"Jobs you want to apply to",t:"textarea",p:"Organisation | Opportunity | Deadline | Notes"},{k:"applicationsText",l:"Applications already submitted",t:"textarea",p:"Organisation | Opportunity | Submitted date | Notes"},{k:"interviewsText",l:"Interviews scheduled or active",t:"textarea",p:"Organisation | Opportunity | Interview date | Round type | Round number"},{k:"peopleText",l:"People or conversations",t:"textarea",p:"Name | Organisation | Source/relationship | Notes"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
+    ' active_search:{title:"Add what is already underway - fill only what applies",fields:[{k:"jobOrg",l:"Job to apply to - Organisation",t:"text"},{k:"jobTitle",l:"Job to apply to - Role / opportunity",t:"text"},{k:"jobDeadline",l:"Job to apply to - Deadline, if any",t:"date"},{k:"jobNotes",l:"Job to apply to - URL / notes",t:"textarea"},{k:"appOrg",l:"Submitted application - Organisation",t:"text"},{k:"appJobTitle",l:"Submitted application - Role / opportunity",t:"text"},{k:"appSubmittedDate",l:"Submitted application - Submitted date",t:"date"},{k:"appNotes",l:"Submitted application - URL / notes",t:"textarea"},{k:"interviewOrg",l:"Interview - Organisation",t:"text"},{k:"interviewJobTitle",l:"Interview - Role / opportunity",t:"text"},{k:"interviewDate",l:"Interview - Date",t:"date"},{k:"interviewRoundType",l:"Interview - Round type",t:"select",o:roundTypes,blank:true},{k:"interviewRoundNumber",l:"Interview - Round number",t:"text",p:"1"},{k:"personName",l:"Person - Name",t:"text"},{k:"personOrg",l:"Person - Organisation, if relevant",t:"text"},{k:"personRole",l:"Person - Role/title, if known",t:"text"},{k:"personRelType",l:"Person - Source / relationship",t:"select",o:relTypes,blank:true},{k:"personNotes",l:"Person - Notes/source",t:"textarea"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
     ' sectors:{title:"Add sectors to explore",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
@@ -9687,15 +9687,23 @@ function splitInputLines(value) {
   return String(value || '').split(/\n/).map(function (x) { return x.trim(); }).filter(String);
 }
 
-function setupLineParts(line) {
-  return String(line || '').split('|').map(function (x) { return x.trim(); });
+function hasAnyFieldValue(fields, keys) {
+  fields = fields || {};
+  return (keys || []).some(function (key) { return String(fields[key] || '').trim(); });
+}
+
+function orgNamesLookLikeStructuredRecords(value) {
+  return splitInputLines(value).some(function (line) { return line.indexOf('|') !== -1; });
 }
 
 function hasActiveSearchInput(fields) {
-  return !!(splitInputLines(fields.jobsText).length ||
-    splitInputLines(fields.applicationsText).length ||
-    splitInputLines(fields.interviewsText).length ||
-    splitInputLines(fields.peopleText).length ||
+  fields = fields || {};
+  return !!(hasAnyFieldValue(fields, [
+    'jobOrg', 'jobTitle', 'jobDeadline', 'jobNotes',
+    'appOrg', 'appJobTitle', 'appSubmittedDate', 'appNotes',
+    'interviewOrg', 'interviewJobTitle', 'interviewDate', 'interviewRoundType', 'interviewRoundNumber',
+    'personName', 'personOrg', 'personRole', 'personRelType', 'personNotes'
+  ]) ||
     splitInputList(fields.orgNames).length ||
     splitInputList(fields.oppSources).length ||
     splitInputList(fields.networkSources).length);
@@ -9770,7 +9778,27 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
   fields = fields || {};
   if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped.');
   if (entryPoint === 'active_search' && !hasActiveSearchInput(fields)) {
-    return failResult('Add at least one job, application, interview, person, organisation, or search routine.', 'jobsText', 'MISSING_ACTIVE_SETUP');
+    return failResult('Add at least one job, application, interview, person, organisation, or search routine.', 'jobOrg', 'MISSING_ACTIVE_SETUP');
+  }
+  if (entryPoint === 'active_search') {
+    if (orgNamesLookLikeStructuredRecords(fields.orgNames)) {
+      return failResult('Organisation names should be names only. Put roles/opportunities in the matching job, application, or interview field.', 'orgNames', 'ORG_NAMES_LOOK_STRUCTURED');
+    }
+    if (hasAnyFieldValue(fields, ['jobOrg', 'jobTitle', 'jobDeadline', 'jobNotes'])) {
+      if (!fields.jobOrg) return failResult('Add the organisation for the job you want to apply to.', 'jobOrg', 'MISSING_ORG');
+      if (!fields.jobTitle) return failResult('Add the role / opportunity for the job you want to apply to.', 'jobTitle', 'MISSING_JOB_TITLE');
+    }
+    if (hasAnyFieldValue(fields, ['appOrg', 'appJobTitle', 'appSubmittedDate', 'appNotes'])) {
+      if (!fields.appOrg) return failResult('Add the organisation for the submitted application.', 'appOrg', 'MISSING_ORG');
+      if (!fields.appJobTitle) return failResult('Add the role / opportunity for the submitted application.', 'appJobTitle', 'MISSING_JOB_TITLE');
+    }
+    if (hasAnyFieldValue(fields, ['interviewOrg', 'interviewJobTitle', 'interviewDate', 'interviewRoundType', 'interviewRoundNumber'])) {
+      if (!fields.interviewOrg) return failResult('Add the organisation for the interview.', 'interviewOrg', 'MISSING_ORG');
+      if (!fields.interviewJobTitle) return failResult('Add the role / opportunity for the interview.', 'interviewJobTitle', 'MISSING_JOB_TITLE');
+    }
+    if (hasAnyFieldValue(fields, ['personName', 'personOrg', 'personRole', 'personRelType', 'personNotes']) && !fields.personName) {
+      return failResult('Add the person name, or clear the person section.', 'personName', 'MISSING_PERSON');
+    }
   }
   if (entryPoint === 'applications') {
     if (!fields.org) return failResult('I need the organisation name to capture an application.', 'org', 'MISSING_ORG');
@@ -9787,6 +9815,9 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
   if (entryPoint === 'people' && !fields.name) return failResult('I need at least a name to capture this person.', 'name', 'MISSING_PERSON');
   if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
+  }
+  if (entryPoint === 'orgs' && orgNamesLookLikeStructuredRecords(fields.orgNames)) {
+    return failResult('Organisation names should be names only. Put roles/opportunities in Add/update job or interview.', 'orgNames', 'ORG_NAMES_LOOK_STRUCTURED');
   }
   if (entryPoint === 'routines' || entryPoint === 'exploration' || entryPoint === 'active_search') {
     var hasOpp = !!splitInputList(fields.oppSources).length;
@@ -9842,55 +9873,33 @@ function processSearchRoutineOnboarding(fields) {
   return created ? okResult('Created ' + parts.join(' and ') + ' routine' + (created === 1 ? '' : 's') + '. The first task is due now.') : failResult('Add at least one opportunity source or network to check.', 'oppSources', 'MISSING_SOURCES');
 }
 
-// Sector onboarding uses the exact same upsertSectorBranch/
 // fireSectorOnlyTask path as manual sheet entry — this is what keeps
-// popup capture and direct typing behaviorally identical.
+// Current-search setup uses the same processors as the normal Add/update
+// popups. That keeps setup and ongoing capture behaviorally aligned.
 function processActiveSearchOnboarding(fields) {
   fields = fields || {};
   var counts = { jobs: 0, applications: 0, interviews: 0, people: 0, orgs: 0, routines: 0 };
   var warnings = [];
-  splitInputLines(fields.jobsText).forEach(function (line, idx) {
-    var p = setupLineParts(line);
-    if (!p[0] || !p[1]) {
-      warnings.push('Skipped job line ' + (idx + 1) + ': use Organisation | Opportunity | Deadline | Notes.');
-      return;
-    }
-    var res = processJobOnboarding({ org: p[0], jobTitle: p[1], deadline: p[2] || '', urlNotes: p[3] || '' });
-    if (res.ok) counts.jobs++;
-    else warnings.push('Skipped job line ' + (idx + 1) + ': ' + res.message);
-  });
-  splitInputLines(fields.applicationsText).forEach(function (line, idx) {
-    var p = setupLineParts(line);
-    if (!p[0] || !p[1]) {
-      warnings.push('Skipped application line ' + (idx + 1) + ': use Organisation | Opportunity | Submitted date | Notes.');
-      return;
-    }
-    var res = processApplicationOnboarding({ org: p[0], jobTitle: p[1], appliedDate: p[2] || '', urlNotes: p[3] || '' });
-    if (res.ok) counts.applications++;
-    else warnings.push('Skipped application line ' + (idx + 1) + ': ' + res.message);
-  });
-  splitInputLines(fields.interviewsText).forEach(function (line, idx) {
-    var p = setupLineParts(line);
-    if (!p[0] || !p[1]) {
-      warnings.push('Skipped interview line ' + (idx + 1) + ': use Organisation | Opportunity | Interview date | Round type | Round number.');
-      return;
-    }
-    var roundType = DROPDOWNS.ROUND_TYPE.indexOf(p[3]) !== -1 ? p[3] : (p[3] ? 'Other' : '');
-    var res = processInterviewOnboarding({ org: p[0], jobTitle: p[1], interviewDate: p[2] || '', roundType: roundType, roundNumber: p[4] || '1' });
-    if (res.ok) counts.interviews++;
-    else warnings.push('Skipped interview line ' + (idx + 1) + ': ' + res.message);
-  });
-  splitInputLines(fields.peopleText).forEach(function (line, idx) {
-    var p = setupLineParts(line);
-    if (!p[0]) {
-      warnings.push('Skipped person line ' + (idx + 1) + ': use Name | Organisation | Source/relationship | Notes.');
-      return;
-    }
-    var relType = DROPDOWNS.PERSON_REL_TYPE.indexOf(p[2]) !== -1 ? p[2] : '';
-    var res = processPeopleOnboarding({ name: p[0], org: p[1] || '', relType: relType, notes: p[3] || '' });
-    if (res.ok) counts.people++;
-    else warnings.push('Skipped person line ' + (idx + 1) + ': ' + res.message);
-  });
+  if (hasAnyFieldValue(fields, ['jobOrg', 'jobTitle', 'jobDeadline', 'jobNotes'])) {
+    var structuredJob = processJobOnboarding({ org: fields.jobOrg, jobTitle: fields.jobTitle, deadline: fields.jobDeadline || '', urlNotes: fields.jobNotes || '' });
+    if (structuredJob.ok) counts.jobs++;
+    else warnings.push('Skipped job: ' + structuredJob.message);
+  }
+  if (hasAnyFieldValue(fields, ['appOrg', 'appJobTitle', 'appSubmittedDate', 'appNotes'])) {
+    var structuredApp = processApplicationOnboarding({ org: fields.appOrg, jobTitle: fields.appJobTitle, appliedDate: fields.appSubmittedDate || '', urlNotes: fields.appNotes || '' });
+    if (structuredApp.ok) counts.applications++;
+    else warnings.push('Skipped submitted application: ' + structuredApp.message);
+  }
+  if (hasAnyFieldValue(fields, ['interviewOrg', 'interviewJobTitle', 'interviewDate', 'interviewRoundType', 'interviewRoundNumber'])) {
+    var structuredInterview = processInterviewOnboarding({ org: fields.interviewOrg, jobTitle: fields.interviewJobTitle, interviewDate: fields.interviewDate || '', roundType: fields.interviewRoundType || '', roundNumber: fields.interviewRoundNumber || '1' });
+    if (structuredInterview.ok) counts.interviews++;
+    else warnings.push('Skipped interview: ' + structuredInterview.message);
+  }
+  if (hasAnyFieldValue(fields, ['personName', 'personOrg', 'personRole', 'personRelType', 'personNotes'])) {
+    var structuredPerson = processPeopleOnboarding({ name: fields.personName, org: fields.personOrg || '', role: fields.personRole || '', relType: fields.personRelType || '', notes: fields.personNotes || '' });
+    if (structuredPerson.ok) counts.people++;
+    else warnings.push('Skipped person: ' + structuredPerson.message);
+  }
   if (splitInputList(fields.orgNames).length) {
     var orgRes = processOrgOnboarding({ orgNames: fields.orgNames, status: 'Mapped', tier: 'B' });
     if (orgRes.ok) counts.orgs = splitInputList(fields.orgNames).length;
@@ -9912,10 +9921,11 @@ function processActiveSearchOnboarding(fields) {
   if (counts.people) parts.push(counts.people + ' ' + (counts.people === 1 ? 'person' : 'people'));
   if (counts.orgs) parts.push(counts.orgs + ' organisation' + (counts.orgs === 1 ? '' : 's'));
   if (counts.routines) parts.push(counts.routines + ' search routine' + (counts.routines === 1 ? '' : 's'));
-  if (!parts.length) return failResult(warnings.length ? warnings.join(' ') : 'Nothing valid was found to save.', 'jobsText', 'NO_VALID_ACTIVE_SETUP');
+  if (!parts.length) return failResult(warnings.length ? warnings.join(' ') : 'Nothing valid was found to save.', 'jobOrg', 'NO_VALID_ACTIVE_SETUP');
   return okResult('Saved current setup: ' + parts.join(', ') + '.', warnings.length ? { warnings: warnings.slice(0, 4) } : {});
 }
 
+// Sector onboarding uses the same branch helper as manual Sectors entry.
 function processExplorationOnboarding(fields) {
   fields = fields || {};
   var sectors = splitInputList(fields.sectorNames);
@@ -10048,6 +10058,9 @@ function processPeopleOnboarding(fields) {
 // ever creates the two Pending Decisions via createNameOnlyOrg ->
 // fireOrgActiveCascade — never a direct search Task.
 function processOrgOnboarding(fields) {
+  if (orgNamesLookLikeStructuredRecords(fields.orgNames)) {
+    return failResult('Organisation names should be names only. Put roles/opportunities in Add/update job or interview.', 'orgNames', 'ORG_NAMES_LOOK_STRUCTURED');
+  }
   var names = splitInputList(fields.orgNames);
   if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
@@ -11002,6 +11015,9 @@ function processCapturePayload(captureType, fields) {
   if (captureType === 'Find organisations') {
     var namesNew = splitInputList(fields.orgNames);
     if (!namesNew.length) return failResult('I need at least one organisation name.', 'orgNames', 'MISSING_ORG');
+    if (orgNamesLookLikeStructuredRecords(fields.orgNames)) {
+      return failResult('Organisation names should be names only. Put roles/opportunities in Add/update job or interview.', 'orgNames', 'ORG_NAMES_LOOK_STRUCTURED');
+    }
     if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
     var createdFound = 0, reusedFound = 0;
     namesNew.forEach(function (name) {
@@ -13590,7 +13606,7 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Start here');
   r = writeKV(sheet, r, '1. Enable actions and reminders', 'Run The Planner > Setup & automation > Enable popups, checkboxes & reminders. This is the one-time step that lets popups, dropdowns, checkboxes, and scheduled reminders respond.');
-  r = writeKV(sheet, r, '2. Redo onboarding when needed', 'Use The Planner > Redo onboarding to add or revise starting facts. Existing planner data is kept. If you already have jobs, applications, interviews, people, organisations, and search routines underway, capture them together in one setup run.');
+  r = writeKV(sheet, r, '2. Redo onboarding when needed', 'Use The Planner > Redo onboarding to add or revise starting facts. Existing planner data is kept. If you already have jobs, applications, interviews, people, organisations, and search routines underway, fill only the sections that apply; each section writes to its matching tab.');
   r = writeKV(sheet, r, '3. Start from Home', 'Home is the cockpit: decide, capture what changed, check the month shape, then move into Today.');
   r = writeKV(sheet, r, '4. Work from Today', 'Today is the execution surface. It pulls ready work from Tasks and preserves same-day notes, Done/Blocked status, and locked or pulled rows.');
   r = writeKV(sheet, r, 'Starting fresh', 'Only use The Planner > Backup & repair > Start fresh when you really want to clear planner data. It creates a full backup copy first.');
