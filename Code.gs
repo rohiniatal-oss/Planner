@@ -278,12 +278,13 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.4';
+var SCRIPT_VERSION = 'v7.9.5';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
 var ORG_ACTIVE_REVIEW_DAYS = 14;
 var ORG_DORMANT_REVIEW_DAYS = 42;
+var CUSTOM_ORG_TYPES_PROP_KEY = 'customOrgTypes';
 var WORKFLOW_OPPORTUNITY_SEARCH = 'Opportunity search';
 var WORKFLOW_NETWORK_SEARCH = 'Network search';
 
@@ -667,12 +668,104 @@ function normalizeOrgType(value) {
   return v;
 }
 
+function baseOrgTypeOptions() {
+  return DROPDOWNS.ORG_TYPE.filter(function (value) { return value !== 'Other'; });
+}
+
+function isBaseOrgType(value) {
+  var key = normalizeKeyPart(value);
+  return baseOrgTypeOptions().some(function (base) { return normalizeKeyPart(base) === key; });
+}
+
+function dedupeOrgTypeList(values) {
+  var out = [];
+  var seen = {};
+  (values || []).forEach(function (value) {
+    var normalized = normalizeOrgType(value);
+    var key = normalizeKeyPart(normalized);
+    if (!key || key === normalizeKeyPart('Other') || seen[key]) return;
+    seen[key] = true;
+    out.push(normalized);
+  });
+  return out;
+}
+
+function readCustomOrgTypesFromProperties() {
+  var raw = '';
+  try { raw = PropertiesService.getDocumentProperties().getProperty(CUSTOM_ORG_TYPES_PROP_KEY) || ''; }
+  catch (err) { logBestEffortFailure('Read custom org types', err); }
+  if (!raw) return [];
+  try {
+    var parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? dedupeOrgTypeList(parsed) : [];
+  } catch (err2) {
+    logBestEffortFailure('Parse custom org types', err2);
+    return [];
+  }
+}
+
+function collectCustomOrgTypesFromOrganisations() {
+  var sheet = getSheet('Organisations');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  if (String(sheet.getRange(1, COLS.ORGS.ORG_TYPE).getValue() || '') !== 'Org type') return [];
+  var values = sheet.getRange(2, COLS.ORGS.ORG_TYPE, sheet.getLastRow() - 1, 1).getValues()
+    .map(function (row) { return row[0]; });
+  return dedupeOrgTypeList(values).filter(function (value) { return !isBaseOrgType(value); });
+}
+
+function customOrgTypeOptions() {
+  return dedupeOrgTypeList(readCustomOrgTypesFromProperties().concat(collectCustomOrgTypesFromOrganisations()))
+    .filter(function (value) { return !isBaseOrgType(value); })
+    .sort(function (a, b) { return normalizeKeyPart(a) < normalizeKeyPart(b) ? -1 : (normalizeKeyPart(a) > normalizeKeyPart(b) ? 1 : 0); });
+}
+
+function orgTypeDropdownValues() {
+  return baseOrgTypeOptions().concat(customOrgTypeOptions()).concat(['Other']);
+}
+
+function refreshOrganisationOrgTypeDropdowns() {
+  var sheet = getSheet('Organisations');
+  if (!sheet) return;
+  if (String(sheet.getRange(1, COLS.ORGS.ORG_TYPE).getValue() || '') !== 'Org type') return;
+  var maxRow = Math.max(sheet.getMaxRows() - 1, 40);
+  setDropdown(sheet.getRange(2, COLS.ORGS.ORG_TYPE, maxRow, 1), orgTypeDropdownValues());
+}
+
+function rememberCustomOrgType(value) {
+  var normalized = normalizeOrgType(value);
+  var key = normalizeKeyPart(normalized);
+  if (!key || key === normalizeKeyPart('Other') || isBaseOrgType(normalized)) return false;
+  var existing = readCustomOrgTypesFromProperties();
+  var exists = existing.some(function (item) { return normalizeKeyPart(item) === key; });
+  if (exists) return false;
+  existing.push(normalized);
+  existing = dedupeOrgTypeList(existing);
+  try {
+    PropertiesService.getDocumentProperties().setProperty(CUSTOM_ORG_TYPES_PROP_KEY, JSON.stringify(existing));
+    refreshOrganisationOrgTypeDropdowns();
+    return true;
+  } catch (err) {
+    logBestEffortFailure('Remember custom org type', err);
+    return false;
+  }
+}
+
 function orgTypeFromFields(fields) {
   fields = fields || {};
   var selected = String(fields.orgType || '').trim();
   var custom = String(fields.orgTypeOther || '').trim();
-  if (selected === 'Other' && custom) return custom;
-  return normalizeOrgType(selected);
+  var value = selected === 'Other' && custom ? custom : selected;
+  value = normalizeOrgType(value);
+  if (value) rememberCustomOrgType(value);
+  return value;
+}
+
+function validateOrgTypeFields(fields) {
+  fields = fields || {};
+  if (String(fields.orgType || '').trim() === 'Other' && !String(fields.orgTypeOther || '').trim()) {
+    return failResult('Add the new Org type, or choose an existing type.', 'orgTypeOther', 'MISSING_ORG_TYPE');
+  }
+  return null;
 }
 
 function normalizeOrgStatus(value) {
@@ -1021,10 +1114,12 @@ function createNameOnlyOrg(orgName, opts) {
   if (!sheet) return null;
   var id = nextId(sheet, COLS.ORGS.ID, 'ORG');
   var status = normalizeOrgStatus(opts.status);
+  var orgType = normalizeOrgType(opts.orgType || '');
+  if (orgType) rememberCustomOrgType(orgType);
   var row = new Array(HEADERS.Organisations.length).fill('');
   row[COLS.ORGS.ID - 1] = id;
   row[COLS.ORGS.NAME - 1] = orgName;
-  row[COLS.ORGS.ORG_TYPE - 1] = normalizeOrgType(opts.orgType || '');
+  row[COLS.ORGS.ORG_TYPE - 1] = orgType;
   row[COLS.ORGS.TIER - 1] = normalizeTier(opts.tier || 'B');
   row[COLS.ORGS.STATUS - 1] = status;
   row[COLS.ORGS.LAST_CHECKED - 1] = today();
@@ -2181,7 +2276,7 @@ function captureDefaultsForDecision(ctx, captureType) {
         defaults.orgNames = org.name || '';
         defaults.sector = isNeedsClassificationLabel(org.sector) ? '' : (org.sector || '');
         defaults.subsector = org.subsector || '';
-        if (org.orgType && DROPDOWNS.ORG_TYPE.indexOf(org.orgType) !== -1) defaults.orgType = org.orgType;
+        if (org.orgType && orgTypeDropdownValues().indexOf(org.orgType) !== -1) defaults.orgType = org.orgType;
         else if (org.orgType) { defaults.orgType = 'Other'; defaults.orgTypeOther = org.orgType; }
         defaults.tier = org.tier || 'B';
         defaults.status = org.status || 'Mapped';
@@ -4672,7 +4767,9 @@ function onEditOrganisations(sheet, row, col, newVal, e) {
     return;
   }
   if (col === COLS.ORGS.ORG_TYPE) {
-    sheet.getRange(row, COLS.ORGS.ORG_TYPE).setValue(normalizeOrgType(newVal));
+    var normalizedOrgType = normalizeOrgType(newVal);
+    sheet.getRange(row, COLS.ORGS.ORG_TYPE).setValue(normalizedOrgType);
+    rememberCustomOrgType(normalizedOrgType);
     return;
   }
   if (col === COLS.ORGS.STATUS) {
@@ -4739,7 +4836,7 @@ function fireSectorOnlyTask(sector) {
 }
 
 function marketMapOrgTypeInstruction(label) {
-  return 'Before adding organisations, map this sub-sector by org type: Government; Regulators; International Organizations; Think Tanks; Universities & Research Institutes; Non-profits & Foundations; Consulting & Professional Services; Startups & Scaleups; Large Corporates; Investors & Innovation Ecosystem; Other. Then add the organisations you found with their Org type.';
+  return 'Before adding organisations, map this sub-sector by org type: Government; Regulators; International Organizations; Think Tanks; Universities & Research Institutes; Non-profits & Foundations; Consulting & Professional Services; Startups & Scaleups; Large Corporates; Investors & Innovation Ecosystem; or a custom type added under Other. Then add the organisations you found with their Org type.';
 }
 
 // Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row.
@@ -9644,7 +9741,7 @@ function cancelSetupFromPopup() {
 }
 
 function buildSetupHtml() {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, orgTypes = DROPDOWNS.ORG_TYPE, relTypes = DROPDOWNS.PERSON_REL_TYPE, routineTypes = DROPDOWNS.SEARCH_ROUTINE_TYPE, frequencies = DROPDOWNS.SEARCH_FREQUENCY, timeOptions = routineTimeOptions();
+  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, orgStatuses = DROPDOWNS.ORG_STATUS, orgTypes = orgTypeDropdownValues(), relTypes = DROPDOWNS.PERSON_REL_TYPE, routineTypes = DROPDOWNS.SEARCH_ROUTINE_TYPE, frequencies = DROPDOWNS.SEARCH_FREQUENCY, timeOptions = routineTimeOptions();
   var existingRows = plannerDataRowCount();
   var setupIntro = existingRows ? 'Add or revise starting facts. Existing planner data will be kept.' : 'This captures your starting facts and writes them to the right tabs.';
   var setupButton = 'Save setup';
@@ -9693,16 +9790,16 @@ function buildSetupHtml() {
     '<script>' +
     'var goal="", entryPoint="";' +
     'var existingRows=' + existingRows + ';' +
-    'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
+    'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', orgTypes=' + JSON.stringify(orgTypes) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
     'var forms={' +
     ' exploration:{title:"Set up exploration",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"},{k:"oppSources",l:"Where should opportunity search look?",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Which networks should network search review?",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
-    ' active_search:{title:"Add what is already underway - fill only what applies",fields:[{k:"jobOrg",l:"Job to apply to - Organisation",t:"text"},{k:"jobTitle",l:"Job to apply to - Role / opportunity",t:"text"},{k:"jobDeadline",l:"Job to apply to - Deadline, if any",t:"date"},{k:"jobNotes",l:"Job to apply to - URL / notes",t:"textarea"},{k:"appOrg",l:"Submitted application - Organisation",t:"text"},{k:"appJobTitle",l:"Submitted application - Role / opportunity",t:"text"},{k:"appSubmittedDate",l:"Submitted application - Submitted date",t:"date"},{k:"appNotes",l:"Submitted application - URL / notes",t:"textarea"},{k:"interviewOrg",l:"Interview - Organisation",t:"text"},{k:"interviewJobTitle",l:"Interview - Role / opportunity",t:"text"},{k:"interviewDate",l:"Interview - Date",t:"date"},{k:"interviewRoundType",l:"Interview - Round type",t:"select",o:roundTypes,blank:true},{k:"interviewRoundNumber",l:"Interview - Round number",t:"text",p:"1"},{k:"personName",l:"Person - Name",t:"text"},{k:"personOrg",l:"Person - Organisation, if relevant",t:"text"},{k:"personRole",l:"Person - Role/title, if known",t:"text"},{k:"personRelType",l:"Person - Source / relationship",t:"select",o:relTypes,blank:true},{k:"personNotes",l:"Person - Notes/source",t:"textarea"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"orgType",l:"Org type for these organisations",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",showIf:{k:"orgType",v:"Other"}},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
+    ' active_search:{title:"Add what is already underway - fill only what applies",fields:[{k:"jobOrg",l:"Job to apply to - Organisation",t:"text"},{k:"jobTitle",l:"Job to apply to - Role / opportunity",t:"text"},{k:"jobDeadline",l:"Job to apply to - Deadline, if any",t:"date"},{k:"jobNotes",l:"Job to apply to - URL / notes",t:"textarea"},{k:"appOrg",l:"Submitted application - Organisation",t:"text"},{k:"appJobTitle",l:"Submitted application - Role / opportunity",t:"text"},{k:"appSubmittedDate",l:"Submitted application - Submitted date",t:"date"},{k:"appNotes",l:"Submitted application - URL / notes",t:"textarea"},{k:"interviewOrg",l:"Interview - Organisation",t:"text"},{k:"interviewJobTitle",l:"Interview - Role / opportunity",t:"text"},{k:"interviewDate",l:"Interview - Date",t:"date"},{k:"interviewRoundType",l:"Interview - Round type",t:"select",o:roundTypes,blank:true},{k:"interviewRoundNumber",l:"Interview - Round number",t:"text",p:"1"},{k:"personName",l:"Person - Name",t:"text"},{k:"personOrg",l:"Person - Organisation, if relevant",t:"text"},{k:"personRole",l:"Person - Role/title, if known",t:"text"},{k:"personRelType",l:"Person - Source / relationship",t:"select",o:relTypes,blank:true},{k:"personNotes",l:"Person - Notes/source",t:"textarea"},{k:"orgNames",l:"Organisations to track",t:"textarea",p:"One per line, or comma-separated"},{k:"orgType",l:"Org type for these organisations",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",req:true,showIf:{k:"orgType",v:"Other"}},{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"General notes",t:"textarea"}]},' +
     ' sectors:{title:"Add sectors to explore",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
     ' people:{title:"Capture a person or conversation state",fields:[{k:"name",l:"Name",t:"text",req:true},{k:"org",l:"Organisation, if relevant",t:"text"},{k:"role",l:"Role/title, if known",t:"text"},{k:"relType",l:"Source / relationship",t:"select",o:relTypes,blank:true},{k:"reachedOut",l:"Have you already reached out?",t:"select",o:["No","Yes"],defaultValue:"No"},{k:"replied",l:"Have they replied?",t:"select",o:["No","Yes"],defaultValue:"No",showIf:{k:"reachedOut",v:"Yes"}},{k:"outreachDate",l:"When did you reach out?",t:"date",showIf:{k:"reachedOut",v:"Yes"}},{k:"whereNow",l:"If they replied, where are things now?",t:"select",o:["Need to respond / arrange next step","Conversation scheduled","Already spoke"],blank:true,showIf:{k:"replied",v:"Yes"}},{k:"conversationDate",l:"Conversation date, if scheduled/completed",t:"date",showIfAny:[{k:"whereNow",v:"Conversation scheduled"},{k:"whereNow",v:"Already spoke"}]},{k:"notes",l:"Notes/source",t:"textarea"}]},' +
-    ' orgs:{title:"Add organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"orgType",l:"Org type",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",showIf:{k:"orgType",v:"Other"}},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
+    ' orgs:{title:"Add organisations you are tracking",fields:[{k:"orgNames",l:"Organisation name(s)",t:"textarea",p:"One per line, or comma-separated",req:true},{k:"sector",l:"Sector (leave blank to classify later)",t:"text"},{k:"subsector",l:"Sub-sector, if known",t:"text"},{k:"orgType",l:"Org type",t:"select",o:orgTypes,blank:true},{k:"orgTypeOther",l:"Add org type",t:"text",req:true,showIf:{k:"orgType",v:"Other"}},{k:"tier",l:"Tier",t:"select",o:["B","A","C"],defaultValue:"B"},{k:"status",l:"Status",t:"select",o:orgStatuses,defaultValue:"Mapped"}]},' +
     ' routines:{title:"Create recurring search routines",fields:[{k:"oppSources",l:"Opportunity search sources",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Network search sources",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
     ' not_sure:{title:"Capture what feels most live",fields:[{k:"notes",l:"What is the thing you are trying to get under control?",t:"textarea",p:"Interview, application, job, person, org, or messy notes..."}]}' +
     '};' +
@@ -10128,6 +10225,8 @@ function processOrgOnboarding(fields) {
   var names = splitInputList(fields.orgNames);
   if (!names.length) return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
+  var orgTypeError = validateOrgTypeFields(fields);
+  if (orgTypeError) return orgTypeError;
   var status = (fields.status && DROPDOWNS.ORG_STATUS.indexOf(fields.status) !== -1) ? fields.status : 'Mapped';
   var orgType = orgTypeFromFields(fields);
   var created = 0, reused = 0, activeRoutes = 0;
@@ -10430,14 +10529,14 @@ function todayUpdateTypeToCapture(updateType) {
 }
 
 function captureConfig(captureType) {
-  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME, orgTypes = DROPDOWNS.ORG_TYPE;
+  var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME, orgTypes = orgTypeDropdownValues();
   var config = {
     'Explore sectors': { title: 'Add sectors to explore', fields: [{ k: 'sectorNames', l: 'Sectors you want to explore', t: 'textarea', p: 'Climate\nAI governance' }] },
     'Find organisations': {
       title: 'Add organisations found from exploration',
       fields: [{ k: 'sector', l: 'Sector', t: 'text' }, { k: 'subsector', l: 'Sub-sector', t: 'text' },
       { k: 'orgType', l: 'Org type for this batch', t: 'select', o: orgTypes, blank: true },
-      { k: 'orgTypeOther', l: 'Add org type', t: 'text', showIf: { k: 'orgType', v: 'Other' } },
+      { k: 'orgTypeOther', l: 'Add org type', t: 'text', req: true, showIf: { k: 'orgType', v: 'Other' } },
       { k: 'orgNames', l: 'Organisation names', t: 'textarea', p: 'One per line, or comma-separated', req: true }]
     },
     'Add/update organisation': {
@@ -10445,7 +10544,7 @@ function captureConfig(captureType) {
       fields: [{ k: 'orgNames', l: 'Organisation name(s)', t: 'textarea', p: 'One per line, or comma-separated', req: true },
       { k: 'sector', l: 'Sector (leave blank to classify later)', t: 'text' }, { k: 'subsector', l: 'Sub-sector, if known', t: 'text' },
       { k: 'orgType', l: 'Org type', t: 'select', o: orgTypes, blank: true },
-      { k: 'orgTypeOther', l: 'Add org type', t: 'text', showIf: { k: 'orgType', v: 'Other' } },
+      { k: 'orgTypeOther', l: 'Add org type', t: 'text', req: true, showIf: { k: 'orgType', v: 'Other' } },
       { k: 'tier', l: 'Tier', t: 'select', o: ['B', 'A', 'C'], defaultValue: 'B' }, { k: 'status', l: 'Status', t: 'select', o: DROPDOWNS.ORG_STATUS, defaultValue: 'Mapped' }]
     },
     'Add/update job': {
@@ -10724,7 +10823,7 @@ function buildSourceScanResultHtml(todoId, decisionId) {
   var todo = getTodoById(todoId);
   if (!todo || !isSourceLedScanTask(todo)) return '<p>Search task not found.</p>';
   var isPeople = isNetworkSearchWorkflow(todo.workflow);
-  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE, jobStatuses: DROPDOWNS.JOB_STATUS, orgTypes: DROPDOWNS.ORG_TYPE };
+  var data = { todoId: todo.id, decisionId: decisionId || '', workflow: todo.workflow, isPeople: isPeople, sources: DROPDOWNS.PERSON_REL_TYPE, jobStatuses: DROPDOWNS.JOB_STATUS, orgTypes: orgTypeDropdownValues() };
   var json = JSON.stringify(data).replace(/</g, '\\u003c');
   return '' +
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#28251D;background:#FBFBF9;}h2{margin:0 0 8px;color:#1B474D;font-size:20px;}p,.hint{color:#5F625E;font-size:13px;}label{display:block;margin-top:12px;font-size:12px;font-weight:bold;color:#1B474D;}input,textarea,select{box-sizing:border-box;width:100%;margin-top:5px;padding:9px;border:1px solid #D8DAD4;border-radius:5px;font-size:13px;}textarea{min-height:70px;resize:vertical;}.hidden{display:none;}.primary{margin-top:18px;padding:10px 14px;border:0;border-radius:5px;background:#01696F;color:#FFF;font-weight:bold;cursor:pointer;}.secondary{margin-top:18px;margin-left:8px;padding:10px 14px;border:1px solid #D8DAD4;border-radius:5px;background:#FBFBF9;color:#1B474D;font-weight:bold;cursor:pointer;}#status{font-size:12px;color:#5F625E;margin-top:10px;}</style>' +
@@ -10733,7 +10832,7 @@ function buildSourceScanResultHtml(todoId, decisionId) {
     '<div id="oppBlock" class="hidden"><label>Organisations found<textarea id="orgNames" placeholder="One per line, or comma-separated"></textarea></label><label>Sector<input id="sector"></label><label>Sub-sector<input id="subsector"></label><label>Org type for these organisations<select id="orgType"></select></label><label id="orgTypeOtherWrap" class="hidden">Add org type<input id="orgTypeOther"></label><label>Opportunity title<input id="jobTitle"></label><label>Organisation for opportunity<input id="jobOrg"></label><label>Deadline<input id="deadline" type="date"></label><label>Application status<select id="jobStatus"></select></label><label>Submitted date, if already submitted<input id="appliedDate" type="date"></label><label>URL / notes<textarea id="urlNotes"></textarea></label></div>' +
     '<button class="primary" type="button" onclick="save(false,false)">Save results</button><button class="secondary" type="button" onclick="save(true,false)">Nothing useful found</button><button class="secondary" type="button" onclick="save(false,true)">Need more time</button><div id="status"></div>' +
     '<script>var data=' + json + ';document.getElementById("intro").textContent=data.workflow+" completed.";document.getElementById(data.isPeople?"peopleBlock":"oppBlock").className="";var rel=document.getElementById("relType"),jobStatus=document.getElementById("jobStatus"),orgType=document.getElementById("orgType");data.sources.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;rel.appendChild(opt);});data.jobStatuses.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;jobStatus.appendChild(opt);});var blankOrgType=document.createElement("option");blankOrgType.value="";blankOrgType.textContent="Select...";orgType.appendChild(blankOrgType);data.orgTypes.forEach(function(s){var opt=document.createElement("option");opt.value=s;opt.textContent=s;orgType.appendChild(opt);});jobStatus.value="Not started";function updateOrgTypeOther(){document.getElementById("orgTypeOtherWrap").className=orgType.value==="Other"?"":"hidden";}orgType.onchange=updateOrgTypeOther;updateOrgTypeOther();' +
-    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,orgType:orgType.value,orgTypeOther:document.getElementById("orgTypeOther").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,jobStatus:jobStatus.value,appliedDate:document.getElementById("appliedDate").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
+    'function save(noResults,needMoreTime){var payload={todoId:data.todoId,decisionId:data.decisionId,workflow:data.workflow,noResults:!!noResults,needMoreTime:!!needMoreTime,personNames:document.getElementById("personNames").value,relType:rel.value,personOrg:document.getElementById("personOrg").value,peopleNotes:document.getElementById("peopleNotes").value,orgNames:document.getElementById("orgNames").value,sector:document.getElementById("sector").value,subsector:document.getElementById("subsector").value,orgType:orgType.value,orgTypeOther:document.getElementById("orgTypeOther").value,jobTitle:document.getElementById("jobTitle").value,jobOrg:document.getElementById("jobOrg").value,deadline:document.getElementById("deadline").value,jobStatus:jobStatus.value,appliedDate:document.getElementById("appliedDate").value,urlNotes:document.getElementById("urlNotes").value};var status=document.getElementById("status");if(!payload.needMoreTime&&!payload.noResults&&data.isPeople&&!String(payload.personNames||"").trim()){status.textContent="Add at least one person, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&!String((payload.orgNames||"")+(payload.jobTitle||"")).trim()){status.textContent="Add an organisation or opportunity, use Nothing useful found, or leave the task open.";return;}if(!payload.needMoreTime&&!payload.noResults&&!data.isPeople&&String(payload.orgNames||"").trim()&&payload.orgType==="Other"&&!String(payload.orgTypeOther||"").trim()){status.textContent="Add the new Org type, or choose an existing type.";return;}status.textContent="Saving...";google.script.run.withSuccessHandler(function(res){res=res||{};if(!res.ok){status.textContent=res.message||"Could not save.";return;}status.textContent=res.message||"Saved.";setTimeout(function(){google.script.host.close();},800);}).withFailureHandler(function(){status.textContent="Could not save. Try again from Tasks.";}).completeSourceScanResultFromPopup(payload);}</script>';
 }
 
 function runSourceScanResultPopup(todoId, decisionId) {
@@ -11089,6 +11188,8 @@ function processCapturePayload(captureType, fields) {
       return failResult('Organisation names should be names only. Put roles/opportunities in Add/update job or interview.', 'orgNames', 'ORG_NAMES_LOOK_STRUCTURED');
     }
     if (fields.subsector && !fields.sector) return failResult('Add Sector before Sub-sector so I know where to link it.', 'sector', 'MISSING_SECTOR');
+    var orgTypeCaptureError = validateOrgTypeFields(fields);
+    if (orgTypeCaptureError) return orgTypeCaptureError;
     var createdFound = 0, reusedFound = 0;
     var orgTypeFound = orgTypeFromFields(fields);
     namesNew.forEach(function (name) {
@@ -11618,7 +11719,7 @@ var HEADER_GUIDANCE = {
     'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Add or update for normal entry.',
     'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the sector, or leave blank if it still needs classification.',
     'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional sub-sector within the selected Sector.',
-    'Org type': 'Market-map bucket: government, regulator, think tank, university, startup, corporate, investor, or other.',
+    'Org type': 'Market-map bucket. Choose a standard type, or choose Other to add a reusable custom type.',
     'Tier': 'A/B/C priority for tie-breaks; defaults to B.', 'Status': 'Mapped = known; Active = suggest next moves; Dormant = pause org-level suggestions; Archived = retired.',
     'Known people (count)': 'Updates from linked People rows.', 'Open opportunities (count)': 'Updates from linked open Jobs.', 'Last checked': 'Last org-level review date.', 'Next check date': 'Next planned org review date.', 'Notes': 'Your context plus repair flags.'
   },
@@ -12513,7 +12614,7 @@ function applySheetDropdowns(canonicalName) {
       setDropdown(sheet.getRange(2, COLS.SECTORS.STATUS, maxRow, 1), DROPDOWNS.SECTOR_STATUS, { allowInvalid: false });
       break;
     case 'Organisations':
-      setDropdown(sheet.getRange(2, COLS.ORGS.ORG_TYPE, maxRow, 1), DROPDOWNS.ORG_TYPE);
+      setDropdown(sheet.getRange(2, COLS.ORGS.ORG_TYPE, maxRow, 1), orgTypeDropdownValues());
       setDropdown(sheet.getRange(2, COLS.ORGS.TIER, maxRow, 1), DROPDOWNS.ORG_TIER, { allowInvalid: false });
       setDropdown(sheet.getRange(2, COLS.ORGS.STATUS, maxRow, 1), DROPDOWNS.ORG_STATUS, { allowInvalid: false });
       break;
@@ -13763,8 +13864,8 @@ function rewriteGuide() {
 
   r = writeH2(sheet, r, 'Source tabs');
   r = writeKV(sheet, r, 'Sectors', 'A Sector row names a broad area. A Sub-sector row names a specific part of that Sector. When you add a Sub-sector, the planner asks whether to market-map it.');
-  r = writeKV(sheet, r, 'Market mapping', 'Market-map tasks ask you to cover the sub-sector by Org type first: government, regulators, international organisations, think tanks, universities, nonprofits/foundations, consulting, startups, corporates, investors/ecosystem, or other. After the task is done, capture the organisations found.');
-  r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector/Sub-sector if known, choose Org type, then set Tier and Status. Active organisations can suggest people-search or job-scan work.');
+  r = writeKV(sheet, r, 'Market mapping', 'Market-map tasks ask you to cover the sub-sector by Org type first: government, regulators, international organisations, think tanks, universities, nonprofits/foundations, consulting, startups, corporates, investors/ecosystem, or a custom type you add under Other. After the task is done, capture the organisations found.');
+  r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector/Sub-sector if known, choose Org type, then set Tier and Status. Custom Org types added under Other are remembered for future dropdowns.');
   r = writeKV(sheet, r, 'Search Routines', 'Set Opportunity search and Network search habits separately. Each routine has its own frequency, next due date, and time estimate.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
   r = writeKV(sheet, r, 'People', 'Relationship source is how you found or know the person. Relationship step is the outreach/conversation state: Identified, outreach, reply, conversation, keep warm, or Closed.');
