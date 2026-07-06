@@ -83,7 +83,7 @@
  *   keeps existing planner data. Starting fresh is a separate data-safety
  *   action with an explicit backup-first destructive confirmation. Sector
  *   onboarding is 3 explicit stages:
- *     1. Sector-only row      → direct Task: "Add 2-4 sub-sector rows"
+ *     1. Sector-only row      -> direct Task: "Identify 2-4 sub-sectors within ..."
  *     2. Sub-sector row       → Decision: "Build an org list here?"
  *     3. Yes on that Decision → Task: "Market map: <sub-sector>"
  *                                (No → no market-map Task is created)
@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.6';
+var SCRIPT_VERSION = 'v7.8.7';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -3007,8 +3007,8 @@ function hasSubtasksFormula(row) {
 }
 
 // objType/objId -> source-tab display name + row, for the "Linked to"
-// HYPERLINK. Sector-linked tasks may target SEC-* broad sectors or SUB-*
-// sub-sector rows; legacy raw-name links are repaired by repairSectorTaskLinks.
+// HYPERLINK. Sector-linked tasks may target SEC-* sectors or SUB-*
+// sub-sectors; legacy raw-name links are repaired by repairSectorTaskLinks.
 var LINKED_TO_MAP = {
   'Job': { sheet: 'Jobs', idCol: 1, nameCol: 2 },
   'Person': { sheet: 'People', idCol: 1, nameCol: 2 },
@@ -4278,7 +4278,7 @@ function closePerson(personId, reason) {
 // functions below, so there is only one place this logic can drift):
 //
 //   1. Sector-only row (Sub-sector blank)
-//        -> direct Task: "Add 2-4 sub-sector rows"
+//        -> direct Task: "Identify 2-4 sub-sectors within ..."
 //   2. Sub-sector row added
 //        -> Decision: "Build an organisation list in this sub-sector?"
 //   3. Yes on that Decision
@@ -4704,7 +4704,7 @@ function fireOrgActiveCascade(orgId, orgName) {
 
 // --- Sectors: Stage 1 (sector-only) and Stage 2/3 (sub-sector) ---
 
-// Stage 1: fires the direct "add sub-sector rows" Task. Deduplicated by
+// Stage 1: fires the direct "identify sub-sectors" Task. Deduplicated by
 // task text + target so re-editing the same Sector row (or capturing
 // it again via onboarding) never creates a second copy. Accepts either
 // a sector name (creates/finds the sector-only branch) or an
@@ -4713,9 +4713,9 @@ function fireOrgActiveCascade(orgId, orgName) {
 function fireSectorOnlyTask(sector) {
   var branch = (typeof sector === 'object') ? sector : upsertSectorBranch({ sector: sector, source: 'manual_sheet_entry', createExpansionDecision: false });
   if (!branch) return '';
-  var linkedTaskText = 'Add 2-4 sub-sector rows for ' + branch.sector;
+  var linkedTaskText = 'Identify 2-4 sub-sectors within ' + branch.sector;
   return appendTodoOnceForWorkflow(linkedTaskText, 'Sector', branch.id, '', 'Sector selection', 'Not started', '', '20 min',
-    'Open Sectors from this task. Add one row per sub-sector: keep Sector = ' + branch.sector + ', fill Sub-sector with the narrower area. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
+    'Open Sectors from this task. Add one row per sub-sector: keep Sector = ' + branch.sector + ', fill Sub-sector with the specific sub-sector. Each sub-sector can then become a market-map decision.', 'Auto-triggered');
 }
 
 // Stage 2/3: fired when upsertSectorBranch creates a real sub-sector row.
@@ -4932,7 +4932,7 @@ function syncSingleSectorLinkedLabel(branch) {
       writeLinkedTo(taskSheet, t + 2, 'Sector', branch.id);
       var workflow = String(taskData[t][COLS.TODO.WORKFLOW - 1] || '');
       var desiredTask = '';
-      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'Add 2-4 sub-sector rows for ' + branch.sector;
+      if (branch.isSectorOnly && workflow === 'Sector selection') desiredTask = 'Identify 2-4 sub-sectors within ' + branch.sector;
       if (!branch.isSectorOnly && workflow === 'Market mapping' && branch.subsector) desiredTask = 'Market map: ' + branch.sector + ' - ' + branch.subsector;
       if (desiredTask && String(taskData[t][COLS.TODO.TASK - 1]) !== desiredTask) {
         taskSheet.getRange(t + 2, COLS.TODO.TASK).setValue(desiredTask);
@@ -8762,7 +8762,7 @@ function saveSetupProfile(profile) {
 function setupLabel(profile) {
   if (!profile) return 'Not set up yet';
   var goalLabels = { explore_space: 'Exploring a new space', in_process: 'Already in the process', skipped: 'Setup skipped' };
-  var entryLabels = { sectors: 'Sectors', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', routines: 'Search routines', not_sure: 'Not sure', skip: 'Skipped' };
+  var entryLabels = { exploration: 'Exploration setup', sectors: 'Sectors to explore', interviews: 'Interviews', applications: 'Applications', jobs: 'Jobs', people: 'People', orgs: 'Organisations', routines: 'Search routines', not_sure: 'Not sure', skip: 'Skipped' };
   return (goalLabels[profile.goal] || profile.goal || 'Setup') + (profile.entryPoint ? ' — ' + (entryLabels[profile.entryPoint] || profile.entryPoint) : '');
 }
 
@@ -9544,7 +9544,7 @@ function buildSetupHtml() {
     '<p>' + setupIntro + '</p>' +
     '<div id="q1" class="step active">' +
     '  <p><strong>1 of 3</strong> Where are you starting from?</p>' +
-    '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Start with a broad sector, then sub-sectors, then organisations.</small></button>' +
+    '  <button class="option" onclick="pickGoal(\'explore_space\')">I am exploring a new space<small>Add sectors you want to explore and, if useful, regular opportunity/network searches.</small></button>' +
     '  <button class="option" onclick="pickGoal(\'in_process\')">I am already in the process<small>You already have jobs, applications, interviews, people, or organisations.</small></button>' +
     '</div>' +
     '<div id="q2" class="step">' +
@@ -9565,7 +9565,8 @@ function buildSetupHtml() {
     'var existingRows=' + existingRows + ';' +
     'var jobStatuses=' + JSON.stringify(jobStatuses) + ', roundTypes=' + JSON.stringify(roundTypes) + ', orgStatuses=' + JSON.stringify(orgStatuses) + ', relTypes=' + JSON.stringify(relTypes) + ', routineTypes=' + JSON.stringify(routineTypes) + ', frequencies=' + JSON.stringify(frequencies) + ', timeOptions=' + JSON.stringify(timeOptions) + ';' +
     'var forms={' +
-    ' sectors:{title:"Add your first broad sector(s)",fields:[{k:"sectorNames",l:"Broad sector(s) to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
+    ' exploration:{title:"Set up exploration",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"},{k:"oppSources",l:"Where should opportunity search look?",t:"textarea",p:"LinkedIn\\nRecruiters\\nNewsletters"},{k:"oppFrequency",l:"How often for opportunity search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"oppTimeEst",l:"Time for each opportunity search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"networkSources",l:"Which networks should network search review?",t:"textarea",p:"Alumni\\nFormer colleagues\\nRecruiters"},{k:"networkFrequency",l:"How often for network search?",t:"select",o:frequencies,defaultValue:"Weekly"},{k:"networkTimeEst",l:"Time for each network search",t:"select",o:timeOptions,defaultValue:"30 min"},{k:"notes",l:"Notes, links, or search instructions",t:"textarea"}]},' +
+    ' sectors:{title:"Add sectors to explore",fields:[{k:"sectorNames",l:"Sectors you want to explore",t:"textarea",p:"Climate\\nAI governance"}]},' +
     ' interviews:{title:"Capture an active interview",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"roundNumber",l:"Round number",t:"text",p:"1"},{k:"roundType",l:"Round type",t:"select",o:roundTypes,blank:true},{k:"interviewDate",l:"Interview date",t:"date"}]},' +
     ' applications:{title:"Capture an application already submitted",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"appliedDate",l:"Submitted date",t:"date"},{k:"urlNotes",l:"URL / notes",t:"textarea"}]},' +
     ' jobs:{title:"Capture a job you want to apply to",fields:[{k:"org",l:"Organisation",t:"text",req:true},{k:"jobTitle",l:"Job title / opportunity",t:"text",req:true},{k:"deadline",l:"Deadline, if any",t:"date"},{k:"urlNotes",l:"URL / source / notes",t:"textarea"}]},' +
@@ -9578,7 +9579,7 @@ function buildSetupHtml() {
     'function showStep(n){document.querySelectorAll(".step").forEach(function(x){x.classList.remove("active")});document.getElementById("q"+n).classList.add("active");}' +
     'function renderEntryOptions(title,opts){document.getElementById("q2title").innerHTML="<strong>2 of 3</strong> "+title;var c=document.getElementById("q2_options");c.innerHTML="";opts.forEach(function(o){var b=document.createElement("button");b.className="option";b.innerHTML=o[1]+"<small>"+o[2]+"</small>";b.onclick=function(){entryPoint=o[0];renderForm(o[0]);};c.appendChild(b);});showStep(2);}' +
     'function pickGoal(g){goal=g;' +
-    ' if(g==="explore_space"){renderEntryOptions("What should we set up first?",[["sectors","Add broad sectors","Start with the spaces you want to explore."],["routines","Create recurring search routines","Set up Opportunity search and Network search habits."],["not_sure","I am not sure","Creates a light clarification task on Today."]]);return;}' +
+    ' if(g==="explore_space"){renderEntryOptions("What should we set up?",[["exploration","Set up exploration","Add sectors you want to explore and optional recurring searches."],["not_sure","I am not sure yet","Creates a light clarification task on Today."]]);return;}' +
     ' var opts=[["interviews","I have interviews","Creates/links a Job and an Interview round."],' +
     ' ["applications","I have applications submitted","Creates a Submitted application and a response-check task from the real submitted date."],' +
     ' ["jobs","I have jobs I want to apply to","Creates a Not-started application and asks whether to start work."],' +
@@ -9619,13 +9620,31 @@ function splitInputList(value) {
 // kept only as a legacy-text fallback for profiles saved before this
 // version, which never had a `workflow` field.
 function setupChecklistFor(entryPoint, fields) {
+  if (entryPoint === 'exploration') {
+    fields = fields || {};
+    var checklist = [];
+    if (splitInputList(fields.sectorNames).length) {
+      checklist.push({
+        alwaysDone: true,
+        label: 'Identify 2-4 sub-sectors within your first sector',
+        text: 'Identify 2-4 sub-sectors within your first sector',
+        tab: 'Today',
+        notes: 'Today has a task to identify sub-sectors within the sector you entered.'
+      });
+    }
+    if (splitInputList(fields.oppSources).length || splitInputList(fields.networkSources).length) {
+      checklist.push({ workflow: WORKFLOW_OPPORTUNITY_SEARCH, altWorkflows: [WORKFLOW_NETWORK_SEARCH], label: 'Run the first search routine', text: 'Run the first search routine', tab: 'Tasks', notes: 'The routine created one due task. Completing it captures results and advances the next run.' });
+    }
+    if (!checklist.length) return [{ workflow: 'Admin', label: 'Clarify the most live part of the search', text: 'Clarify the most live part of the search', tab: 'Tasks', notes: 'Pick one anchor: interview, application, job, person, organisation, or sector.' }];
+    return checklist;
+  }
   if (entryPoint === 'sectors') {
     return [{
       alwaysDone: true,
-      label: 'Add 2-4 sub-sector rows for your first broad sector',
-      text: 'Add 2-4 sub-sector rows',
+      label: 'Identify 2-4 sub-sectors within your first sector',
+      text: 'Identify 2-4 sub-sectors within your first sector',
       tab: 'Today',
-      notes: 'Open the linked Sector task, then add child rows on Sectors with the same Sector and a filled Sub-sector.'
+      notes: 'Open the linked Sector task, then add each Sub-sector on Sectors with the same Sector filled in.'
     }];
   }
   var map = {
@@ -9645,6 +9664,7 @@ function setupChecklistFor(entryPoint, fields) {
 
 function processOnboardingCapture(goal, entryPoint, fields) {
   if (goal === 'skipped' || entryPoint === 'skip') return okResult('Setup skipped. You can run onboarding again from the menu any time.');
+  if (entryPoint === 'exploration') return processExplorationOnboarding(fields);
   if (entryPoint === 'sectors') return processSectorOnboarding(fields);
   if (entryPoint === 'interviews') return processInterviewOnboarding(fields);
   if (entryPoint === 'applications') return processApplicationOnboarding(fields);
@@ -9674,11 +9694,11 @@ function validateOnboardingPayload(goal, entryPoint, fields) {
   if (entryPoint === 'orgs' && !splitInputList(fields.orgNames).length) {
     return failResult('I need at least one organisation name to capture this.', 'orgNames', 'MISSING_ORG');
   }
-  if (entryPoint === 'routines') {
+  if (entryPoint === 'routines' || entryPoint === 'exploration') {
     var hasOpp = !!splitInputList(fields.oppSources).length;
     var hasNetwork = !!splitInputList(fields.networkSources).length;
     var hasLegacy = !!splitInputList(fields.sources).length;
-    if (!hasOpp && !hasNetwork && !hasLegacy) return failResult('Add at least one opportunity source or network to check.', 'oppSources', 'MISSING_SOURCES');
+    if (entryPoint === 'routines' && !hasOpp && !hasNetwork && !hasLegacy) return failResult('Add at least one opportunity source or network to check.', 'oppSources', 'MISSING_SOURCES');
     if (hasLegacy && !normalizeSearchRoutineType(fields.routine)) return failResult('Choose Opportunity search or Network search.', 'routine', 'INVALID_ROUTINE');
     if (hasLegacy && !normalizeSearchFrequency(fields.frequency)) return failResult('Choose how often to run this search.', 'frequency', 'INVALID_FREQUENCY');
     if (hasOpp && !normalizeSearchFrequency(fields.oppFrequency)) return failResult('Choose how often to run opportunity search.', 'oppFrequency', 'INVALID_FREQUENCY');
@@ -9731,6 +9751,25 @@ function processSearchRoutineOnboarding(fields) {
 // Sector onboarding uses the exact same upsertSectorBranch/
 // fireSectorOnlyTask path as manual sheet entry — this is what keeps
 // popup capture and direct typing behaviorally identical.
+function processExplorationOnboarding(fields) {
+  fields = fields || {};
+  var sectors = splitInputList(fields.sectorNames);
+  var hasRoutines = splitInputList(fields.oppSources).length || splitInputList(fields.networkSources).length;
+  var messages = [];
+  if (sectors.length) {
+    var sectorResult = processSectorOnboarding({ sectorNames: fields.sectorNames }, 'onboarding');
+    if (!sectorResult.ok) return sectorResult;
+    messages.push('added ' + sectors.length + ' sector' + (sectors.length === 1 ? '' : 's'));
+  }
+  if (hasRoutines) {
+    var routineResult = processSearchRoutineOnboarding(fields);
+    if (!routineResult.ok) return routineResult;
+    messages.push(String(routineResult.message || 'created search routine(s)').replace(/\.$/, '').toLowerCase());
+  }
+  if (!messages.length) return processNotSureOnboarding(fields);
+  return okResult('Exploration setup saved: ' + messages.join('; ') + '.');
+}
+
 function processSectorOnboarding(fields, source) {
   source = source || 'onboarding';
   var sectors = splitInputList(fields.sectorNames);
@@ -9742,8 +9781,8 @@ function processSectorOnboarding(fields, source) {
     var branch = upsertSectorBranch({ sector: sector, source: source, createExpansionDecision: false });
     if (idx < 2) fireSectorOnlyTask(branch);
   });
-  var warnings = sectors.length > 2 ? ['Created all broad sectors; sub-sector entry tasks were created for the first 2.'] : [];
-  return okResult('Added ' + sectors.length + ' broad sector(s). Today now has the task to add narrower sub-sector rows.', { warnings: warnings });
+  var warnings = sectors.length > 2 ? ['Created all sectors; sub-sector identification tasks were created for the first 2.'] : [];
+  return okResult('Added ' + sectors.length + ' sector' + (sectors.length === 1 ? '' : 's') + '. Today now has the task to identify sub-sectors.', { warnings: warnings });
 }
 
 function processApplicationOnboarding(fields) {
@@ -10148,7 +10187,7 @@ function todayUpdateTypeToCapture(updateType) {
 function captureConfig(captureType) {
   var roundTypes = DROPDOWNS.ROUND_TYPE, jobStatuses = DROPDOWNS.JOB_STATUS, jobOutcomes = DROPDOWNS.JOB_OUTCOME;
   var config = {
-    'Explore sectors': { title: 'Explore broad sectors', fields: [{ k: 'sectorNames', l: 'Broad sector(s) to explore', t: 'textarea', p: 'Climate\nAI governance' }] },
+    'Explore sectors': { title: 'Add sectors to explore', fields: [{ k: 'sectorNames', l: 'Sectors you want to explore', t: 'textarea', p: 'Climate\nAI governance' }] },
     'Find organisations': {
       title: 'Add organisations found from exploration',
       fields: [{ k: 'sector', l: 'Sector', t: 'text' }, { k: 'subsector', l: 'Sub-sector', t: 'text' },
@@ -11314,17 +11353,17 @@ function skipSearchRoutineOccurrence(todo, status) {
 
 var HEADER_GUIDANCE = {
   'Sectors': {
-    'Sector ID': 'Filled automatically. Links broad sector rows.',
-    'Sector': 'Broad search area. Use the same Sector for each narrower sub-sector row.',
+    'Sector ID': 'Filled automatically. Links top-level sectors.',
+    'Sector': 'Sector you want to explore. Use the same Sector for each Sub-sector row.',
     'Sub-sector ID': 'Filled automatically. Stays with this sub-sector if renamed or moved.',
-    'Sub-sector': 'Narrower area under Sector. Leave blank on the broad-sector row.',
+    'Sub-sector': 'Specific sub-sector within the Sector. Leave blank on the sector-only row.',
     'Status': 'Open = in your search universe. Retired = no new daily suggestions.',
     'Notes': 'Your context plus repair flags.'
   },
   'Organisations': {
     'Org ID': 'Filled automatically.', 'Organisation': 'Target organisation name. Prefer Home > Add or update for normal entry.',
-    'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the broad sector, or leave blank if it still needs classification.',
-    'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional narrower area; choose after Sector.',
+    'Sector ID': 'Filled automatically from Sector.', 'Sector': 'Choose the sector, or leave blank if it still needs classification.',
+    'Sub-sector ID': 'Filled automatically from Sub-sector.', 'Sub-sector': 'Optional sub-sector within the selected Sector.',
     'Tier': 'A/B/C priority for tie-breaks; defaults to B.', 'Status': 'Mapped = known; Active = suggest next moves; Dormant = pause org-level suggestions; Archived = retired.',
     'Known people (count)': 'Updates from linked People rows.', 'Open opportunities (count)': 'Updates from linked open Jobs.', 'Last checked': 'Last org-level review date.', 'Next check date': 'Next planned org review date.', 'Notes': 'Your context plus repair flags.'
   },
@@ -13443,7 +13482,7 @@ function rewriteGuide() {
   r++;
 
   r = writeH2(sheet, r, 'Source tabs');
-  r = writeKV(sheet, r, 'Sectors', 'A broad Sector row has Sector filled and Sub-sector blank. A Sub-sector row has the same Sector and a narrower Sub-sector. Renaming a Sector updates linked rows.');
+  r = writeKV(sheet, r, 'Sectors', 'A Sector row names a sector you want to explore. A Sub-sector row names a specific part of that Sector. Renaming a Sector updates linked rows.');
   r = writeKV(sheet, r, 'Organisations', 'Type Organisation, choose Sector if known, optionally choose Sub-sector after Sector, set Tier and Status. Active organisations can suggest people-search or job-scan work.');
   r = writeKV(sheet, r, 'Search Routines', 'Set Opportunity search and Network search habits separately. Each routine has its own frequency, next due date, and time estimate.');
   r = writeKV(sheet, r, 'Jobs', 'Application status is Not started, In progress, Submitted, or Closed. Application result is Waiting, Interview invite, or Rejected after submission.');
@@ -13923,7 +13962,7 @@ function buildMenu() {
       .addItem('Move selected Today row up', 'moveTodayRowUp')
       .addItem('Move selected Today row down', 'moveTodayRowDown'))
     .addSubMenu(ui.createMenu('Add or update records')
-      .addItem('Add broad sector', 'addNewSector')
+      .addItem('Add sector to explore', 'addNewSector')
       .addItem('Add organisations from research', 'addExplorationOrganisations')
       .addItem('Add or update organisation', 'addNewOrganisation')
       .addItem('Add or update person', 'addNewPerson')
