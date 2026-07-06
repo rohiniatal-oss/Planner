@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.3';
+var SCRIPT_VERSION = 'v7.9.4';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -5047,8 +5047,8 @@ function repairSectorTaskLinks() {
     // either a plain hyphen (fireSubsectorAddedDecision) or an em dash
     // (rowActionSearchOrgsForSubsector) as separator depending on which
     // code path created it — match both, not just the hyphen.
-    var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:—|-)\s*(.+)$/);
-    marketMapMatch = taskText.match(/^Market map by org type:\s*(.+?)\s*(?:â€”|-)\s*(.+)$/) || marketMapMatch;
+    var marketMapMatch = taskText.match(/^Market map:\s*(.+?)\s*(?:\u2014|-)\s*(.+)$/);
+    marketMapMatch = taskText.match(/^Market map by org type:\s*(.+?)\s*(?:\u2014|-)\s*(.+)$/) || marketMapMatch;
     if (marketMapMatch) branch = upsertSectorBranch({ sector: marketMapMatch[1], subsector: marketMapMatch[2], source: 'repair_backfill', createExpansionDecision: false });
     else branch = upsertSectorBranch({ sector: objId, source: 'repair_backfill', createExpansionDecision: false });
     if (!branch || !branch.id) continue;
@@ -14112,14 +14112,8 @@ function dailyMaintenance() {
   return withDocumentLock(function () {
     Logger.log('dailyMaintenance: START ' + new Date());
     var migratedWorkbook = migrateWorkbookSchema();
-    var migratedJobs = migrateJobsDeadlineStatusSchema();
-    var migratedInteractions = migrateInteractionsStatusSchema();
-    var migratedInterviewLabels = migrateInterviewTopicFamiliarityLabels();
-    if (migratedWorkbook || migratedJobs || migratedInteractions || migratedInterviewLabels) {
-      applySheetDropdowns('Organisations');
-      applySheetDropdowns('Jobs');
-      applySheetDropdowns('Conversations');
-      applySheetDropdowns('Interviews');
+    if (migratedWorkbook) {
+      refreshAllDropdowns();
       colorCodeManualFields();
       applyStatusColorCoding();
       applyColumnWidths();
