@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.8.4';
+var SCRIPT_VERSION = 'v7.8.5';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -651,6 +651,10 @@ function setDropdown(range, values, opts) {
   opts = opts || {};
   var allowInvalid = opts.allowInvalid !== false;
   range.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(values, true).setAllowInvalid(allowInvalid).build());
+}
+
+function logBestEffortFailure(label, err) {
+  Logger.log('Best-effort step skipped - ' + label + ': ' + (err && err.message ? err.message : err));
 }
 
 function normalizeTier(value) {
@@ -7265,16 +7269,16 @@ function ensureTodaySheet() {
 function hardResetTodaySheet(sheet) {
   var maxRows = Math.max(sheet.getMaxRows(), TODAY_ENDOFDAY_ROW + 1);
   var maxCols = Math.max(sheet.getMaxColumns(), HEADERS["Today's plan"].length);
-  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { logBestEffortFailure('Today reset break apart', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { logBestEffortFailure('Today reset clear validations', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { logBestEffortFailure('Today reset clear format', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { logBestEffortFailure('Today reset clear content', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { logBestEffortFailure('Today reset clear notes', err); }
 }
 
 function clearTodayPlanHeadlineValidation(sheet) {
-  try { sheet.getRange('B3:I3').clearDataValidations(); } catch (err) { }
-  try { sheet.getRange('B3').clearDataValidations(); } catch (err2) { }
+  try { sheet.getRange('B3:I3').clearDataValidations(); } catch (err) { logBestEffortFailure('Today headline clear merged validation', err); }
+  try { sheet.getRange('B3').clearDataValidations(); } catch (err2) { logBestEffortFailure('Today headline clear B3 validation', err2); }
 }
 
 function setTodayWhatNow(sheet, text, isWarning) {
@@ -7300,7 +7304,7 @@ function todayWhatNowForSelection(selection, availableMinutes) {
 
 function renderTodayEmptyState(sheet, selection) {
   if (!sheet || (selection && selection.commit && selection.commit.length)) return;
-  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 2, 3, 7).breakApart(); } catch (err) { }
+  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 2, 3, 7).breakApart(); } catch (err) { logBestEffortFailure('Today empty-state break apart', err); }
   var text = selection && selection.options && selection.options.length
     ? 'No committed tasks fit. Review Options below, add time, or change Today focus.'
     : 'No committed tasks yet. Try changing focus, increasing available minutes, or capturing new work from Home.';
@@ -7884,7 +7888,7 @@ function populateTodayImpl() {
   var selection = stagedTodaySelection(previousState, availableMinutes, focus, energy);
 
   setTodayPlanBuiltDate(today());
-  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).breakApart(); } catch (err) { }
+  try { sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).breakApart(); } catch (err) { logBestEffortFailure('Today plan area break apart', err); }
   sheet.getRange(TODAY_TABLE_FIRST_ROW, 1, 30, HEADERS["Today's plan"].length).clearContent().clearNote().setBackground(null);
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.STATUS, 30, 1).setBackground(MANUAL_COLOR);
   sheet.getRange(TODAY_TABLE_FIRST_ROW, COLS.TODAY.NOTES, 30, 1).setBackground(MANUAL_COLOR);
@@ -8933,11 +8937,11 @@ function homeWhatNowText(planCounts, attentionItems, decisionCount) {
 function hardResetHomeSheet(sheet) {
   var maxRows = Math.max(sheet.getMaxRows(), 60);
   var maxCols = Math.max(sheet.getMaxColumns(), 10);
-  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { }
-  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { }
+  try { sheet.getRange(1, 1, maxRows, maxCols).breakApart(); } catch (err) { logBestEffortFailure('Sheet body clear break apart', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearDataValidations(); } catch (err) { logBestEffortFailure('Sheet body clear validations', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearFormat(); } catch (err) { logBestEffortFailure('Sheet body clear format', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearContent(); } catch (err) { logBestEffortFailure('Sheet body clear content', err); }
+  try { sheet.getRange(1, 1, maxRows, maxCols).clearNote(); } catch (err) { logBestEffortFailure('Sheet body clear notes', err); }
 }
 
 // v7.4: Today's-plan hero counts. Prefer the explicit build date stored
@@ -11553,7 +11557,7 @@ function colorCodeManualFields() {
     var bodyRows = Math.max(sheet.getMaxRows() - startRow + 1, 40);
     sheet.getRange(startRow, 1, bodyRows, headers.length).setBackground(AUTO_COLOR);
     MANUAL_COLUMNS[headerKey].forEach(function (col) {
-      try { sheet.getRange(startRow, col, bodyRows, 1).setBackground(MANUAL_COLOR); } catch (err) { }
+      try { sheet.getRange(startRow, col, bodyRows, 1).setBackground(MANUAL_COLOR); } catch (err) { logBestEffortFailure('Manual field color ' + headerKey + ' col ' + col, err); }
     });
   });
   var todaySheet = getSheet('Today');
@@ -11692,15 +11696,15 @@ function applyColumnLayout() {
     var sheet = getSheet(name);
     if (!sheet || !SHEET_TO_HEADER_KEY[name]) return;
     var len = sheetHeaderLength(name);
-    try { sheet.showColumns(1, len); } catch (err) { }
-    hiddenColumnsFor(name).forEach(function (col) { try { sheet.hideColumns(col); } catch (err) { } });
+    try { sheet.showColumns(1, len); } catch (err) { logBestEffortFailure('Apply column layout show columns for ' + name, err); }
+    hiddenColumnsFor(name).forEach(function (col) { try { sheet.hideColumns(col); } catch (err) { logBestEffortFailure('Apply column layout hide column ' + col + ' for ' + name, err); } });
   });
 }
 
 function showAllColumns() {
   CANONICAL_TAB_ORDER.forEach(function (name) {
     var sheet = getSheet(name);
-    if (sheet && SHEET_TO_HEADER_KEY[name]) { try { sheet.showColumns(1, sheetHeaderLength(name)); } catch (err) { } }
+    if (sheet && SHEET_TO_HEADER_KEY[name]) { try { sheet.showColumns(1, sheetHeaderLength(name)); } catch (err) { logBestEffortFailure('Show hidden columns for ' + name, err); } }
   });
   SpreadsheetApp.getActiveSpreadsheet().toast('Hidden columns shown for inspection.', 'The Planner', 3);
 }
@@ -11710,8 +11714,8 @@ function restoreHiddenColumns() {
     var sheet = getSheet(name);
     if (!sheet || !SHEET_TO_HEADER_KEY[name]) return;
     var len = sheetHeaderLength(name);
-    try { sheet.showColumns(1, len); } catch (err) { }
-    hiddenColumnsFor(name).forEach(function (col) { try { sheet.hideColumns(col); } catch (err) { } });
+    try { sheet.showColumns(1, len); } catch (err) { logBestEffortFailure('Restore visible columns for ' + name, err); }
+    hiddenColumnsFor(name).forEach(function (col) { try { sheet.hideColumns(col); } catch (err) { logBestEffortFailure('Restore hidden column ' + col + ' for ' + name, err); } });
   });
   SpreadsheetApp.getActiveSpreadsheet().toast('Normal hidden columns restored.', 'The Planner', 3);
 }
@@ -11721,7 +11725,7 @@ function applyColumnWidths() {
     var canonical = Object.keys(SHEET_TO_HEADER_KEY).filter(function (n) { return SHEET_TO_HEADER_KEY[n] === headerKey; })[0];
     var sheet = getSheet(canonical);
     if (!sheet) return;
-    Object.keys(COLUMN_WIDTHS[headerKey]).forEach(function (col) { try { sheet.setColumnWidth(parseInt(col, 10), COLUMN_WIDTHS[headerKey][col]); } catch (err) { } });
+    Object.keys(COLUMN_WIDTHS[headerKey]).forEach(function (col) { try { sheet.setColumnWidth(parseInt(col, 10), COLUMN_WIDTHS[headerKey][col]); } catch (err) { logBestEffortFailure('Set column width ' + headerKey + ' col ' + col, err); } });
   });
   Object.keys(WRAP_COLUMNS).forEach(function (headerKey) {
     var canonical = Object.keys(SHEET_TO_HEADER_KEY).filter(function (n) { return SHEET_TO_HEADER_KEY[n] === headerKey; })[0];
@@ -11729,7 +11733,7 @@ function applyColumnWidths() {
     if (!sheet) return;
     var startRow = (canonical === 'Today') ? TODAY_TABLE_FIRST_ROW : 2;
     var bodyRows = Math.max(sheet.getMaxRows() - startRow + 1, 40);
-    WRAP_COLUMNS[headerKey].forEach(function (col) { try { sheet.getRange(startRow, col, bodyRows, 1).setWrap(true); } catch (err) { } });
+    WRAP_COLUMNS[headerKey].forEach(function (col) { try { sheet.getRange(startRow, col, bodyRows, 1).setWrap(true); } catch (err) { logBestEffortFailure('Set wrap ' + headerKey + ' col ' + col, err); } });
   });
 }
 
@@ -11761,7 +11765,7 @@ function ensureTabDividerSheet(name) {
   if (!sheet) sheet = ss.insertSheet(name);
   sheet.clear();
   sheet.clearConditionalFormatRules();
-  try { sheet.getDataRange().clearDataValidations(); } catch (err) { }
+  try { sheet.getDataRange().clearDataValidations(); } catch (err) { logBestEffortFailure('Divider tab clear validations', err); }
   sheet.setHiddenGridlines(true);
   sheet.setTabColor(ZONE_REF_COLOR);
   sheet.setColumnWidth(1, 30);
@@ -11824,7 +11828,7 @@ function hideLegacyUtilityTabs() {
     if (isSheetEmpty(sheet)) {
       deleteSheetIfSafe(sheet);
     } else if (!sheet.isSheetHidden()) {
-      try { sheet.hideSheet(); } catch (err) { }
+      try { sheet.hideSheet(); } catch (err) { logBestEffortFailure('Hide legacy tab ' + name, err); }
     }
   });
 }
@@ -13763,7 +13767,7 @@ function repairAllTabsImpl() {
 
   bootstrapToday();
   populateToday();
-  if (!getSheet('Guide')) rewriteGuide();
+  rewriteGuide();
   refreshHome();
 
   applyAllRichTextHeaders();
