@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.7';
+var SCRIPT_VERSION = 'v7.9.8';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -9091,18 +9091,35 @@ function homeAttentionActionHint(items) {
   items = items || [];
   var hasTaskRecovery = false;
   var hasRepair = false;
+  var hasAutomation = false;
   var hasMaintenance = false;
   items.forEach(function (item) {
     var text = String(item || '');
     if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
     if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('workflow default time') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
+    if (text.indexOf('automation issue') !== -1) hasAutomation = true;
     if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
   });
+  if (hasAutomation) return 'Use Setup & automation > Enable popups, checkboxes & reminders';
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
   if (hasTaskRecovery) return 'Open Today > Needs planning, or select the task and use Selected row';
   if (hasRepair) return 'Use Backup & repair > Repair Planner layout';
   if (hasMaintenance) return 'Use The Planner > Restart planner after time away';
   return 'Review the highlighted planner items';
+}
+
+function maintenanceIssueActionText(maint) {
+  maint = maint || readMaintenanceHealth();
+  if (maint.error) {
+    var detail = maint.errorText || maint.error;
+    if (String(detail || '').indexOf('Planner automation incomplete') !== -1) {
+      return 'Setup issue: use The Planner > Setup & automation > Enable popups, checkboxes & reminders. Details: ' + detail;
+    }
+    return 'Logged planner issue: use The Planner > Backup & repair > Repair Planner layout. Details: ' + detail;
+  }
+  if (maint.dailyMissing || maint.weeklyMissing) return 'Restart after time away: use The Planner > Restart planner after time away. This runs setup checks, reviews active organisations, rebuilds Today, and updates Home.';
+  if (maint.weeklyStale) return 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, reviews active organisations, rebuilds Today, and updates Home.';
+  return 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, rebuilds Today, and updates Home.';
 }
 
 function shouldShowRestartTodayCue(maint, planCounts) {
@@ -9536,13 +9553,7 @@ function refreshHome() {
 
   var maint = readMaintenanceHealth();
   if (shouldShowRestartTodayCue(maint, planCounts)) {
-    var maintText = maint.error
-      ? ('Restart after time away: use The Planner > Restart planner after time away. Maintenance issue: ' + (maint.errorText || maint.error))
-      : (maint.dailyMissing || maint.weeklyMissing
-        ? 'Restart after time away: use The Planner > Restart planner after time away. This runs setup checks, reviews active organisations, rebuilds Today, and updates Home.'
-        : (maint.weeklyStale
-        ? 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, reviews active organisations, rebuilds Today, and updates Home.'
-        : 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, rebuilds Today, and updates Home.'));
+    var maintText = maintenanceIssueActionText(maint);
     sheet.getRange(HOME_REFRESH_ROW + 1, HOME_REFRESH_COL + 1, 1, 4).merge()
       .setValue(maintText).setFontSize(9).setFontColor('#964219').setWrap(true);
   } else if (maint.weeklySummary) {
