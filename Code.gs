@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.12';
+var SCRIPT_VERSION = 'v7.9.13';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -8967,8 +8967,9 @@ function checkAutoCompletion(item) {
 }
 
 function shouldShowSetupCard(profile) {
-  if (!profile || !profile.checklist || !profile.checklist.length) return false;
-  return !profile.checklist.every(function (item) { return checkAutoCompletion(item); });
+  // Setup ends when the popup successfully saves starting facts. Follow-up
+  // work created by setup belongs in Tasks/Today, not in an onboarding gate.
+  return false;
 }
 
 function nextIncompleteChecklistItem(profile) {
@@ -9445,7 +9446,7 @@ function refreshHome() {
       .setFontWeight('bold').setFontColor(HEADER_COLOR).setBackground('#EAF4F5').setWrap(true);
   } else {
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_CHECK_COL, 1, 5).merge()
-      .setValue('✓ Setup saved').setFontWeight('bold').setFontColor('#437A22');
+      .setValue('Setup complete').setFontWeight('bold').setFontColor('#437A22');
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
       .setValue('Update starting facts')
@@ -10475,8 +10476,8 @@ function resolvePopupDecision(decisionId, todoId, note) {
   applyDecisionHelperColumns(found.sheet, found.row);
 }
 
-// Called from the setup popup. Captures starting facts additively, rebuilds
-// the checklist, and refreshes Today/Home. Destructive reset lives only in
+// Called from the setup popup. Captures starting facts additively, records
+// the setup profile, and refreshes Today/Home. Destructive reset lives only in
 // startFreshPlannerData(), where the backup-first flow is explicit.
 function completeSetupFromPopup(payload) {
   payload = payload || {};
@@ -10489,7 +10490,7 @@ function completeSetupFromPopup(payload) {
     try {
       var result = coerceResult(processOnboardingCapture(goal, entryPoint, fields), 'Onboarding saved.');
       if (!result.ok) return result;
-      var checklist = (goal === 'skipped' || entryPoint === 'skip') ? [] : setupChecklistFor(entryPoint, fields);
+      var checklist = [];
       saveSetupProfile({ goal: goal, entryPoint: entryPoint, checklist: checklist, capturedAt: new Date().toISOString() });
 
       refreshAllDropdowns();
