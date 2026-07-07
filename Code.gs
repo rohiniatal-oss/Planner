@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.6';
+var SCRIPT_VERSION = 'v7.9.7';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -9067,7 +9067,7 @@ function collectHomeAttentionItems() {
   }
 
   var maint = readMaintenanceHealth();
-  if (maint.error) items.push('maintenance issue logged');
+  if (maint.error) items.push('automation issue - check setup');
   else if (maint.dailyMissing) items.push('maintenance has not run yet');
   else if (maint.dailyInvalid) items.push('maintenance timestamp needs repair');
   else if (maint.stale) items.push('maintenance has not run in 2 days');
@@ -9380,11 +9380,11 @@ function refreshHome() {
       .setFontWeight('bold').setFontColor(editReady ? '#964219' : '#964219').setBackground(MANUAL_COLOR);
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL).setValue(false).insertCheckboxes();
     sheet.getRange(HOME_ONBOARD_ROW, HOME_ONBOARD_RESET_CHECK_COL + 1)
-      .setValue('Dismiss')
+      .setValue('Dismiss setup reminder')
       .setNote('Clears the unsaved setup reminder. Existing planner data is not changed.')
       .setFontSize(9).setFontColor('#7A7974');
     sheet.getRange(HOME_WELCOME_ROW, 2, 1, 5).merge()
-      .setValue('Setup was opened but not saved. Existing planner data was not changed.')
+      .setValue('Setup was opened but not saved. Tick Finish setup to continue, or Dismiss setup reminder to clear this. Existing planner data was not changed.')
       .setFontWeight('bold').setFontColor('#964219').setBackground(MANUAL_COLOR).setWrap(true);
   } else if (!profile) {
     if (editReady) {
