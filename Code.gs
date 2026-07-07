@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.8';
+var SCRIPT_VERSION = 'v7.9.9';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -7208,6 +7208,7 @@ function setUpTriggers() {
   ensureSpreadsheetTimeZone();
   ensureTriggersInstalled({ force: true, silent: true });
   checkTriggerHealth();
+  refreshHome();
   showTriggerStatus();
 }
 
@@ -7265,10 +7266,14 @@ function refreshDerivedPlanningSurfaces() {
 // They now route through the unified engine.
 function installEditTrigger() {
   ensureTriggersInstalled({ force: true });
+  checkTriggerHealth();
+  refreshHome();
 }
 
 function uninstallEditTrigger() {
   var removed = deleteTriggersFor(EDIT_TRIGGER_HANDLER, ScriptApp.EventType.ON_EDIT);
+  checkTriggerHealth();
+  refreshHome();
   SpreadsheetApp.getActiveSpreadsheet().toast('Turned off edit actions (' + removed + ' setup item(s) removed). The menu still loads normally.', 'The Planner', 5);
 }
 
@@ -14317,6 +14322,8 @@ function installTimeTriggers() {
     spec.build(tz).create();
     created.push(spec.desc);
   });
+  checkTriggerHealth();
+  refreshHome();
   SpreadsheetApp.getActiveSpreadsheet().toast('Scheduled refreshes installed (' + tz + '): ' + created.join(', ') + '.', 'The Planner', 6);
 }
 
@@ -14325,6 +14332,8 @@ function uninstallTimeTriggers() {
   TIME_TRIGGER_SPECS.forEach(function (spec) {
     removed += deleteTriggersFor(spec.handler, ScriptApp.EventType.CLOCK);
   });
+  checkTriggerHealth();
+  refreshHome();
   SpreadsheetApp.getActiveSpreadsheet().toast('Turned off scheduled refreshes (' + removed + ' setup item(s) removed). Popups and checkboxes are unchanged — use Setup & automation for those.', 'The Planner', 5);
 }
 
