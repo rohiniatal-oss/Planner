@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.11';
+var SCRIPT_VERSION = 'v7.9.12';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -9055,9 +9055,9 @@ function collectHomeAttentionItems() {
       var id = String(row[COLS.TODO.ID - 1] || '');
       if (notes.indexOf('[parent-ready]') !== -1 || (allChildTodosTerminalInContext(id, ctx) && !allChildTodosDoneInContext(id, ctx))) parentReview++;
     });
-    if (brokenOrClosed) items.push(brokenOrClosed + ' task' + (brokenOrClosed === 1 ? '' : 's') + ' need source repair');
-    if (blockedNeedsReason) items.push(blockedNeedsReason + ' blocked task' + (blockedNeedsReason === 1 ? '' : 's') + ' need recovery');
-    if (parentReview) items.push(parentReview + ' parent task' + (parentReview === 1 ? '' : 's') + ' need review');
+    if (brokenOrClosed) items.push(brokenOrClosed + ' task' + (brokenOrClosed === 1 ? '' : 's') + ' link to closed or missing records - run Repair Planner layout');
+    if (blockedNeedsReason) items.push(blockedNeedsReason + ' blocked task' + (blockedNeedsReason === 1 ? '' : 's') + ' need an unblock step - open Today > Needs planning');
+    if (parentReview) items.push(parentReview + ' parent task' + (parentReview === 1 ? ' has' : 's have') + ' child steps to reconcile - open Today > Needs planning');
   }
 
   var decisionSheet = getSheet('Decisions');
@@ -9068,7 +9068,7 @@ function collectHomeAttentionItems() {
     decisions.forEach(function (row) {
       if (String(row[COLS.DECISIONS.DECISION - 1] || '') === 'Pending' && decisionLinkedSourceUnavailable(row, maps)) staleDecisions++;
     });
-    if (staleDecisions) items.push(staleDecisions + ' stale decision' + (staleDecisions === 1 ? '' : 's') + ' hidden from Home');
+    if (staleDecisions) items.push(staleDecisions + ' decision' + (staleDecisions === 1 ? '' : 's') + ' link to closed or missing records - run Repair Planner layout');
   }
 
   var maint = readMaintenanceHealth();
@@ -9076,17 +9076,17 @@ function collectHomeAttentionItems() {
   else if (maint.dailyInvalid) items.push('Planner refresh date looks wrong - run Repair Planner layout');
   else if (maint.stale) items.push('Planner has not refreshed recently - run Restart planner after time away');
   if (maint.weeklyInvalid) items.push('Organisation review date looks wrong - run Repair Planner layout');
-  else if (maint.weeklyStale) items.push('Active organisations need review - run Restart planner after time away');
+  else if (maint.weeklyStale) items.push('Planner needs to check active organisations for next steps - run Restart planner after time away');
   var invalidDropdowns = scanInvalidDropdownValues(false);
-  if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
+  if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' no longer match allowed options - run Repair Planner layout');
   var missingWorkflowTimes = scanWorkflowDefaultTimes(false);
-  if (missingWorkflowTimes.count) items.push(missingWorkflowTimes.count + ' workflow default time' + (missingWorkflowTimes.count === 1 ? '' : 's') + ' missing');
+  if (missingWorkflowTimes.count) items.push('Planner needs a code update: ' + missingWorkflowTimes.count + ' task type' + (missingWorkflowTimes.count === 1 ? '' : 's') + ' missing time rules');
   var duplicateIds = scanDuplicateIdValues(false);
-  if (duplicateIds.count) items.push(duplicateIds.count + ' duplicate ID row' + (duplicateIds.count === 1 ? '' : 's') + ' need repair');
+  if (duplicateIds.count) items.push(duplicateIds.count + ' duplicate ID row' + (duplicateIds.count === 1 ? '' : 's') + ' found - run Repair Planner layout');
   var duplicateTasks = scanDuplicateOpenTasks(false);
-  if (duplicateTasks.count) items.push(duplicateTasks.count + ' duplicate open task' + (duplicateTasks.count === 1 ? '' : 's') + ' need review');
+  if (duplicateTasks.count) items.push(duplicateTasks.count + ' duplicate open task' + (duplicateTasks.count === 1 ? '' : 's') + ' found - open Tasks and mark duplicates Skipped or Cancelled');
   var duplicateDecisions = scanDuplicatePendingDecisions(false);
-  if (duplicateDecisions.count) items.push(duplicateDecisions.count + ' duplicate pending decision' + (duplicateDecisions.count === 1 ? '' : 's') + ' need review');
+  if (duplicateDecisions.count) items.push(duplicateDecisions.count + ' duplicate pending decision' + (duplicateDecisions.count === 1 ? '' : 's') + ' found - open Decisions and dismiss duplicates');
   return items;
 }
 
@@ -9096,15 +9096,17 @@ function homeAttentionActionHint(items) {
   var hasRepair = false;
   var hasAutomation = false;
   var hasMaintenance = false;
+  var hasCodeUpdate = false;
   items.forEach(function (item) {
     var text = String(item || '');
-    if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
-    if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('workflow default time') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
+    if (text.indexOf('Needs planning') !== -1) hasTaskRecovery = true;
     if (text.indexOf('Enable popups') !== -1) hasAutomation = true;
+    if (text.indexOf('code update') !== -1) hasCodeUpdate = true;
     if (text.indexOf('Repair Planner layout') !== -1) hasRepair = true;
     if (text.indexOf('Restart planner after time away') !== -1) hasMaintenance = true;
   });
   if (hasAutomation) return 'Use Setup & automation > Enable popups, checkboxes & reminders';
+  if (hasCodeUpdate) return 'Update Code.gs, then run Backup & repair > Repair Planner layout';
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
   if (hasTaskRecovery) return 'Open Today > Needs planning, or select the task and use Selected row';
   if (hasRepair) return 'Use Backup & repair > Repair Planner layout';
