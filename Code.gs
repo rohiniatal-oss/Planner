@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.10';
+var SCRIPT_VERSION = 'v7.9.11';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -9072,11 +9072,11 @@ function collectHomeAttentionItems() {
   }
 
   var maint = readMaintenanceHealth();
-  if (maint.error) items.push('automation issue - check setup');
-  else if (maint.dailyInvalid) items.push('scheduled refresh date needs repair');
-  else if (maint.stale) items.push('scheduled planner refresh is overdue');
-  if (maint.weeklyInvalid) items.push('organisation review date needs repair');
-  else if (maint.weeklyStale) items.push('organisation review is overdue');
+  if (maint.error) items.push('Planner automation needs setup - run Enable popups, checkboxes & reminders');
+  else if (maint.dailyInvalid) items.push('Planner refresh date looks wrong - run Repair Planner layout');
+  else if (maint.stale) items.push('Planner has not refreshed recently - run Restart planner after time away');
+  if (maint.weeklyInvalid) items.push('Organisation review date looks wrong - run Repair Planner layout');
+  else if (maint.weeklyStale) items.push('Active organisations need review - run Restart planner after time away');
   var invalidDropdowns = scanInvalidDropdownValues(false);
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
   var missingWorkflowTimes = scanWorkflowDefaultTimes(false);
@@ -9100,8 +9100,9 @@ function homeAttentionActionHint(items) {
     var text = String(item || '');
     if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
     if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('workflow default time') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
-    if (text.indexOf('automation issue') !== -1) hasAutomation = true;
-    if (text.indexOf('scheduled planner refresh') !== -1 || text.indexOf('organisation review') !== -1) hasMaintenance = true;
+    if (text.indexOf('Enable popups') !== -1) hasAutomation = true;
+    if (text.indexOf('Repair Planner layout') !== -1) hasRepair = true;
+    if (text.indexOf('Restart planner after time away') !== -1) hasMaintenance = true;
   });
   if (hasAutomation) return 'Use Setup & automation > Enable popups, checkboxes & reminders';
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
@@ -9134,7 +9135,7 @@ function homeWhatNowText(planCounts, attentionItems, decisionCount) {
   planCounts = planCounts || todayPlanCounts();
   attentionItems = attentionItems || [];
   decisionCount = decisionCount || 0;
-  if (attentionItems.length) return 'Review the Needs attention line, then come back to Today.';
+  if (attentionItems.length) return 'Follow the Needs attention action, then come back to Today.';
   if (decisionCount) return 'Resolve ' + decisionCount + ' decision' + (decisionCount === 1 ? '' : 's') + ', then work from Today.';
   if (planCounts.stale) return 'Build or refresh Today before starting.';
   if (!planCounts.built) return 'Open Today and build today\'s plan.';
