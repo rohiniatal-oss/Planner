@@ -278,7 +278,7 @@ var ZONE_REF_COLOR = '#7A7974';
 var HEADER_COLOR = '#1B474D';
 var MANUAL_COLOR = '#FFF8DC';
 var AUTO_COLOR = '#F1F3F4';
-var SCRIPT_VERSION = 'v7.9.9';
+var SCRIPT_VERSION = 'v7.9.10';
 var ORG_NEEDS_CLASSIFICATION_LABEL = 'Needs classification';
 var ORG_NEEDS_CLASSIFICATION_FLAG = '[needs-classification]';
 var ORG_CLASSIFICATION_WORKFLOW = 'Organisation classification';
@@ -551,8 +551,8 @@ function readMaintenanceHealth() {
   var weeklyDate = weeklyRaw ? new Date(weeklyRaw) : null;
   var dailyInvalid = !!(dailyRaw && isNaN(dailyDate.getTime()));
   var weeklyInvalid = !!(weeklyRaw && isNaN(weeklyDate.getTime()));
-  var stale = !dailyRaw || dailyInvalid || ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000);
-  var weeklyStale = !weeklyRaw || weeklyInvalid || ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000);
+  var stale = dailyInvalid || !!(dailyRaw && ((now.getTime() - dailyDate.getTime()) > 2 * 24 * 60 * 60 * 1000));
+  var weeklyStale = weeklyInvalid || !!(weeklyRaw && ((now.getTime() - weeklyDate.getTime()) > 8 * 24 * 60 * 60 * 1000));
   return {
     daily: dailyRaw,
     weekly: weeklyRaw,
@@ -9073,12 +9073,10 @@ function collectHomeAttentionItems() {
 
   var maint = readMaintenanceHealth();
   if (maint.error) items.push('automation issue - check setup');
-  else if (maint.dailyMissing) items.push('maintenance has not run yet');
-  else if (maint.dailyInvalid) items.push('maintenance timestamp needs repair');
-  else if (maint.stale) items.push('maintenance has not run in 2 days');
-  if (maint.weeklyMissing) items.push('weekly review has not run yet');
-  else if (maint.weeklyInvalid) items.push('weekly review timestamp needs repair');
-  else if (maint.weeklyStale) items.push('weekly review has not run in 8 days');
+  else if (maint.dailyInvalid) items.push('scheduled refresh date needs repair');
+  else if (maint.stale) items.push('scheduled planner refresh is overdue');
+  if (maint.weeklyInvalid) items.push('organisation review date needs repair');
+  else if (maint.weeklyStale) items.push('organisation review is overdue');
   var invalidDropdowns = scanInvalidDropdownValues(false);
   if (invalidDropdowns.count) items.push(invalidDropdowns.count + ' invalid dropdown value' + (invalidDropdowns.count === 1 ? '' : 's') + ' need repair');
   var missingWorkflowTimes = scanWorkflowDefaultTimes(false);
@@ -9103,7 +9101,7 @@ function homeAttentionActionHint(items) {
     if (text.indexOf('blocked task') !== -1 || text.indexOf('parent task') !== -1) hasTaskRecovery = true;
     if (text.indexOf('source repair') !== -1 || text.indexOf('stale decision') !== -1 || text.indexOf('invalid dropdown') !== -1 || text.indexOf('workflow default time') !== -1 || text.indexOf('duplicate ID') !== -1 || text.indexOf('duplicate open task') !== -1 || text.indexOf('duplicate pending decision') !== -1) hasRepair = true;
     if (text.indexOf('automation issue') !== -1) hasAutomation = true;
-    if (text.indexOf('maintenance') !== -1 || text.indexOf('weekly review') !== -1) hasMaintenance = true;
+    if (text.indexOf('scheduled planner refresh') !== -1 || text.indexOf('organisation review') !== -1) hasMaintenance = true;
   });
   if (hasAutomation) return 'Use Setup & automation > Enable popups, checkboxes & reminders';
   if (hasTaskRecovery && (hasRepair || hasMaintenance)) return 'Open Today > Needs planning, then restart if repair remains';
@@ -9122,7 +9120,6 @@ function maintenanceIssueActionText(maint) {
     }
     return 'Logged planner issue: use The Planner > Backup & repair > Repair Planner layout. Details: ' + detail;
   }
-  if (maint.dailyMissing || maint.weeklyMissing) return 'Restart after time away: use The Planner > Restart planner after time away. This runs setup checks, reviews active organisations, rebuilds Today, and updates Home.';
   if (maint.weeklyStale) return 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, reviews active organisations, rebuilds Today, and updates Home.';
   return 'Restart after time away: use The Planner > Restart planner after time away. This updates scheduled tasks, rebuilds Today, and updates Home.';
 }
